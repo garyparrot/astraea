@@ -15,7 +15,7 @@ declare -r EXPORTER_VERSION="0.16.1"
 declare -r EXPORTER_PORT=${EXPORTER_PORT:-$(($(($RANDOM % 10000)) + 10000))}
 declare -r BROKER_PORT=${BROKER_PORT:-$(($(($RANDOM % 10000)) + 10000))}
 declare -r CONTAINER_NAME="broker-$BROKER_PORT"
-declare -r BROKER_JMX_PORT="${BROKER_JMX_PORT:-$(($(($RANDOM % 10000)) + 10000))}"
+declare -r BROKER_JMX_PORT="$(($(($RANDOM % 10000)) + 10000))"
 declare -r ADMIN_NAME="admin"
 declare -r ADMIN_PASSWORD="admin-secret"
 declare -r USER_NAME="user"
@@ -29,6 +29,7 @@ declare -r JMX_OPTS="-Dcom.sun.management.jmxremote \
   -Djava.rmi.server.hostname=$ADDRESS"
 declare -r HEAP_OPTS="${HEAP_OPTS:-"-Xmx2G -Xms2G"}"
 declare -r BROKER_PROPERTIES="/home/garyparrot/server-${BROKER_PORT}.properties"
+declare -r ZOOKEEPER_CONNECT=${1:18}
 # cleanup the file if it is existent
 [[ -f "$BROKER_PROPERTIES" ]] && rm -f "$BROKER_PROPERTIES"
 
@@ -81,101 +82,6 @@ function requireProperty() {
   fi
 }
 
-function generateDockerfileBySource() {
-  echo "# this dockerfile is generated dynamically
-FROM ubuntu:20.04
-
-# install tools
-RUN apt-get update && apt-get upgrade -y && DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-11-jdk wget git curl
-
-# add user
-RUN groupadd $USER && useradd -ms /bin/bash -g $USER $USER
-
-# download jmx exporter
-RUN mkdir /tmp/jmx_exporter
-WORKDIR /tmp/jmx_exporter
-RUN wget https://raw.githubusercontent.com/prometheus/jmx_exporter/master/example_configs/kafka-2_0_0.yml
-RUN wget https://REPO1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/${EXPORTER_VERSION}/jmx_prometheus_javaagent-${EXPORTER_VERSION}.jar
-
-# build kafka from source code
-RUN git clone https://github.com/apache/kafka /tmp/kafka
-WORKDIR /tmp/kafka
-RUN git checkout $VERSION
-RUN ./gradlew clean releaseTarGz
-RUN mkdir /opt/kafka
-RUN tar -zxvf \$(find ./core/build/distributions/ -maxdepth 1 -type f -name kafka_*SNAPSHOT.tgz) -C /opt/kafka --strip-components=1
-WORKDIR /opt/kafka
-
-# export ENV
-ENV KAFKA_HOME /opt/kafka
-
-# change user
-RUN chown -R $USER:$USER /opt/kafka
-USER $USER
-" >"$DOCKERFILE"
-}
-
-function generateDockerfileByVersion() {
-  echo "# this dockerfile is generated dynamically
-FROM ubuntu:20.04
-
-# install tools
-RUN apt-get update && apt-get upgrade -y && apt-get install -y openjdk-11-jdk wget
-
-# add user
-RUN groupadd $USER && useradd -ms /bin/bash -g $USER $USER
-
-# download jmx exporter
-RUN mkdir /tmp/jmx_exporter
-WORKDIR /tmp/jmx_exporter
-RUN wget https://raw.githubusercontent.com/prometheus/jmx_exporter/master/example_configs/kafka-2_0_0.yml
-RUN wget https://REPO1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/${EXPORTER_VERSION}/jmx_prometheus_javaagent-${EXPORTER_VERSION}.jar
-
-# download kafka
-WORKDIR /tmp
-RUN wget https://archive.apache.org/dist/kafka/${VERSION}/kafka_2.13-${VERSION}.tgz
-RUN mkdir /opt/kafka
-RUN tar -zxvf kafka_2.13-${VERSION}.tgz -C /opt/kafka --strip-components=1
-WORKDIR /opt/kafka
-
-# export ENV
-ENV KAFKA_HOME /opt/kafka
-
-# change user
-RUN chown -R $USER:$USER /opt/kafka
-USER $USER
-" >"$DOCKERFILE"
-}
-
-function generateDockerfile() {
-  if [[ -n "$REVISION" ]]; then
-    generateDockerfileBySource
-  else
-    generateDockerfileByVersion
-  fi
-}
-
-function buildImageIfNeed() {
-  if [[ "$(docker images -q $IMAGE_NAME 2>/dev/null)" == "" ]]; then
-    local needToBuild="true"
-    if [[ "$BUILD" == "false" ]]; then
-      docker pull $IMAGE_NAME 2>/dev/null
-      if [[ "$?" == "0" ]]; then
-        needToBuild="false"
-      else
-        echo "Can't find $IMAGE_NAME from repo. Will build $IMAGE_NAME on the local"
-      fi
-    fi
-    if [[ "$needToBuild" == "true" ]]; then
-      generateDockerfile
-      docker build --no-cache -t "$IMAGE_NAME" -f "$DOCKERFILE" "$DOCKER_FOLDER"
-      if [[ "$?" != "0" ]]; then
-        exit 2
-      fi
-    fi
-  fi
-}
-
 function setListener() {
   if [[ "$SASL" == "true" ]]; then
     echo "listeners=SASL_PLAINTEXT://:9092" >>"$BROKER_PROPERTIES"
@@ -194,6 +100,7 @@ function setListener() {
   else
     echo "listeners=PLAINTEXT://:9092" >>"$BROKER_PROPERTIES"
     echo "advertised.listeners=PLAINTEXT://${ADDRESS}:$BROKER_PORT" >>"$BROKER_PROPERTIES"
+    echo "confluent.metadata.server.listeners=http://0.0.0.0:$BROKER_PORT" >>"$BROKER_PROPERTIES"
   fi
 }
 
@@ -262,14 +169,6 @@ function fetchBrokerId() {
 # ===================================[main]===================================
 
 checkDocker
-generateDockerfile
-buildImageIfNeed
-
-if [[ "$RUN" != "true" ]]; then
-  echo "docker image: $IMAGE_NAME is created"
-  exit 0
-fi
-
 checkNetwork
 
 while [[ $# -gt 0 ]]; do
@@ -281,11 +180,12 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+
 rejectProperty "listeners"
 rejectProperty "log.dirs"
 rejectProperty "broker.id"
+rejectProperty "metric.reporters"
 requireProperty "zookeeper.connect"
-
 setListener
 setPropertyIfEmpty "num.io.threads" "8"
 setPropertyIfEmpty "num.network.threads" "8"
@@ -293,20 +193,32 @@ setPropertyIfEmpty "num.partitions" "8"
 setPropertyIfEmpty "transaction.state.log.replication.factor" "1"
 setPropertyIfEmpty "offsets.topic.replication.factor" "1"
 setPropertyIfEmpty "transaction.state.log.min.isr" "1"
+setPropertyIfEmpty "confluent.metrics.reporter.zookeeper.connect" "$ZOOKEEPER_CONNECT"
+setPropertyIfEmpty "metric.reporters" "io.confluent.metrics.reporter.ConfluentMetricsReporter"
+setPropertyIfEmpty "confluent.metrics.reporter.bootstrap.servers" "${ADDRESS}:$BROKER_PORT"
+setPropertyIfEmpty "confluent.metrics.reporter.topic.replicas" "1"
+setPropertyIfEmpty "confluent.topic.replication.factor" "1"
+setPropertyIfEmpty "confluent.license.topic.replication.factor" "1"
+setPropertyIfEmpty "confluent.metadata.topic.replication.factor" "1"
+setPropertyIfEmpty "confluent.security.event.logger.exporter.kafka.topic.replicas" "1"
+setPropertyIfEmpty "confluent.balancer.topic.replication.factor" "1"
+setPropertyIfEmpty "confluent.balancer.enable" "true"
+setPropertyIfEmpty "confluent.balancer.heal.uneven.load.trigger" "ANY_UNEVEN_LOAD"
+setPropertyIfEmpty "confluent.topic.bootstrap.servers" "${ADDRESS}:$BROKER_PORT" 
 setLogDirs
 
-docker run -d --init \
-  --name $CONTAINER_NAME \
-  -e KAFKA_HEAP_OPTS="$HEAP_OPTS" \
-  -e KAFKA_JMX_OPTS="$JMX_OPTS" \
-  -e KAFKA_OPTS="-javaagent:/tmp/jmx_exporter/jmx_prometheus_javaagent-${EXPORTER_VERSION}.jar=$EXPORTER_PORT:/tmp/jmx_exporter/kafka-2_0_0.yml" \
-  -v $BROKER_PROPERTIES:/tmp/broker.properties:ro \
-  $(generateMountCommand) \
-  -p $BROKER_PORT:9092 \
-  -p $BROKER_JMX_PORT:$BROKER_JMX_PORT \
-  -p $EXPORTER_PORT:$EXPORTER_PORT \
-  $IMAGE_NAME ./bin/kafka-server-start.sh /tmp/broker.properties
+echo $(generateMountCommand)
 
+exit 2
+
+docker run -d --init \
+    --name $CONTAINER_NAME \
+    -p $BROKER_JMX_PORT:$BROKER_JMX_PORT \
+    -p $EXPORTER_PORT:$EXPORTER_PORT \
+    -p $BROKER_PORT:9092 \
+    -v $BROKER_PROPERTIES:/tmp/broker.properties:ro \
+    $(generateMountCommand) \
+    confluentinc/cp-server:latest /bin/kafka-server-start /tmp/broker.properties
 echo "================================================="
 [[ -n "$DATA_FOLDERS" ]] && echo "mount $DATA_FOLDERS to container: $CONTAINER_NAME"
 echo "broker id: $(fetchBrokerId)"
@@ -330,3 +242,4 @@ if [[ "$SASL" == "true" ]]; then
   echo "SASL_PLAINTEXT is enabled. user config: $user_jaas_file admin config: $admin_jaas_file"
 fi
 echo "================================================="
+
