@@ -209,8 +209,6 @@ setLogDirs
 
 echo $(generateMountCommand)
 
-exit 2
-
 docker run -d --init \
     --name $CONTAINER_NAME \
     -p $BROKER_JMX_PORT:$BROKER_JMX_PORT \
