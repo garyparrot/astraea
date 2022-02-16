@@ -211,8 +211,8 @@ echo $(generateMountCommand)
 
 docker run -d --init \
     --name $CONTAINER_NAME \
-    -p $BROKER_JMX_PORT:7777 \
-    -p $EXPORTER_PORT:$EXPORTER_PORT \
+    -p $BROKER_JMX_PORT:7203 \
+    -p $EXPORTER_PORT:7778 \
     -p $BROKER_PORT:9092 \
     -v $BROKER_PROPERTIES:/tmp/broker.properties:ro \
     $(generateMountCommand) \

@@ -46,7 +46,7 @@ function wrap_address() {
 prometheus_port="${PROMETHEUS_PORT:-9090}"
 image_name=prom/prometheus:v2.32.1
 container_name="prometheus-${prometheus_port}"
-file=/tmp/prometheus-${prometheus_port}.yml
+file=/home/garyparrot/prometheus-${prometheus_port}.yml
 scrape_interval="5s"
 volume_name_1="prometheus-${prometheus_port}-etc"
 volume_name_2="prometheus-${prometheus_port}-prometheus"
@@ -57,7 +57,7 @@ function write_config() {
 
   cat <<EOT > "$file"
 global:
-  scrape_interval: 15s
+  scrape_interval: 200ms
   external_labels:
     monitor: 'prometheus'
 
