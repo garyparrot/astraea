@@ -94,6 +94,7 @@ scrape_configs:
 
   - job_name: 'kafka'
     scrape_interval: $scrape_interval
+    scrape_timeout: $scrape_interval
     static_configs:
       - targets: [$kafka_jmx_addresses]
 
