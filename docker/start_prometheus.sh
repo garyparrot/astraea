@@ -74,7 +74,7 @@ container_name="prometheus-${prometheus_port}"
 file_prefix="$(gradle_project_directory)/build/docker/prometheus"
 file="${file_prefix}/prometheus-${prometheus_port}.yml"
 temp_file="${file_prefix}/prometheus-${prometheus_port}-editing.yml"
-scrape_interval="1s"
+scrape_interval="${scrape_interval:-1s}"
 volume_name_1="prometheus-${prometheus_port}-etc"
 volume_name_2="prometheus-${prometheus_port}-prometheus"
 
