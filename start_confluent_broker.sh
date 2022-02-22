@@ -18,7 +18,6 @@ declare -r USER_NAME="user"
 declare -r USER_PASSWORD="user-secret"
 declare -r EXPORTER_VERSION="0.16.1"
 declare -r HEAP_OPTS="${HEAP_OPTS:-"-Xmx2G -Xms2G"}"
-declare -r JMX_CONFIG_FILE="${JMX_CONFIG_FILE}"
 declare -r BROKER_PROPERTIES="/home/garyparrot/server-${BROKER_PORT}.properties"
 declare -r ZOOKEEPER_CONNECT=${1:18}
 # cleanup the file if it is existent
@@ -104,10 +103,12 @@ function setLogDirs() {
 
 function generateDockerfile() {
   echo "# this dockerfile is generated dynamically
-FROM confluentinc/cp-server:latest
-USER root
-RUN groupadd $USER && useradd -ms /bin/bash -g $USER $USER
-RUN yum -y update && yum -y install git unzip
+FROM busybox:1.34 AS BUILD
+
+# download confluent
+WORKDIR /opt
+ADD http://packages.confluent.io/archive/${VERSION:0:3}/confluent-${VERSION}.zip /opt
+RUN unzip confluent-${VERSION}.zip -d /opt
 
 # download jmx exporter
 RUN mkdir /opt/jmx_exporter
@@ -115,22 +116,19 @@ WORKDIR /opt/jmx_exporter
 RUN wget https://raw.githubusercontent.com/prometheus/jmx_exporter/master/example_configs/kafka-2_0_0.yml
 RUN wget https://REPO1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/${EXPORTER_VERSION}/jmx_prometheus_javaagent-${EXPORTER_VERSION}.jar
 
-# change user
-RUN chown -R $USER:$USER /tmp
-RUN chown -R $USER:$USER /var
+FROM openjdk:11-jre-buster
+
+RUN groupadd $USER && useradd -ms /bin/bash -g $USER $USER
+
+COPY --from=build --chown=$USER:$USER /opt/confluent/confluent-${VERSION} /opt/confluent
+COPY --from=build --chown=$USER:$USER /opt/jmx_exporter /opt/jmx_exporter
+
 USER $USER
 
-WORKDIR /
+# export ENV
+ENV KAFKA_HOME /opt/confluent
+WORKDIR /opt/confluent
 " >"$DOCKERFILE"
-}
-
-
-function generateJmxConfigMountCommand() {
-    if [[ "$JMX_CONFIG_FILE" != "" ]]; then
-        echo "--mount type=bind,source=$JMX_CONFIG_FILE,target=/opt/jmx_exporter/kafka-2_0_0.yml"
-    else
-        echo ""
-    fi
 }
 
 function generateMountCommand() {
@@ -223,7 +221,6 @@ docker run -d --init \
     -p $EXPORTER_PORT:$EXPORTER_PORT \
     -p $BROKER_PORT:9092 \
     -v $BROKER_PROPERTIES:/tmp/broker.properties:ro \
-    $(generateJmxConfigMountCommand) \
     $(generateMountCommand) \
     $IMAGE_NAME ./bin/kafka-server-start  /tmp/broker.properties
 
