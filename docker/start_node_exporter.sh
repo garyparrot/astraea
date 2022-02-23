@@ -59,6 +59,7 @@ info Container ID of node_exporter: "$container_id"
 if curl --connect-timeout 1 --retry 3 -s "http://$address:$PORT/metrics" > /dev/null; then
   info node_exporter running at "http://$address:$PORT"
 else
+  echo Exit code "$?"
   error Cannot access node_exporter metric server: "http://$address:$PORT/metrics". Something go wrong!
   error Execute \"docker logs "$container_id"\" to see what\'s going on.
   exit 3
