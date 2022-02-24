@@ -2,6 +2,7 @@ package org.astraea.service;
 
 import java.io.File;
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -91,6 +92,11 @@ public final class Services {
         return IntStream.range(0, numberOfBrokers)
             .boxed()
             .collect(Collectors.toMap(Function.identity(), tempFolders::get));
+      }
+
+      @Override
+      public List<KafkaServer> servers() {
+        return brokers;
       }
     };
   }

@@ -1,7 +1,9 @@
 package org.astraea.service;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import kafka.server.KafkaServer;
 
 public interface BrokerCluster extends AutoCloseable {
 
@@ -10,4 +12,7 @@ public interface BrokerCluster extends AutoCloseable {
 
   /** @return the log folders used by each broker */
   Map<Integer, Set<String>> logFolders();
+
+  /** @return the actual KafkaServer instances */
+  List<KafkaServer> servers();
 }
