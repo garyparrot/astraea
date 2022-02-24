@@ -4,6 +4,7 @@ import java.util.*;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.kafka.clients.admin.*;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
@@ -189,15 +190,32 @@ public class Builder {
     }
 
     @Override
-    public Map<TopicPartition, Offset> offsets(Set<String> topics) {
+    public Map<TopicPartition, Optional<Offset>> offsets(Set<String> topics) {
+
       var partitions = partitions(topics);
-      var earliest = earliestOffset(partitions);
-      var latest = latestOffset(partitions);
-      return earliest.entrySet().stream()
-          .filter(e -> latest.containsKey(e.getKey()))
-          .collect(
-              Collectors.toMap(
-                  Map.Entry::getKey, e -> new Offset(e.getValue(), latest.get(e.getKey()))));
+
+      var topicDescription = Utils.handleException(() -> admin.describeTopics(topics).all().get());
+      var twoParts =
+          partitions.stream()
+              .collect(
+                  Collectors.partitioningBy(
+                      tp ->
+                          topicDescription.get(tp.topic()).partitions().get(tp.partition()).leader()
+                              != null,
+                      Collectors.toUnmodifiableSet()));
+      var availablePartitions = twoParts.get(true);
+      var leaderlessPartitions = twoParts.get(false);
+
+      var earliest = earliestOffset(availablePartitions);
+      var latest = latestOffset(availablePartitions);
+
+      return Stream.concat(
+              availablePartitions.stream()
+                  .map(
+                      tp ->
+                          Map.entry(tp, Optional.of(new Offset(earliest.get(tp), latest.get(tp))))),
+              leaderlessPartitions.stream().map(tp -> Map.entry(tp, Optional.<Offset>empty())))
+          .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 
     private Set<TopicPartition> partitions(Set<String> topics) {

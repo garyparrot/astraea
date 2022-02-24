@@ -22,22 +22,24 @@ public class TopicExplorer {
 
   static class PartitionInfo {
     final TopicPartition topicPartition;
-    final long earliestOffset;
-    final long latestOffset;
     final List<Replica> replicas;
+    private final Offset offset;
 
-    public PartitionInfo(
-        TopicPartition topicPartition,
-        long earliestOffset,
-        long latestOffset,
-        List<Replica> replicas) {
+    public PartitionInfo(TopicPartition topicPartition, List<Replica> replicas) {
+      this(topicPartition, replicas, null);
+    }
+
+    public PartitionInfo(TopicPartition topicPartition, List<Replica> replicas, Offset offset) {
       this.topicPartition = topicPartition;
-      this.earliestOffset = earliestOffset;
-      this.latestOffset = latestOffset;
+      this.offset = offset;
       this.replicas =
           replicas.stream()
               .sorted(Comparator.comparing(Replica::broker))
               .collect(Collectors.toList());
+    }
+
+    Optional<Offset> offset() {
+      return Optional.of(offset);
     }
   }
 
@@ -81,11 +83,14 @@ public class TopicExplorer {
                             .mapToObj(partition -> new TopicPartition(topic, partition))
                             .map(
                                 topicPartition ->
-                                    new PartitionInfo(
-                                        topicPartition,
-                                        offsets.get(topicPartition).earliest(),
-                                        offsets.get(topicPartition).latest(),
-                                        replicas.getOrDefault(topicPartition, List.of())))
+                                    offsets.get(topicPartition).isPresent()
+                                        ? new PartitionInfo(
+                                            topicPartition,
+                                            replicas.getOrDefault(topicPartition, List.of()),
+                                            offsets.get(topicPartition).get())
+                                        : new PartitionInfo(
+                                            topicPartition,
+                                            replicas.getOrDefault(topicPartition, List.of())))
                             .collect(Collectors.toUnmodifiableList())));
 
     return new Result(time, topicPartitionInfos, consumerGroups);
@@ -319,13 +324,27 @@ public class TopicExplorer {
             // print partition & replica info
             partitionInfos.forEach(
                 partitionInfo -> {
-                  treePrintln(
-                      "Partition \"%d\" (size: %s) (offset range: [%d, %d])",
-                      partitionInfo.topicPartition.partition(),
-                      DataUnit.Byte.of(
-                          partitionInfo.replicas.stream().mapToLong(Replica::size).sum()),
-                      partitionInfo.earliestOffset,
-                      partitionInfo.latestOffset);
+                  partitionInfo
+                      .offset()
+                      .ifPresentOrElse(
+                          (offset) ->
+                              treePrintln(
+                                  "Partition \"%d\" (size: %s) (offset range: [%d, %d])",
+                                  partitionInfo.topicPartition.partition(),
+                                  DataUnit.Byte.of(
+                                      partitionInfo.replicas.stream()
+                                          .mapToLong(Replica::size)
+                                          .sum()),
+                                  offset.earliest(),
+                                  offset.latest()),
+                          () ->
+                              treePrintln(
+                                  "Partition \"%d\" (size: %s) (offset not available)",
+                                  partitionInfo.topicPartition.partition(),
+                                  DataUnit.Byte.of(
+                                      partitionInfo.replicas.stream()
+                                          .mapToLong(Replica::size)
+                                          .sum())));
                   nextLevel(
                       "  ",
                       () ->
@@ -360,12 +379,12 @@ public class TopicExplorer {
         this.map = map;
       }
 
-      private long earliest() {
-        return map.get(topic).get(index).earliestOffset;
+      private Optional<Long> earliest() {
+        return map.get(topic).get(index).offset().map(Offset::earliest);
       }
 
-      private long latest() {
-        return map.get(topic).get(index).latestOffset;
+      private Optional<Long> latest() {
+        return map.get(topic).get(index).offset().map(Offset::latest);
       }
 
       private long current() {
@@ -373,6 +392,7 @@ public class TopicExplorer {
       }
 
       private String progressBar() {
+        // fix this shit
         int totalBlocks = 20;
         int filledBlocks =
             Math.min(
@@ -393,9 +413,9 @@ public class TopicExplorer {
                 + "d %s (earliest/current/latest offset %d/%d/%d)",
             index,
             progressBar(),
-            earliest(),
+            earliest().map(Object::toString).orElse("unknown"),
             current(),
-            latest());
+            latest().map(Object::toString).orElse("unknown"));
       }
     }
 

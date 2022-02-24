@@ -39,7 +39,7 @@ public interface TopicAdmin extends Closeable {
    * @param topics topic names
    * @return the earliest offset and latest offset for specific topics
    */
-  Map<TopicPartition, Offset> offsets(Set<String> topics);
+  Map<TopicPartition, Optional<Offset>> offsets(Set<String> topics);
 
   /**
    * @param consumerGroupNames consumer group names. if empty set given, every consume group will

@@ -49,7 +49,7 @@ public class PerformanceTest extends RequireBrokerCluster {
       var offsets = admin.offsets(Set.of(topicName));
       var partitions =
           offsets.entrySet().stream()
-              .filter(entry -> entry.getValue().latest() > 0)
+              .filter(entry -> entry.getValue().orElseThrow().latest() > 0)
               .map(entry -> entry.getKey().partition())
               .collect(Collectors.toList());
       var partitionsOfBrokers =
@@ -92,7 +92,7 @@ public class PerformanceTest extends RequireBrokerCluster {
       var offsets = admin.offsets(Set.of(topicName));
       var partitions =
           offsets.entrySet().stream()
-              .filter(entry -> entry.getValue().latest() > 0)
+              .filter(entry -> entry.getValue().orElseThrow().latest() > 0)
               .map(entry -> entry.getKey().partition())
               .collect(Collectors.toList());
       var partitionsOfBrokers =

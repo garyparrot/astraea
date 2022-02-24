@@ -125,8 +125,8 @@ public class TopicAdminTest extends RequireBrokerCluster {
           .values()
           .forEach(
               offset -> {
-                Assertions.assertEquals(0, offset.earliest());
-                Assertions.assertEquals(0, offset.latest());
+                Assertions.assertEquals(0, offset.orElseThrow().earliest());
+                Assertions.assertEquals(0, offset.orElseThrow().latest());
               });
     }
   }

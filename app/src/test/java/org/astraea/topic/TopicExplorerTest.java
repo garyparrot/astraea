@@ -137,9 +137,8 @@ public class TopicExplorerTest extends RequireBrokerCluster {
         List.of(
             new TopicExplorer.PartitionInfo(
                 new TopicPartition("my-topic", 0),
-                0,
-                100,
-                List.of(new Replica(55, 15, 100, true, false, true, "/tmp/path0"))));
+                List.of(new Replica(55, 15, 100, true, false, true, "/tmp/path0")),
+                new Offset(0, 100)));
     var result =
         new TopicExplorer.Result(
             now,
