@@ -339,7 +339,7 @@ public class Performance {
     @Parameter(
         names = {"--throughput"},
         description = "dataSize: size output per second. e.g. \"500KiB\"",
-        converter = DataSize.Converter.class)
+        converter = DataSize.Field.class)
     DataSize throughput = DataUnit.GB.of(500);
   }
 
