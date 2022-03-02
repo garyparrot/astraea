@@ -1,9 +1,6 @@
 package org.astraea.metrics.exporter;
 
-import io.prometheus.client.Collector;
-import io.prometheus.client.CollectorRegistry;
-import io.prometheus.client.Counter;
-import io.prometheus.client.Gauge;
+import io.prometheus.client.*;
 import io.prometheus.client.exporter.HTTPServer;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionReplica;
@@ -24,72 +21,56 @@ import java.util.stream.Stream;
 public class KafkaExporter {
 
     public static void main(String[] args) throws IOException, InterruptedException {
+        final TopicAdmin admin = TopicAdmin.of("192.168.103.157:25655,192.168.103.158:25655,192.168.103.159:25655");
+
+        CollectorRegistry.defaultRegistry.register(new Collector() {
+            @Override
+            public List<MetricFamilySamples> collect() {
+                final var topics = admin.topicNames();
+                final var topicReplicas= admin.replicas(topics);
+
+                final var replicaBrokerId = new GaugeMetricFamily(
+                        "kafka_tpr",
+                        "topic/partition/replica",
+                        List.of("topic", "partition", "partition_pretty", "replica"));
+
+                final var replicaLeader = new GaugeMetricFamily(
+                        "kafka_tpr_is_leader",
+                        "topic/partition/replica is leader or not",
+                        List.of("topic", "partition", "partition_pretty", "replica"));
+
+                topicReplicas.forEach((topicPartition, replicaList) -> {
+                    replicaList.forEach(replica -> {
+                            var labels = List.of(
+                                    topicPartition.topic(),
+                                    String.format("%d", topicPartition.partition()),
+                                    String.format("%05d", topicPartition.partition()),
+                                    String.format("%d", replica.broker()));
+                            replicaBrokerId.addMetric(labels, replica.broker());
+                    });
+                });
+
+                topicReplicas.forEach((topicPartition, replicaList) -> {
+                    replicaList.forEach(replica -> {
+                        var labels = List.of(
+                                topicPartition.topic(),
+                                String.format("%d", topicPartition.partition()),
+                                String.format("%05d", topicPartition.partition()),
+                                String.format("%d", replica.broker()));
+                        replicaLeader.addMetric(labels, replica.leader() ? 1 : 0);
+                    });
+                });
+
+                return List.of(replicaBrokerId, replicaLeader);
+            }
+        });
+
+        // HTTPServer has a non-daemon thread. Even the main route is finished, this JVM will keep running.
         HTTPServer server = new HTTPServer.Builder()
                 .withPort(1234)
                 .withRegistry(CollectorRegistry.defaultRegistry)
+                .withDaemonThreads(false)
                 .build();
-
-        final TopicAdmin admin = TopicAdmin.of("192.168.103.157:25655,192.168.103.158:25655,192.168.103.159:25655");
-
-        final Gauge replicaPath = Gauge.build()
-                .name("kafka_tpr")
-                .labelNames("topic", "partition", "replica")
-                .help("Label")
-                .register();
-
-        final Set<TopicPartitionReplica> last = new HashSet<>();
-
-        Executors.newSingleThreadScheduledExecutor()
-                        .scheduleAtFixedRate(() -> {
-                            try {
-                                System.out.printf("[%s] Update%n", LocalDateTime.now());
-
-                                final Set<String> topics = admin.topicNames();
-                                final Map<TopicPartition, List<Replica>> replicas = admin.replicas(topics);
-
-                                System.out.printf("[%s] Resource obtained%n", LocalDateTime.now());
-
-                                Set<TopicPartitionReplica> present = new HashSet<>();
-
-                                replicas.forEach((topicPartition, replicaList) -> {
-                                    IntStream.range(0, replicaList.size()).forEach(i -> {
-
-                                        final Replica replica = replicaList.get(i);
-
-                                        System.out.printf("[%s] %s %s%n", LocalDateTime.now(),topicPartition, replica.broker());
-
-                                        final var tpr = new TopicPartitionReplica(
-                                                topicPartition.topic(),
-                                                topicPartition.partition(),
-                                                replica.broker());
-
-                                        present.add(tpr);
-
-                                        replicaPath.labels(
-                                                tpr.topic(),
-                                                Integer.toString(tpr.partition()),
-                                                Integer.toString(tpr.brokerId()))
-                                                .set(replica.broker());
-                                    });
-                                });
-
-                                last.stream().filter(x -> !present.contains(x))
-                                        .forEach(tpr -> replicaPath.remove(
-                                                tpr.topic(),
-                                                Integer.toString(tpr.partition()),
-                                                Integer.toString(tpr.brokerId())
-                                                ));
-                                last.clear();
-                                last.addAll(present);
-
-                                System.out.printf("[%s] Done%n", LocalDateTime.now());
-
-                            } catch (Exception ex) {
-                                System.out.println(ex);
-                            }
-                        }, 0, 1, TimeUnit.SECONDS);
-
-        // HTTPServer has a daemon thread. Even the main route is finished, this JVM will keep running.
     }
 
 }
