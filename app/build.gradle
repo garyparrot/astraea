@@ -10,12 +10,13 @@ repositories {
 }
 
 def versions = [
-    kafka: project.properties['kafka.version'] ?: "2.8.1",
+    kafka: project.properties['kafka.version'] ?: "3.1.0",
     junit: project.properties['junit.version'] ?: "5.8.2",
     mockito: project.properties['mockito.version'] ?: "4.2.0",
     jcommander: project.properties['jcommander.version'] ?: "1.81",
     slf4j: project.properties['slf4j.version'] ?: "1.7.32",
-    zookeeper: project.properties['zookeeper.version'] ?: "3.5.9",
+    zookeeper: project.properties['zookeeper.version'] ?: "3.6.3",
+    prometheus_client: project.properties['prometheus_client.version'] ?: "0.15.0",
 ]
 
 dependencies {
@@ -28,6 +29,7 @@ dependencies {
 
     implementation "org.apache.kafka:kafka-clients:${versions["kafka"]}"
     implementation "com.beust:jcommander:${versions["jcommander"]}"
+    implementation "io.prometheus:simpleclient_httpserver:${versions["prometheus_client"]}"
     // we don't use slf4j actually, and it is used by kafka so we swallow the log.
     implementation "org.slf4j:slf4j-nop:${versions["slf4j"]}"
 }
