@@ -262,6 +262,27 @@ function generateDataFolderMountCommand() {
   echo "$mount"
 }
 
+function generateHardwareThrottleCommand() {
+    if [[ -n "$DEVICE_READ_BPS" ]]; then
+        echo "--device-read-bps $DEVICE_READ_BPS"
+    fi
+    if [[ -n "$DEVICE_WRITE_BPS" ]]; then
+        echo "--device-write-bps $DEVICE_WRITE_BPS"
+    fi
+    if [[ -n "$DEVICE_READ_IOPS" ]]; then
+        echo "--device-read-iops $DEVICE_READ_IOPS"
+    fi
+    if [[ -n "$DEVICE_WRITE_IOPS" ]]; then
+        echo "--device-write-iops $DEVICE_WRITE_IOPS"
+    fi
+    if [[ -n "$CPUS" ]]; then
+        echo "--cpus $CPUS"
+    fi
+    if [[ -n "$MEMORY" ]]; then
+        echo "--memory $MEMORY"
+    fi
+}
+
 function setPropertyIfEmpty() {
   local key=$1
   local value=$2
@@ -349,6 +370,7 @@ docker run -d --init \
   -v $BROKER_PROPERTIES:/tmp/broker.properties:ro \
   $(generateJmxConfigMountCommand) \
   $(generateDataFolderMountCommand) \
+  $(generateHardwareThrottleCommand) \
   -p $BROKER_PORT:9092 \
   -p $BROKER_JMX_PORT:$BROKER_JMX_PORT \
   -p $EXPORTER_PORT:$EXPORTER_PORT \
