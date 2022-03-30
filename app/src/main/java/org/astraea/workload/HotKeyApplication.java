@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.config.TopicConfig;
 import org.astraea.producer.Serializer;
@@ -40,9 +41,25 @@ public class HotKeyApplication {
 
       // generate the weight for each partition
       var weightOfEachPartition =
-          IntStream.range(0, partitionCount)
-              .mapToObj(x -> (int) Math.ceil(positiveGaussian.get()) * 2)
+          Stream.generate(
+                  new Supplier<Integer>() {
+                    int remainAllocation = 100000;
+
+                    @Override
+                    public Integer get() {
+                      int nextAllocation = (int) (remainAllocation * 0.7);
+                      remainAllocation -= nextAllocation;
+                      return nextAllocation;
+                    }
+                  })
+              .limit(partitionCount)
               .collect(Collectors.toList());
+
+      System.out.println("hot key");
+      System.out.println("Weight of each partition");
+      IntStream.range(0, weightOfEachPartition.size())
+          .forEachOrdered(
+              x -> System.out.printf("partition %d: %d%n", x, weightOfEachPartition.get(x)));
 
       var totalWeight = weightOfEachPartition.stream().mapToInt(x -> x).sum();
       var sizeOfEachChunk = totalOutput / totalWeight;
@@ -57,11 +74,11 @@ public class HotKeyApplication {
           IntStream.range(0, partitionCount)
               .parallel()
               .forEach(
-                  partition -> {
+                  key -> {
                     var record =
                         new ProducerRecord<>(
-                            topicName, (long) partition, new byte[(int) sizeOfEachChunk]);
-                    IntStream.range(0, weightOfEachPartition.get(partition))
+                            topicName, (long) key, new byte[(int) sizeOfEachChunk]);
+                    IntStream.range(0, weightOfEachPartition.get(key))
                         .forEach(x -> producer.send(record));
                   });
 
