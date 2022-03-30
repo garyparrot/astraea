@@ -60,8 +60,8 @@ public class BurstLoading {
         if (timeWait <= 0) {
           long start = System.currentTimeMillis();
           var keepTime = (int) (Math.random() * 200);
-          while ((System.currentTimeMillis() - start)/1000 <= keepTime ){
-            System.out.println("High Speed Send -" +(System.currentTimeMillis() - start)/1000);
+          while ((System.currentTimeMillis() - start) / 1000 <= keepTime) {
+            System.out.println("High Speed Send -" + (System.currentTimeMillis() - start) / 1000);
             kafkaProducer.send(new ProducerRecord<>(topicName, new byte[batchSize]));
           }
           timeAdd = true;
@@ -144,6 +144,7 @@ public class BurstLoading {
       return "(topic name),(group id)";
     }
   }
+
   public static void main(String[] args) throws InterruptedException {
     Workload workloadProducer = new BurstLoading.Producer();
     workloadProducer.run("192.168.103.143:10000", "test-1,good");

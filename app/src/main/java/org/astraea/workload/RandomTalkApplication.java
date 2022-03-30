@@ -1,4 +1,3 @@
 package org.astraea.workload;
 
-public class RandomTalkApplication {
-}
+public class RandomTalkApplication {}
