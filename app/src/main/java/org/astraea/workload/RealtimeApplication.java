@@ -3,7 +3,6 @@ package org.astraea.workload;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
-
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -38,18 +37,18 @@ public class RealtimeApplication {
       var topicName = split[0];
       var groupName = split[1];
       final KafkaConsumer<?, ?> kafkaConsumer =
-              new KafkaConsumer<>(
-                      Map.of(
-                              ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
-                              "org.apache.kafka.common.serialization.StringDeserializer",
-                              ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
-                              "org.apache.kafka.common.serialization.StringDeserializer",
-                              ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
-                              bootstrapServer,
-                              ConsumerConfig.GROUP_ID_CONFIG,
-                              groupName,
-                              ConsumerConfig.AUTO_OFFSET_RESET_CONFIG,
-                              "earliest"));
+          new KafkaConsumer<>(
+              Map.of(
+                  ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
+                  "org.apache.kafka.common.serialization.StringDeserializer",
+                  ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
+                  "org.apache.kafka.common.serialization.StringDeserializer",
+                  ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
+                  bootstrapServer,
+                  ConsumerConfig.GROUP_ID_CONFIG,
+                  groupName,
+                  ConsumerConfig.AUTO_OFFSET_RESET_CONFIG,
+                  "earliest"));
       kafkaConsumer.subscribe(Set.of(topicName));
       while (true) {
         kafkaConsumer.poll(Duration.ofSeconds(1L));
