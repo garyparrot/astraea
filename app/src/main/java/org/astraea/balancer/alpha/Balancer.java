@@ -12,8 +12,6 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -35,7 +33,6 @@ public class Balancer implements Runnable {
   private final MetricCollector metricCollector;
   private final Set<CostFunction> registeredCostFunction;
   private final Map<CostFunction, Fetcher> registeredFetchers;
-  private final ScheduledExecutorService scheduledExecutorService;
   private final RebalancePlanGenerator<Void> rebalancePlanGenerator;
   private final TopicAdmin topicAdmin;
 
@@ -47,13 +44,11 @@ public class Balancer implements Runnable {
     this.registeredFetchers =
         registeredCostFunction.stream()
             .collect(Collectors.toUnmodifiableMap(Function.identity(), CostFunction::fetcher));
-    this.scheduledExecutorService = Executors.newScheduledThreadPool(8);
 
     // initialize main component
     this.balancerThread = new Thread(this);
     this.metricCollector =
-        new MetricCollector(
-            this.jmxServiceURLMap, this.registeredFetchers.values(), this.scheduledExecutorService);
+        new MetricCollector(this.jmxServiceURLMap, this.registeredFetchers.values());
     this.topicAdmin = TopicAdmin.of(argument.props());
     // TODO: implement better plan generation
     this.rebalancePlanGenerator = new MonkeyPlanGenerator(this.topicAdmin);
@@ -64,8 +59,6 @@ public class Balancer implements Runnable {
   }
 
   public void run() {
-    this.metricCollector.start();
-
     // schedule a check for a period of time
     final long periodMs = Duration.ofMinutes(1).toMillis();
     while (!Thread.interrupted()) {
@@ -105,7 +98,6 @@ public class Balancer implements Runnable {
 
   public void stop() {
     this.metricCollector.close();
-    this.scheduledExecutorService.shutdownNow();
   }
 
   public static void main(String[] args) throws InterruptedException {
