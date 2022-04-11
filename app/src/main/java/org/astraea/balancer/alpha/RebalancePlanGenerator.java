@@ -3,7 +3,7 @@ package org.astraea.balancer.alpha;
 import org.astraea.cost.ClusterInfo;
 
 @FunctionalInterface
-public interface RebalancePlanGenerator<T> {
+public interface RebalancePlanGenerator {
 
-  RebalancePlanProposal generate(ClusterInfo clusterNow, T arguments);
+  RebalancePlanProposal generate(ClusterInfo clusterNow);
 }

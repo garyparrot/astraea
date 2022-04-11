@@ -15,7 +15,6 @@ import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -24,7 +23,6 @@ import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.generator.MonkeyPlanGenerator;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.CostFunction;
-import org.astraea.metrics.collector.Fetcher;
 import org.astraea.topic.TopicAdmin;
 
 public class Balancer implements Runnable {
@@ -34,9 +32,8 @@ public class Balancer implements Runnable {
   private final Map<Integer, JMXServiceURL> jmxServiceURLMap;
   private final MetricCollector metricCollector;
   private final Set<CostFunction> registeredCostFunction;
-  private final Map<CostFunction, Fetcher> registeredFetchers;
   private final ScheduledExecutorService scheduledExecutorService;
-  private final RebalancePlanGenerator<Void> rebalancePlanGenerator;
+  private final RebalancePlanGenerator rebalancePlanGenerator;
   private final TopicAdmin topicAdmin;
 
   public Balancer(Argument argument) {
@@ -44,16 +41,17 @@ public class Balancer implements Runnable {
     this.argument = argument;
     this.jmxServiceURLMap = argument.jmxServiceURLMap;
     this.registeredCostFunction = Set.of(CostFunction.throughput());
-    this.registeredFetchers =
-        registeredCostFunction.stream()
-            .collect(Collectors.toUnmodifiableMap(Function.identity(), CostFunction::fetcher));
     this.scheduledExecutorService = Executors.newScheduledThreadPool(8);
 
     // initialize main component
     this.balancerThread = new Thread(this);
     this.metricCollector =
         new MetricCollector(
-            this.jmxServiceURLMap, this.registeredFetchers.values(), this.scheduledExecutorService);
+            this.jmxServiceURLMap,
+            this.registeredCostFunction.stream()
+                .map(CostFunction::fetcher)
+                .collect(Collectors.toUnmodifiableList()),
+            this.scheduledExecutorService);
     this.topicAdmin = TopicAdmin.of(argument.props());
     // TODO: implement better plan generation
     this.rebalancePlanGenerator = new MonkeyPlanGenerator(this.topicAdmin);
@@ -83,7 +81,7 @@ public class Balancer implements Runnable {
       BalancerUtils.printCostFunction(brokerScores);
 
       if (isClusterImbalance()) {
-        final var proposal = rebalancePlanGenerator.generate(clusterInfo, null);
+        final var proposal = rebalancePlanGenerator.generate(clusterInfo);
 
         // describe the proposal
         BalancerUtils.describeProposal(
