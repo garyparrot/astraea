@@ -24,7 +24,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.management.remote.JMXServiceURL;
 import org.astraea.argument.Field;
-import org.astraea.balancer.alpha.generator.MonkeyPlanGenerator;
+import org.astraea.balancer.alpha.generator.ShufflePlanGenerator;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.CostFunction;
 import org.astraea.cost.LoadCost;
@@ -62,8 +62,7 @@ public class Balancer implements Runnable {
                 .collect(Collectors.toUnmodifiableList()),
             this.scheduledExecutorService);
     this.topicAdmin = TopicAdmin.of(argument.props());
-    // TODO: implement better plan generation
-    this.rebalancePlanGenerator = new MonkeyPlanGenerator(this.topicAdmin);
+    this.rebalancePlanGenerator = new ShufflePlanGenerator(2, 5);
   }
 
   public void start() {
@@ -74,7 +73,7 @@ public class Balancer implements Runnable {
     this.metricCollector.start();
 
     // schedule a check for a period of time
-    final long periodMs = Duration.ofMinutes(1).toMillis();
+    final long periodMs = Duration.ofSeconds(30).toMillis();
     while (!Thread.interrupted()) {
       // generate cluster info
       final var clusterInfo =
@@ -88,16 +87,6 @@ public class Balancer implements Runnable {
 
       // print out current score
       BalancerUtils.printCostFunction(currentBrokerCost);
-
-      class ScoredProposal {
-        private final double score;
-        private final RebalancePlanProposal proposal;
-
-        ScoredProposal(double score, RebalancePlanProposal proposal) {
-          this.score = score;
-          this.proposal = proposal;
-        }
-      }
 
       final var rankedProposal =
           new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
@@ -171,11 +160,18 @@ public class Balancer implements Runnable {
         return proposal
             .rebalancePlan()
             .map(
-                clusterLogAllocation -> {
-                  // TODO: There is a critical design issue in PartitionInfo, it can't store replica
-                  // info so there is no way for balancer to use this
-                  return List.of(PartitionInfo.of("", 0, null));
-                })
+                clusterLogAllocation ->
+                    clusterLogAllocation.allocation().get(topic).entrySet().stream()
+                        .map(
+                            entry -> {
+                              var collect =
+                                  entry.getValue().stream()
+                                      .map(x -> NodeInfo.of(x, "", 0))
+                                      .collect(Collectors.toUnmodifiableList());
+                              return PartitionInfo.of(
+                                  topic, entry.getKey(), collect.get(0), collect);
+                            })
+                        .collect(Collectors.toUnmodifiableList()))
             .orElse(clusterInfo.partitions(topic));
       }
 
@@ -276,6 +272,16 @@ public class Balancer implements Runnable {
                 })
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
       }
+    }
+  }
+
+  private static class ScoredProposal {
+    private final double score;
+    private final RebalancePlanProposal proposal;
+
+    private ScoredProposal(double score, RebalancePlanProposal proposal) {
+      this.score = score;
+      this.proposal = proposal;
     }
   }
 }
