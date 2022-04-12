@@ -2,15 +2,16 @@ package org.astraea.balancer.alpha;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.Utils;
 import org.astraea.cost.ClusterInfo;
-import org.astraea.cost.CostFunction;
 import org.astraea.cost.NodeInfo;
 import org.astraea.cost.PartitionInfo;
 import org.astraea.metrics.HasBeanObject;
@@ -43,7 +44,28 @@ public class BalancerUtils {
                                     y -> y.getKey().partition(), Map.Entry::getValue)))));
   }
 
-  public static void printCostFunction(Map<CostFunction, Map<Integer, Double>> brokerScores) {
+  public static void printTopicPartitionReplicaCost(
+      Map<?, Map<TopicPartitionReplica, Double>> tprScores) {
+    tprScores.forEach(
+        (key, value) -> {
+          System.out.printf("[%s]%n", key.getClass().getSimpleName());
+          value.entrySet().stream()
+              .sorted(
+                  Comparator.comparing(
+                          (Map.Entry<TopicPartitionReplica, Double> x) -> x.getKey().topic())
+                      .thenComparing(
+                          (Map.Entry<TopicPartitionReplica, Double> x) -> x.getKey().partition())
+                      .thenComparing(
+                          (Map.Entry<TopicPartitionReplica, Double> x) -> x.getKey().brokerId()))
+              .forEachOrdered(
+                  entry ->
+                      System.out.printf(
+                          " TPR %s: %f%n", entry.getKey().toString(), entry.getValue()));
+          System.out.println();
+        });
+  }
+
+  public static void printCost(Map<?, Map<Integer, Double>> brokerScores) {
     brokerScores.forEach(
         (key, value) -> {
           System.out.printf("[%s]%n", key.getClass().getSimpleName());

@@ -23,7 +23,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.management.remote.JMXServiceURL;
+import org.apache.kafka.common.TopicPartitionReplica;
+import org.astraea.Utils;
 import org.astraea.argument.Field;
+import org.astraea.balancer.alpha.cost.FolderSizeCost;
 import org.astraea.balancer.alpha.generator.ShufflePlanGenerator;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.CostFunction;
@@ -40,7 +43,9 @@ public class Balancer implements Runnable {
   private final Thread balancerThread;
   private final Map<Integer, JMXServiceURL> jmxServiceURLMap;
   private final MetricCollector metricCollector;
-  private final Set<CostFunction> registeredCostFunction;
+  private final Set<CostFunction> registeredBrokerCostFunction;
+  private final Set<org.astraea.balancer.alpha.cost.CostFunction>
+      registeredTopicPartitionCostFunction;
   private final ScheduledExecutorService scheduledExecutorService;
   private final RebalancePlanGenerator rebalancePlanGenerator;
   private final TopicAdmin topicAdmin;
@@ -49,7 +54,8 @@ public class Balancer implements Runnable {
     // initialize member variables
     this.argument = argument;
     this.jmxServiceURLMap = argument.jmxServiceURLMap;
-    this.registeredCostFunction = Set.of(new LoadCost(), new MemoryWarningCost());
+    this.registeredBrokerCostFunction = Set.of(new LoadCost(), new MemoryWarningCost());
+    this.registeredTopicPartitionCostFunction = Set.of(new FolderSizeCost());
     this.scheduledExecutorService = Executors.newScheduledThreadPool(8);
 
     // initialize main component
@@ -57,7 +63,7 @@ public class Balancer implements Runnable {
     this.metricCollector =
         new MetricCollector(
             this.jmxServiceURLMap,
-            this.registeredCostFunction.stream()
+            this.registeredBrokerCostFunction.stream()
                 .map(CostFunction::fetcher)
                 .collect(Collectors.toUnmodifiableList()),
             this.scheduledExecutorService);
@@ -81,12 +87,22 @@ public class Balancer implements Runnable {
 
       // dump metrics into cost function
       Map<CostFunction, Map<Integer, Double>> currentBrokerCost =
-          registeredCostFunction.parallelStream()
+          registeredBrokerCostFunction.parallelStream()
               .map(costFunction -> Map.entry(costFunction, costFunction.cost(clusterInfo)))
               .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+      Map<org.astraea.balancer.alpha.cost.CostFunction, Map<TopicPartitionReplica, Double>>
+          currentTopicPartitionCost =
+              registeredTopicPartitionCostFunction.parallelStream()
+                  .map(
+                      costFunction ->
+                          Map.entry(
+                              costFunction,
+                              Utils.handleException(() -> costFunction.cost(clusterInfo))))
+                  .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
 
       // print out current score
-      BalancerUtils.printCostFunction(currentBrokerCost);
+      BalancerUtils.printCost(currentBrokerCost);
+      BalancerUtils.printTopicPartitionReplicaCost(currentTopicPartitionCost);
 
       final var rankedProposal =
           new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
@@ -97,18 +113,26 @@ public class Balancer implements Runnable {
         final var proposedClusterInfo = clusterInfoFromProposal(clusterInfo, proposal);
 
         final var estimatedBrokerCost =
-            registeredCostFunction.parallelStream()
+            registeredBrokerCostFunction.parallelStream()
                 .map(
                     costFunction -> Map.entry(costFunction, costFunction.cost(proposedClusterInfo)))
                 .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-        final var estimatedCostSum = costSum(estimatedBrokerCost);
+        final var estimatedTPRCost =
+            registeredTopicPartitionCostFunction.parallelStream()
+                .map(
+                    costFunction ->
+                        Map.entry(
+                            costFunction,
+                            Utils.handleException(() -> costFunction.cost(proposedClusterInfo))))
+                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+        final var estimatedCostSum = costSum(estimatedBrokerCost, estimatedTPRCost);
 
         rankedProposal.add(new ScoredProposal(estimatedCostSum, proposal));
         while (rankedProposal.size() > 5) rankedProposal.pollLast();
       }
 
       final var selectedProposal = rankedProposal.first();
-      final var currentCostSum = costSum(currentBrokerCost);
+      final var currentCostSum = costSum(currentBrokerCost, currentTopicPartitionCost);
       final var proposedCostSum = selectedProposal.score;
       if (proposedCostSum < currentCostSum) {
         System.out.println("[New Proposal Found]");
@@ -191,12 +215,22 @@ public class Balancer implements Runnable {
    * Given a final score for this all the cost function results, the value will be a non-negative
    * real number. Basically, 0 means the most ideal state given all the cost functions.
    */
-  private double costSum(Map<CostFunction, Map<Integer, Double>> costOfProposal) {
+  private double costSum(
+      Map<CostFunction, Map<Integer, Double>> costOfProposal,
+      Map<org.astraea.balancer.alpha.cost.CostFunction, Map<TopicPartitionReplica, Double>>
+          costOfTPR) {
     // TODO: replace this with a much more meaningful implementation
-    return costOfProposal.values().stream()
-        .flatMapToDouble(x -> x.values().stream().mapToDouble(Double::doubleValue))
-        .average()
-        .orElse(0);
+    var a =
+        costOfProposal.values().stream()
+            .flatMapToDouble(x -> x.values().stream().mapToDouble(Double::doubleValue))
+            .average()
+            .orElse(0);
+    var b =
+        costOfTPR.values().stream()
+            .flatMapToDouble(x -> x.values().stream().mapToDouble(Double::doubleValue))
+            .average()
+            .orElse(0);
+    return (a + b) / 2;
   }
 
   public void stop() {
