@@ -139,9 +139,9 @@ public interface ClusterInfo {
   List<PartitionInfo> availablePartitions(String topic);
 
   /**
-   * All topics
+   * All topic names
    *
-   * @return return a list of topic name
+   * @return return a set of topic names
    */
   Set<String> topics();
 
