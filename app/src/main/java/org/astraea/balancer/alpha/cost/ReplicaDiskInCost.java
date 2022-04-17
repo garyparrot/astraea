@@ -1,185 +1,205 @@
 package org.astraea.balancer.alpha.cost;
 
-import java.net.InetSocketAddress;
-import java.util.ArrayList;
+import com.beust.jcommander.Parameter;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.net.MalformedURLException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
-import org.apache.kafka.common.Cluster;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.kafka.common.TopicPartitionReplica;
+import org.astraea.argument.Field;
+import org.astraea.argument.PositiveLongField;
+import org.astraea.balancer.alpha.Balancer;
+import org.astraea.balancer.alpha.BalancerUtils;
 import org.astraea.cost.ClusterInfo;
-import org.astraea.cost.NodeInfo;
-import org.astraea.cost.PartitionInfo;
 import org.astraea.metrics.HasBeanObject;
+import org.astraea.metrics.collector.BeanCollector;
 import org.astraea.metrics.collector.Fetcher;
-import org.astraea.topic.Replica;
+import org.astraea.metrics.kafka.KafkaMetrics;
 import org.astraea.topic.TopicAdmin;
 
 public class ReplicaDiskInCost implements CostFunction {
-  // private final Map<Integer, BrokerMetric> brokersMetric = new HashMap<>();
-  static TopicAdmin admin;
+    Map<Integer,Integer> brokerBandwidthCap;
+
+  public ReplicaDiskInCost(Map<Integer,Integer> brokerBandwidthCap) {
+    this.brokerBandwidthCap = brokerBandwidthCap;
+  }
 
   @Override
   public Map<TopicPartitionReplica, Double> cost(ClusterInfo clusterInfo)
       throws InterruptedException {
-    // set broker bandwidth upper limit to 10 MB/s
-    var bandwidthCap = 10;
-    //  duration of the calculated
-    var duration = 10;
     // a replica average data in rate (MB/s).
+    var replicaIn = replicaInCount(clusterInfo);
+
     var dataInRate =
         new TreeMap<TopicPartitionReplica, Double>(
-            Comparator.comparing(TopicPartitionReplica::topic)
+            Comparator.comparing(TopicPartitionReplica::brokerId)
+                .thenComparing(TopicPartitionReplica::topic)
                 .thenComparing(TopicPartitionReplica::partition));
-    var dataInRateScore =
-        new TreeMap<TopicPartitionReplica, Double>(
-            Comparator.comparing(TopicPartitionReplica::topic)
-                .thenComparing(TopicPartitionReplica::partition));
-
-    Map<TopicPartitionReplica, Replica> oldReplicas = new HashMap<>();
-    admin
-        .replicas(admin.topicNames())
-        .forEach(
-            (tp, replica) -> {
-              replica.forEach(
-                  r ->
-                      oldReplicas.put(
-                          new TopicPartitionReplica(tp.topic(), tp.partition(), r.broker()), r));
-            });
-    TimeUnit.SECONDS.sleep(duration);
-    Map<Integer, Integer> numberOfReplicaInBroker = new HashMap<>();
-    admin.brokerIds().forEach(broker -> numberOfReplicaInBroker.put(broker, 0));
-    admin
-        .replicas(admin.topicNames())
-        .forEach(
-            (tp, replica) ->
-                replica.forEach(
-                    r -> {
-                      var tpr = new TopicPartitionReplica(tp.topic(), tp.partition(), r.broker());
-                      numberOfReplicaInBroker.put(
-                          r.broker(), numberOfReplicaInBroker.get(r.broker()) + 1);
-                      dataInRate.put(
-                          tpr,
-                          (double) (r.size() - oldReplicas.get(tpr).size()) / 1048576 / duration);
-                    }));
-    dataInRate.forEach(
+    replicaIn.forEach(
         (tpr, rate) -> {
-          var score = rate / bandwidthCap * numberOfReplicaInBroker.get(tpr.brokerId());
+          var score = rate / brokerBandwidthCap.get(tpr.brokerId());
           if (score >= 1) score = 1;
-          dataInRateScore.put(tpr, score);
+          dataInRate.put(tpr, score);
         });
-    return dataInRateScore;
+    return dataInRate;
   }
 
   /** @return the metrics getters. Those getters are used to fetch mbeans. */
   @Override
   public Fetcher fetcher() {
-    return null;
+    return client -> new java.util.ArrayList<>(KafkaMetrics.TopicPartition.Size.fetch(client));
   }
 
-  public static void main(String[] args) throws InterruptedException {
-    final String host = "192.168.103.39";
-    final int port = 15148;
-    admin = TopicAdmin.of(host + ":" + port);
-    Cluster cluster = Cluster.bootstrap(List.of(InetSocketAddress.createUnresolved(host, port)));
-    var all = new HashMap<Integer, List<HasBeanObject>>();
-    ClusterInfo clusterInfo =
-        new ClusterInfo() {
-          @Override
-          public List<NodeInfo> nodes() {
-            List<NodeInfo> info = new ArrayList<>();
-            admin
-                .brokerIds()
-                .forEach(
-                    b -> {
-                      admin.replicas(admin.topicNames());
-                      info.add(NodeInfo.of(b, host, port));
-                    });
-            return info;
-          }
-
-          @Override
-          public List<PartitionInfo> availablePartitions(String topic) {
-            List<PartitionInfo> partitionInfo = new ArrayList<>();
-            admin
-                .replicas(Set.of(topic))
-                .forEach(
-                    (topicPartition, replicas) -> {
-                      replicas.stream().filter(Replica::leader);
-                      partitionInfo.add(
-                          PartitionInfo.of(
-                              topic,
-                              topicPartition.partition(),
-                              NodeInfo.of(
-                                  replicas.stream()
-                                      .filter(Replica::leader)
-                                      .findFirst()
-                                      .get()
-                                      .broker(),
-                                  host,
-                                  port)));
-                    });
-            return partitionInfo;
-          }
-
-          @Override
-          public Set<String> topics() {
-            // TODO: fix this
-            return null;
-          }
-
-          @Override
-          public List<PartitionInfo> partitions(String topic) {
-            List<PartitionInfo> partitionInfo = new ArrayList<>();
-            admin
-                .replicas(Set.of(topic))
-                .forEach(
-                    (topicPartition, replicas) -> {
-                      partitionInfo.add(
-                          PartitionInfo.of(
-                              topic,
-                              topicPartition.partition(),
-                              NodeInfo.of(
-                                  replicas.stream()
-                                      .filter(Replica::leader)
-                                      .findFirst()
-                                      .get()
-                                      .broker(),
-                                  host,
-                                  port)));
-                    });
-            return partitionInfo;
-          }
-
-          @Override
-          public Collection<HasBeanObject> beans(int brokerId) {
-            return all.getOrDefault(brokerId, List.of());
-          }
-
-          @Override
-          public Map<Integer, Collection<HasBeanObject>> allBeans() {
-            return Collections.unmodifiableMap(all);
-          }
-        };
+  public Map<TopicPartitionReplica, Double> replicaInCount(ClusterInfo clusterInfo) {
+    Map<TopicPartitionReplica, List<HasBeanObject>> tpBeanObjects = new HashMap();
     clusterInfo
         .allBeans()
-        .forEach((key, value) -> all.computeIfAbsent(key, k -> new ArrayList<>()).addAll(value));
-    clusterInfo
-        .allBeans()
-        .forEach((key, value) -> all.computeIfAbsent(key, k -> new ArrayList<>()).addAll(value));
-    CostFunction costFunction = new ReplicaDiskInCost();
-    costFunction
-        .cost(clusterInfo)
         .forEach(
-            (tpr, score) -> {
-              System.out.println(
-                  tpr.topic() + "-" + tpr.partition() + "-" + tpr.brokerId() + " : " + score);
-            });
+            ((broker, beanObjects) -> {
+              clusterInfo
+                  .topics()
+                  .forEach(
+                      topic -> {
+                        clusterInfo
+                            .partitions(topic)
+                            .forEach(
+                                partitionInfo -> {
+                                  tpBeanObjects.put(
+                                      new TopicPartitionReplica(
+                                          partitionInfo.topic(), partitionInfo.partition(), broker),
+                                      beanObjects.stream()
+                                          .filter(
+                                              beanObject ->
+                                                  beanObject
+                                                          .beanObject()
+                                                          .getProperties()
+                                                          .get("topic")
+                                                          .equals(partitionInfo.topic())
+                                                      && Integer.parseInt(
+                                                              beanObject
+                                                                  .beanObject()
+                                                                  .getProperties()
+                                                                  .get("partition"))
+                                                          == (partitionInfo.partition()))
+                                          .collect(Collectors.toList()));
+                                });
+                      });
+            }));
+    Map<TopicPartitionReplica, Double> replicaIn = new HashMap<>();
+    tpBeanObjects.forEach(
+        (tpr, beanObjects) -> {
+          replicaIn.put(
+              tpr,
+              (double)
+                      ((long) beanObjects.get(1).beanObject().getAttributes().get("Value")
+                          - (long) beanObjects.get(0).beanObject().getAttributes().get("Value"))
+                  / 1048576
+                  / 10.0
+                  * clusterInfo.beans(tpr.brokerId()).size());
+        });
+    return replicaIn;
+  }
+
+  public static void main(String[] args) throws InterruptedException, MalformedURLException {
+    final var argument =
+        org.astraea.argument.Argument.parse(new ReplicaDiskInCost.Argument(), args);
+    var admin = TopicAdmin.of(argument.brokers);
+    var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
+    var jmxAddress = Map.of(1001, 13189, 1002, 15517, 1003, 13834);
+    // set broker bandwidth upper limit to 10 MB/s;
+    CostFunction costFunction = new ReplicaDiskInCost(argument.brokerBandwidthCap);
+    for (var i = 1; i <= 2; i++) {
+      jmxAddress.forEach(
+          (b, port) -> {
+            var firstBeanObjects =
+                BeanCollector.builder()
+                    .interval(Duration.ofSeconds(4))
+                    .build()
+                    .register()
+                    .host(argument.brokers.split(":")[0])
+                    .port(port)
+                    .fetcher(Fetcher.of(Set.of(costFunction.fetcher())))
+                    .build()
+                    .current();
+            allBeans.put(
+                b,
+                allBeans.containsKey(b)
+                    ? Stream.concat(allBeans.get(b).stream(), firstBeanObjects.stream())
+                        .collect(Collectors.toList())
+                    : firstBeanObjects);
+          });
+      if (i == 1)
+        try {
+          TimeUnit.SECONDS.sleep(10);
+        } catch (InterruptedException e) {
+          throw new RuntimeException(e);
+        }
+    }
+    ClusterInfo clusterInfo = ClusterInfo.of(BalancerUtils.clusterSnapShot(admin), allBeans);
+    costFunction.cost(clusterInfo).forEach((tp, score) -> System.out.println(tp + ":" + score));
+  }
+
+  static class Argument extends org.astraea.argument.Argument {
+      @Parameter(
+              names = {"--broker.bandwidthCap.file"},
+              description = "",
+              converter = brokerBandwidthCapMapField.class,
+              required = true)
+      Map<Integer, Integer> brokerBandwidthCap;
+
+      static class brokerBandwidthCapMapField extends Field<Map<Integer, Integer>> {
+          static final Pattern serviceUrlKeyPattern =
+                  Pattern.compile("broker\\.(?<brokerId>[1-9][0-9]{0,9})");
+
+          static Map.Entry<Integer, Integer> transformEntry(Map.Entry<String, String> entry) {
+              final Matcher matcher = serviceUrlKeyPattern.matcher(entry.getKey());
+              if (matcher.matches()) {
+                  try {
+                      int brokerId = Integer.parseInt(matcher.group("brokerId"));
+                      return Map.entry(brokerId, Integer.parseInt(entry.getValue()));
+                  } catch (NumberFormatException e) {
+                      throw new IllegalArgumentException("Bad integer format for " + entry.getKey(), e);
+                  }
+              } else {
+                  throw new IllegalArgumentException(
+                          "Bad key format for "
+                                  + entry.getKey()
+                                  + " no match for the following format :"
+                                  + serviceUrlKeyPattern.pattern());
+              }
+          }
+
+          @Override
+          public Map<Integer, Integer> convert(String value) {
+              final Properties properties = new Properties();
+
+              try (var reader = Files.newBufferedReader(Path.of(value))) {
+                  properties.load(reader);
+              } catch (IOException e) {
+                  throw new UncheckedIOException(e);
+              }
+              return properties.entrySet().stream()
+                      .map(entry -> Map.entry((String) entry.getKey(), (String) entry.getValue()))
+                      .map(
+                             brokerBandwidthCapMapField::transformEntry)
+                      .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+          }
+      }
   }
 }

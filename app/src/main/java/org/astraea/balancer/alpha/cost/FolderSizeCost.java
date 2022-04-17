@@ -1,42 +1,53 @@
 package org.astraea.balancer.alpha.cost;
 
-import java.net.InetSocketAddress;
-import java.util.ArrayList;
+import com.beust.jcommander.Parameter;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.net.MalformedURLException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.TreeMap;
-import org.apache.kafka.common.Cluster;
+import java.util.stream.Collectors;
+
 import org.apache.kafka.common.TopicPartitionReplica;
+import org.astraea.argument.Field;
+import org.astraea.argument.PositiveLongField;
+import org.astraea.balancer.alpha.Balancer;
+import org.astraea.balancer.alpha.BalancerUtils;
 import org.astraea.cost.ClusterInfo;
-import org.astraea.cost.NodeInfo;
-import org.astraea.cost.PartitionInfo;
 import org.astraea.metrics.HasBeanObject;
+import org.astraea.metrics.collector.BeanCollector;
 import org.astraea.metrics.collector.Fetcher;
-import org.astraea.topic.Replica;
+import org.astraea.metrics.kafka.KafkaMetrics;
 import org.astraea.topic.TopicAdmin;
 
 public class FolderSizeCost implements CostFunction {
   static TopicAdmin admin;
+  Map<String, Integer> totalFolderCapacity;
+
+  public FolderSizeCost(Map<String, Integer>  totalBrokerCapacity) {
+    this.totalFolderCapacity = totalBrokerCapacity;
+  }
 
   @Override
   public Map<TopicPartitionReplica, Double> cost(ClusterInfo clusterInfo) {
-    Map<String, Long> totalSpace = new HashMap<>();
-    totalSpace.put("/tmp/log-folder-0", 200 * 1073741824L); // 200GB
-    totalSpace.put("/tmp/log-folder-1", 500 * 1073741824L); // 500GB
-    totalSpace.put("/tmp/log-folder-2", 30 * 1073741824L); // 30GB
 
-    var freeDiskSpace =
+    var usedDiskSpace =
         new TreeMap<TopicPartitionReplica, Double>(
             Comparator.comparing(TopicPartitionReplica::brokerId)
                 .thenComparing(TopicPartitionReplica::topic)
                 .thenComparing(TopicPartitionReplica::partition));
 
-    totalSpace.forEach(
+    totalFolderCapacity.forEach(
         (path, totalSize) ->
             admin
                 .replicas(admin.topicNames())
@@ -45,118 +56,77 @@ public class FolderSizeCost implements CostFunction {
                         replicas.forEach(
                             r -> {
                               if (r.path().equals(path))
-                                freeDiskSpace.put(
+                                usedDiskSpace.put(
                                     new TopicPartitionReplica(
                                         tp.topic(), tp.partition(), r.broker()),
-                                    Math.round(((double) r.size() / totalSpace.get(path)) * 1000.0)
+                                    Math.round(
+                                            ((double) r.size() / totalFolderCapacity.get(path) / 1048576)
+                                                * 1000.0)
                                         / 1000.0);
                             })));
-
-    return freeDiskSpace;
+    return usedDiskSpace;
   }
 
   /** @return the metrics getters. Those getters are used to fetch mbeans. */
   @Override
   public Fetcher fetcher() {
-    return null;
+    return client -> new java.util.ArrayList<>(KafkaMetrics.TopicPartition.Size.fetch(client));
   }
 
-  public static void main(String[] args) throws InterruptedException {
-    final String host = "192.168.103.39";
-    final int port = 13764;
-    admin = TopicAdmin.of(host + ":" + port);
-    Cluster cluster = Cluster.bootstrap(List.of(InetSocketAddress.createUnresolved(host, port)));
-    var all = new HashMap<Integer, List<HasBeanObject>>();
-    ClusterInfo clusterInfo =
-        new ClusterInfo() {
-          @Override
-          public List<NodeInfo> nodes() {
-            List<NodeInfo> info = new ArrayList<>();
-            admin
-                .brokerIds()
-                .forEach(
-                    b -> {
-                      admin.replicas(admin.topicNames());
-                      info.add(NodeInfo.of(b, host, port));
-                    });
-            return info;
-          }
-
-          @Override
-          public List<PartitionInfo> availablePartitions(String topic) {
-            List<PartitionInfo> partitionInfo = new ArrayList<>();
-            admin
-                .replicas(Set.of(topic))
-                .forEach(
-                    (topicPartition, replicas) -> {
-                      partitionInfo.add(
-                          PartitionInfo.of(
-                              topic,
-                              topicPartition.partition(),
-                              NodeInfo.of(
-                                  replicas.stream()
-                                      .filter(Replica::leader)
-                                      .findFirst()
-                                      .get()
-                                      .broker(),
-                                  host,
-                                  port)));
-                    });
-            return partitionInfo;
-          }
-
-          @Override
-          public Set<String> topics() {
-            // TODO: fix this
-            return null;
-          }
-
-          @Override
-          public List<PartitionInfo> partitions(String topic) {
-            List<PartitionInfo> partitionInfo = new ArrayList<>();
-            admin
-                .replicas(Set.of(topic))
-                .forEach(
-                    (topicPartition, replicas) -> {
-                      partitionInfo.add(
-                          PartitionInfo.of(
-                              topic,
-                              topicPartition.partition(),
-                              NodeInfo.of(
-                                  replicas.stream()
-                                      .filter(Replica::leader)
-                                      .findFirst()
-                                      .get()
-                                      .broker(),
-                                  host,
-                                  port)));
-                    });
-            return partitionInfo;
-          }
-
-          @Override
-          public Collection<HasBeanObject> beans(int brokerId) {
-            return all.getOrDefault(brokerId, List.of());
-          }
-
-          @Override
-          public Map<Integer, Collection<HasBeanObject>> allBeans() {
-            return Collections.unmodifiableMap(all);
-          }
-        };
-    clusterInfo
-        .allBeans()
-        .forEach((key, value) -> all.computeIfAbsent(key, k -> new ArrayList<>()).addAll(value));
-    clusterInfo
-        .allBeans()
-        .forEach((key, value) -> all.computeIfAbsent(key, k -> new ArrayList<>()).addAll(value));
-
-    CostFunction costFunction = new FolderSizeCost();
-    costFunction
-        .cost(clusterInfo)
-        .forEach(
-            (key, value) ->
-                System.out.println(
-                    key.brokerId() + "-" + key.topic() + "-" + key.partition() + ": " + value));
+  public static void main(String[] args) throws InterruptedException, MalformedURLException {
+    final var argument = org.astraea.argument.Argument.parse(new FolderSizeCost.Argument(), args);
+    admin = TopicAdmin.of(argument.brokers);
+    var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
+    var jmxAddress = Map.of(1001, 13189, 1002, 15517, 1003, 13834);
+    CostFunction costFunction = new FolderSizeCost(argument.totalFolderCapacity);
+    jmxAddress.forEach(
+        (b, port) ->
+            allBeans.put(
+                b,
+                BeanCollector.builder()
+                    .interval(Duration.ofSeconds(4))
+                    .build()
+                    .register()
+                    .host(argument.brokers.split(":")[0])
+                    .port(port)
+                    .fetcher(Fetcher.of(Set.of(costFunction.fetcher())))
+                    .build()
+                    .current()));
+    ClusterInfo clusterInfo = ClusterInfo.of(BalancerUtils.clusterSnapShot(admin), allBeans);
+    costFunction.cost(clusterInfo).forEach((tp, score) -> System.out.println(tp + ":" + score));
   }
+
+  static class Argument extends org.astraea.argument.Argument {
+    @Parameter(
+            names = {"--folder.capacity.file"},
+            description = "Path to a java properties file that contains all the total hard disk space(MB) and their corresponding log path",
+            converter = FolderCapacityMapField.class,
+            required = true)
+    Map<String, Integer> totalFolderCapacity;
+  }
+  static class  FolderCapacityMapField extends Field<Map<String, Integer>> {
+    static Map.Entry<String,Integer> transformEntry(Map.Entry<String, String> entry) {
+      try {
+        return Map.entry(entry.getKey(),Integer.parseInt(entry.getValue()));
+      } catch (NumberFormatException e) {
+        throw new IllegalArgumentException("Bad integer format for " + entry.getKey(), e);
+      }
+    }
+    @Override
+    public Map<String, Integer> convert(String value) {
+      final Properties properties = new Properties();
+
+      try (var reader = Files.newBufferedReader(Path.of(value))) {
+        properties.load(reader);
+      } catch (IOException e) {
+        throw new UncheckedIOException(e);
+      }
+      return properties.entrySet().stream()
+              .map(entry -> Map.entry((String)entry.getKey(), (String) entry.getValue()))
+              .map(
+                      FolderCapacityMapField::transformEntry)
+              .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
+  }
+
 }

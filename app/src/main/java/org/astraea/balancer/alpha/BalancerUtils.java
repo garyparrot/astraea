@@ -174,7 +174,9 @@ public class BalancerUtils {
                                   entry.getKey().topic(),
                                   entry.getKey().partition(),
                                   leaderNode,
-                                  allNodes));
+                                  allNodes,
+                                  null,
+                                  null));
                 })
             .collect(Collectors.toUnmodifiableList());
 

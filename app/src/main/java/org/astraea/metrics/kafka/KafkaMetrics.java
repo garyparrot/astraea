@@ -1,9 +1,11 @@
 package org.astraea.metrics.kafka;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.astraea.metrics.HasBeanObject;
 import org.astraea.metrics.java.JvmMemory;
 import org.astraea.metrics.java.OperatingSystemInfo;
 import org.astraea.metrics.jmx.BeanObject;
@@ -158,9 +160,44 @@ public final class KafkaMetrics {
     }
   }
 
-  public static final class TopicPartition {
+  public enum TopicPartition {
+    LodEndOffset("LodEndOffset"),
+    LogStartOffset("LogStartOffset"),
+    NumLogSegments("NumLogSegments"),
+    Size("Size");
+    private final String metricName;
 
-    private TopicPartition() {}
+    TopicPartition(String name) {
+      this.metricName = name;
+    }
+
+    public String metricName() {
+      return metricName;
+    }
+
+    public static TopicPartition of(String metricName) {
+      return Arrays.stream(TopicPartition.values())
+          .filter(metric -> metric.metricName().equalsIgnoreCase(metricName))
+          .findFirst()
+          .orElseThrow(() -> new IllegalArgumentException("No such metric: " + metricName));
+    }
+
+    public Collection<HasBeanObject> fetch(MBeanClient mBeanClient) {
+      Collection<HasBeanObject> beanList = new ArrayList<>();
+      mBeanClient
+          .queryBeans(
+              BeanQuery.builder("kafka.log")
+                  .property("type", "Log")
+                  .property("topic", "*")
+                  .property("partition", "*")
+                  .property("name", "Size")
+                  .build())
+          .forEach(
+              beanObject -> {
+                beanList.add(new BrokerTopicMetricsResult(beanObject));
+              });
+      return beanList;
+    }
 
     /**
      * Number of partitions across all topics in the cluster.
