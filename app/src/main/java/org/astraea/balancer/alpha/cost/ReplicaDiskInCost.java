@@ -1,7 +1,6 @@
 package org.astraea.balancer.alpha.cost;
 
 import com.beust.jcommander.Parameter;
-
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.MalformedURLException;
@@ -23,8 +22,6 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.argument.Field;
-import org.astraea.argument.PositiveLongField;
-import org.astraea.balancer.alpha.Balancer;
 import org.astraea.balancer.alpha.BalancerUtils;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.metrics.HasBeanObject;
@@ -34,9 +31,9 @@ import org.astraea.metrics.kafka.KafkaMetrics;
 import org.astraea.topic.TopicAdmin;
 
 public class ReplicaDiskInCost implements CostFunction {
-    Map<Integer,Integer> brokerBandwidthCap;
+  Map<Integer, Integer> brokerBandwidthCap;
 
-  public ReplicaDiskInCost(Map<Integer,Integer> brokerBandwidthCap) {
+  public ReplicaDiskInCost(Map<Integer, Integer> brokerBandwidthCap) {
     this.brokerBandwidthCap = brokerBandwidthCap;
   }
 
@@ -156,50 +153,49 @@ public class ReplicaDiskInCost implements CostFunction {
   }
 
   static class Argument extends org.astraea.argument.Argument {
-      @Parameter(
-              names = {"--broker.bandwidthCap.file"},
-              description = "",
-              converter = brokerBandwidthCapMapField.class,
-              required = true)
-      Map<Integer, Integer> brokerBandwidthCap;
+    @Parameter(
+        names = {"--broker.bandwidthCap.file"},
+        description = "",
+        converter = brokerBandwidthCapMapField.class,
+        required = true)
+    Map<Integer, Integer> brokerBandwidthCap;
 
-      static class brokerBandwidthCapMapField extends Field<Map<Integer, Integer>> {
-          static final Pattern serviceUrlKeyPattern =
-                  Pattern.compile("broker\\.(?<brokerId>[1-9][0-9]{0,9})");
+    static class brokerBandwidthCapMapField extends Field<Map<Integer, Integer>> {
+      static final Pattern serviceUrlKeyPattern =
+          Pattern.compile("broker\\.(?<brokerId>[1-9][0-9]{0,9})");
 
-          static Map.Entry<Integer, Integer> transformEntry(Map.Entry<String, String> entry) {
-              final Matcher matcher = serviceUrlKeyPattern.matcher(entry.getKey());
-              if (matcher.matches()) {
-                  try {
-                      int brokerId = Integer.parseInt(matcher.group("brokerId"));
-                      return Map.entry(brokerId, Integer.parseInt(entry.getValue()));
-                  } catch (NumberFormatException e) {
-                      throw new IllegalArgumentException("Bad integer format for " + entry.getKey(), e);
-                  }
-              } else {
-                  throw new IllegalArgumentException(
-                          "Bad key format for "
-                                  + entry.getKey()
-                                  + " no match for the following format :"
-                                  + serviceUrlKeyPattern.pattern());
-              }
+      static Map.Entry<Integer, Integer> transformEntry(Map.Entry<String, String> entry) {
+        final Matcher matcher = serviceUrlKeyPattern.matcher(entry.getKey());
+        if (matcher.matches()) {
+          try {
+            int brokerId = Integer.parseInt(matcher.group("brokerId"));
+            return Map.entry(brokerId, Integer.parseInt(entry.getValue()));
+          } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Bad integer format for " + entry.getKey(), e);
           }
-
-          @Override
-          public Map<Integer, Integer> convert(String value) {
-              final Properties properties = new Properties();
-
-              try (var reader = Files.newBufferedReader(Path.of(value))) {
-                  properties.load(reader);
-              } catch (IOException e) {
-                  throw new UncheckedIOException(e);
-              }
-              return properties.entrySet().stream()
-                      .map(entry -> Map.entry((String) entry.getKey(), (String) entry.getValue()))
-                      .map(
-                             brokerBandwidthCapMapField::transformEntry)
-                      .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-          }
+        } else {
+          throw new IllegalArgumentException(
+              "Bad key format for "
+                  + entry.getKey()
+                  + " no match for the following format :"
+                  + serviceUrlKeyPattern.pattern());
+        }
       }
+
+      @Override
+      public Map<Integer, Integer> convert(String value) {
+        final Properties properties = new Properties();
+
+        try (var reader = Files.newBufferedReader(Path.of(value))) {
+          properties.load(reader);
+        } catch (IOException e) {
+          throw new UncheckedIOException(e);
+        }
+        return properties.entrySet().stream()
+            .map(entry -> Map.entry((String) entry.getKey(), (String) entry.getValue()))
+            .map(brokerBandwidthCapMapField::transformEntry)
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+      }
+    }
   }
 }

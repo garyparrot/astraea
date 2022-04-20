@@ -23,7 +23,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.management.remote.JMXServiceURL;
-
 import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.Utils;
 import org.astraea.argument.Field;
@@ -58,7 +57,9 @@ public class Balancer implements Runnable {
     this.jmxServiceURLMap = argument.jmxServiceURLMap;
     this.registeredBrokerCostFunction = Set.of(new LoadCost(), new MemoryWarningCost());
     this.registeredTopicPartitionCostFunction =
-        Set.of(new ReplicaDiskInCost(argument.brokerBandwidthCap), new FolderSizeCost(argument.totalFolderCapacity));
+        Set.of(
+            new ReplicaDiskInCost(argument.brokerBandwidthCap),
+            new FolderSizeCost(argument.totalFolderCapacity));
     this.scheduledExecutorService = Executors.newScheduledThreadPool(8);
 
     // initialize main component
@@ -261,21 +262,24 @@ public class Balancer implements Runnable {
 
     @Parameter(
         names = {"--broker.bandwidthCap.file"},
-        description = "Path to a java properties file that contains all the bandwidth upper limit(MB/s) and their corresponding broker.id",
+        description =
+            "Path to a java properties file that contains all the bandwidth upper limit(MB/s) and their corresponding broker.id",
         converter = brokerBandwidthCapMapField.class,
-            required = true)
+        required = true)
     Map<Integer, Integer> brokerBandwidthCap;
 
     @Parameter(
-            names = {"--folder.capacity.file"},
-            description = "Path to a java properties file that contains all the total hard disk space(MB) and their corresponding log path",
-            converter = FolderCapacityMapField.class,
-            required = true)
-    Map<String, Integer>  totalFolderCapacity;
+        names = {"--folder.capacity.file"},
+        description =
+            "Path to a java properties file that contains all the total hard disk space(MB) and their corresponding log path",
+        converter = FolderCapacityMapField.class,
+        required = true)
+    Map<String, Integer> totalFolderCapacity;
 
     public static class JmxServiceUrlMappingFileField extends Field<Map<Integer, JMXServiceURL>> {
       static final Pattern serviceUrlKeyPattern =
           Pattern.compile("broker\\.(?<brokerId>[1-9][0-9]{0,9})");
+
       static Map.Entry<Integer, JMXServiceURL> transformEntry(Map.Entry<String, String> entry) {
         final Matcher matcher = serviceUrlKeyPattern.matcher(entry.getKey());
         if (matcher.matches()) {
@@ -322,10 +326,12 @@ public class Balancer implements Runnable {
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
       }
     }
-    static class  brokerBandwidthCapMapField extends Field<Map<Integer, Integer>> {
+
+    static class brokerBandwidthCapMapField extends Field<Map<Integer, Integer>> {
       static final Pattern serviceUrlKeyPattern =
-              Pattern.compile("broker\\.(?<brokerId>[1-9][0-9]{0,9})");
-      static Map.Entry<Integer,Integer> transformEntry(Map.Entry<String, String> entry) {
+          Pattern.compile("broker\\.(?<brokerId>[1-9][0-9]{0,9})");
+
+      static Map.Entry<Integer, Integer> transformEntry(Map.Entry<String, String> entry) {
         final Matcher matcher = serviceUrlKeyPattern.matcher(entry.getKey());
         if (matcher.matches()) {
           try {
@@ -334,16 +340,17 @@ public class Balancer implements Runnable {
           } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Bad integer format for " + entry.getKey(), e);
           }
-        }else {
+        } else {
           throw new IllegalArgumentException(
-                  "Bad key format for "
-                          + entry.getKey()
-                          + " no match for the following format :"
-                          + serviceUrlKeyPattern.pattern());
+              "Bad key format for "
+                  + entry.getKey()
+                  + " no match for the following format :"
+                  + serviceUrlKeyPattern.pattern());
         }
       }
+
       @Override
-      public Map<Integer,Integer> convert(String value) {
+      public Map<Integer, Integer> convert(String value) {
         final Properties properties = new Properties();
 
         try (var reader = Files.newBufferedReader(Path.of(value))) {
@@ -352,20 +359,21 @@ public class Balancer implements Runnable {
           throw new UncheckedIOException(e);
         }
         return properties.entrySet().stream()
-                .map(entry -> Map.entry((String)entry.getKey(), (String) entry.getValue()))
-                .map(
-                        brokerBandwidthCapMapField::transformEntry)
-                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+            .map(entry -> Map.entry((String) entry.getKey(), (String) entry.getValue()))
+            .map(brokerBandwidthCapMapField::transformEntry)
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
       }
     }
-    static class  FolderCapacityMapField extends Field<Map<String, Integer>> {
-      static Map.Entry<String,Integer> transformEntry(Map.Entry<String, String> entry) {
+
+    static class FolderCapacityMapField extends Field<Map<String, Integer>> {
+      static Map.Entry<String, Integer> transformEntry(Map.Entry<String, String> entry) {
         try {
-          return Map.entry(entry.getKey(),Integer.parseInt(entry.getValue()));
+          return Map.entry(entry.getKey(), Integer.parseInt(entry.getValue()));
         } catch (NumberFormatException e) {
           throw new IllegalArgumentException("Bad integer format for " + entry.getKey(), e);
         }
       }
+
       @Override
       public Map<String, Integer> convert(String value) {
         final Properties properties = new Properties();
@@ -376,10 +384,9 @@ public class Balancer implements Runnable {
           throw new UncheckedIOException(e);
         }
         return properties.entrySet().stream()
-                .map(entry -> Map.entry((String)entry.getKey(), (String) entry.getValue()))
-                .map(
-                        FolderCapacityMapField::transformEntry)
-                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+            .map(entry -> Map.entry((String) entry.getKey(), (String) entry.getValue()))
+            .map(FolderCapacityMapField::transformEntry)
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
       }
     }
   }
