@@ -1,7 +1,6 @@
 package org.astraea.balancer.alpha.cost;
 
 import com.beust.jcommander.Parameter;
-
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.MalformedURLException;
@@ -11,17 +10,13 @@ import java.time.Duration;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
-
 import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.argument.Field;
-import org.astraea.argument.PositiveLongField;
-import org.astraea.balancer.alpha.Balancer;
 import org.astraea.balancer.alpha.BalancerUtils;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.metrics.HasBeanObject;
@@ -34,7 +29,7 @@ public class FolderSizeCost implements CostFunction {
   static TopicAdmin admin;
   Map<String, Integer> totalFolderCapacity;
 
-  public FolderSizeCost(Map<String, Integer>  totalBrokerCapacity) {
+  public FolderSizeCost(Map<String, Integer> totalBrokerCapacity) {
     this.totalFolderCapacity = totalBrokerCapacity;
   }
 
@@ -60,7 +55,9 @@ public class FolderSizeCost implements CostFunction {
                                     new TopicPartitionReplica(
                                         tp.topic(), tp.partition(), r.broker()),
                                     Math.round(
-                                            ((double) r.size() / totalFolderCapacity.get(path) / 1048576)
+                                            ((double) r.size()
+                                                    / totalFolderCapacity.get(path)
+                                                    / 1048576)
                                                 * 1000.0)
                                         / 1000.0);
                             })));
@@ -98,20 +95,23 @@ public class FolderSizeCost implements CostFunction {
 
   static class Argument extends org.astraea.argument.Argument {
     @Parameter(
-            names = {"--folder.capacity.file"},
-            description = "Path to a java properties file that contains all the total hard disk space(MB) and their corresponding log path",
-            converter = FolderCapacityMapField.class,
-            required = true)
+        names = {"--folder.capacity.file"},
+        description =
+            "Path to a java properties file that contains all the total hard disk space(MB) and their corresponding log path",
+        converter = FolderCapacityMapField.class,
+        required = true)
     Map<String, Integer> totalFolderCapacity;
   }
-  static class  FolderCapacityMapField extends Field<Map<String, Integer>> {
-    static Map.Entry<String,Integer> transformEntry(Map.Entry<String, String> entry) {
+
+  static class FolderCapacityMapField extends Field<Map<String, Integer>> {
+    static Map.Entry<String, Integer> transformEntry(Map.Entry<String, String> entry) {
       try {
-        return Map.entry(entry.getKey(),Integer.parseInt(entry.getValue()));
+        return Map.entry(entry.getKey(), Integer.parseInt(entry.getValue()));
       } catch (NumberFormatException e) {
         throw new IllegalArgumentException("Bad integer format for " + entry.getKey(), e);
       }
     }
+
     @Override
     public Map<String, Integer> convert(String value) {
       final Properties properties = new Properties();
@@ -122,11 +122,9 @@ public class FolderSizeCost implements CostFunction {
         throw new UncheckedIOException(e);
       }
       return properties.entrySet().stream()
-              .map(entry -> Map.entry((String)entry.getKey(), (String) entry.getValue()))
-              .map(
-                      FolderCapacityMapField::transformEntry)
-              .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+          .map(entry -> Map.entry((String) entry.getKey(), (String) entry.getValue()))
+          .map(FolderCapacityMapField::transformEntry)
+          .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
     }
   }
-
 }
