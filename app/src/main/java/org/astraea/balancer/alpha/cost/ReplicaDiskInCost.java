@@ -7,11 +7,14 @@ import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.TreeMap;
@@ -20,6 +23,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.BalancerUtils;
@@ -65,10 +70,12 @@ public class ReplicaDiskInCost implements CostFunction {
 
   public Map<TopicPartitionReplica, Double> replicaInCount(ClusterInfo clusterInfo) {
     Map<TopicPartitionReplica, List<HasBeanObject>> tpBeanObjects = new HashMap();
+    Map<Integer,Integer> numOfReplicaInBroker = new HashMap<>();
     clusterInfo
         .allBeans()
         .forEach(
             ((broker, beanObjects) -> {
+                Set<TopicPartition> topicPartitionsInBroker = new HashSet<>();
               clusterInfo
                   .topics()
                   .forEach(
@@ -77,6 +84,7 @@ public class ReplicaDiskInCost implements CostFunction {
                             .partitions(topic)
                             .forEach(
                                 partitionInfo -> {
+                                    topicPartitionsInBroker.add(new TopicPartition(partitionInfo.topic(),partitionInfo.partition()));
                                   tpBeanObjects.put(
                                       new TopicPartitionReplica(
                                           partitionInfo.topic(), partitionInfo.partition(), broker),
@@ -95,28 +103,30 @@ public class ReplicaDiskInCost implements CostFunction {
                                                                   .get("partition"))
                                                           == (partitionInfo.partition()))
                                           .collect(Collectors.toList()));
+
                                 });
                       });
+                numOfReplicaInBroker.put(broker,topicPartitionsInBroker.size());
             }));
     Map<TopicPartitionReplica, Double> replicaIn = new HashMap<>();
     tpBeanObjects.forEach(
         (tpr, beanObjects) -> {
             var sortedBeanObjects = beanObjects.stream().sorted(Comparator.comparing(HasBeanObject::createdTimestamp,Comparator.reverseOrder())).collect(Collectors.toList());
             var duration = 2;
-            if (sortedBeanObjects.size() <= duration)
+            if (sortedBeanObjects.size() < duration)
             {
-               // throw new IllegalStateException("");
+                throw new IllegalArgumentException("need more than two metrics to score replicas");
             }else {
                 var beanObjectNew = sortedBeanObjects.get(0).beanObject();
                 var beanObjectOld =  sortedBeanObjects.get(duration-1).beanObject();
                 var a=(double)
                         ( (long) beanObjectNew.getAttributes().get("Value") -
                                 (long) beanObjectOld.getAttributes().get("Value"))
-                        / ((beanObjectNew.createdTimestamp()-beanObjectOld.createdTimestamp())/1000)
-                        * clusterInfo.beans(tpr.brokerId()).size()
-                        / 1048576.0;
-                replicaIn.put(
-                        tpr,a);
+                        / ((beanObjectNew.createdTimestamp()-beanObjectOld.createdTimestamp())/1000.0)
+                        / 1048576.0
+                        * numOfReplicaInBroker.get(tpr.brokerId())
+                        ;
+                replicaIn.put(tpr,a);
         }
         });
     return replicaIn;
