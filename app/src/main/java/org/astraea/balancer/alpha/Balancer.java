@@ -26,8 +26,10 @@ import javax.management.remote.JMXServiceURL;
 import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.Utils;
 import org.astraea.argument.Field;
-import org.astraea.balancer.alpha.cost.FolderSizeCost;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
+import org.astraea.balancer.alpha.executor.RebalancePlanExecutor;
+import org.astraea.balancer.alpha.executor.StraightPlanExecutor;
+import org.astraea.balancer.alpha.generator.RebalancePlanGenerator;
 import org.astraea.balancer.alpha.generator.ShufflePlanGenerator;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.CostFunction;
@@ -50,6 +52,7 @@ public class Balancer implements Runnable {
   private final ScheduledExecutorService scheduledExecutorService;
   private final RebalancePlanGenerator rebalancePlanGenerator;
   private final TopicAdmin topicAdmin;
+  private final RebalancePlanExecutor rebalancePlanExecutor;
 
   public Balancer(Argument argument) {
     // initialize member variables
@@ -57,9 +60,7 @@ public class Balancer implements Runnable {
     this.jmxServiceURLMap = argument.jmxServiceURLMap;
     this.registeredBrokerCostFunction = Set.of(new LoadCost(), new MemoryWarningCost());
     this.registeredTopicPartitionCostFunction =
-        Set.of(
-            new ReplicaDiskInCost(argument.brokerBandwidthCap),
-            new FolderSizeCost(argument.totalFolderCapacity));
+        Set.of(new ReplicaDiskInCost(argument.brokerBandwidthCap));
     this.scheduledExecutorService = Executors.newScheduledThreadPool(8);
 
     // initialize main component
@@ -73,6 +74,7 @@ public class Balancer implements Runnable {
             this.scheduledExecutorService);
     this.topicAdmin = TopicAdmin.of(argument.props());
     this.rebalancePlanGenerator = new ShufflePlanGenerator(2, 5);
+    this.rebalancePlanExecutor = new StraightPlanExecutor(argument.brokers, topicAdmin);
   }
 
   public void start() {
@@ -85,76 +87,90 @@ public class Balancer implements Runnable {
     // schedule a check for a period of time
     final long periodMs = Duration.ofSeconds(30).toMillis();
     while (!Thread.interrupted()) {
-      // generate cluster info
-      final var clusterInfo =
-          ClusterInfo.of(clusterSnapShot(topicAdmin), metricCollector.fetchMetrics());
+      try {
+        // generate cluster info
+        final var clusterInfo =
+            ClusterInfo.of(clusterSnapShot(topicAdmin), metricCollector.fetchMetrics());
 
-      // dump metrics into cost function
-      Map<CostFunction, Map<Integer, Double>> currentBrokerCost =
-          registeredBrokerCostFunction.parallelStream()
-              .map(costFunction -> Map.entry(costFunction, costFunction.cost(clusterInfo)))
-              .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-      Map<org.astraea.balancer.alpha.cost.CostFunction, Map<TopicPartitionReplica, Double>>
-          currentTopicPartitionCost =
+        // dump metrics into cost function
+        Map<CostFunction, Map<Integer, Double>> currentBrokerCost =
+            registeredBrokerCostFunction.parallelStream()
+                .map(costFunction -> Map.entry(costFunction, costFunction.cost(clusterInfo)))
+                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+        Map<org.astraea.balancer.alpha.cost.CostFunction, Map<TopicPartitionReplica, Double>>
+            currentTopicPartitionCost =
+                registeredTopicPartitionCostFunction.parallelStream()
+                    .map(
+                        costFunction ->
+                            Map.entry(
+                                costFunction,
+                                Utils.handleException(() -> costFunction.cost(clusterInfo))))
+                    .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+        // print out current score
+        BalancerUtils.printCost(currentBrokerCost);
+        BalancerUtils.printTopicPartitionReplicaCost(currentTopicPartitionCost);
+
+        final var rankedProposal =
+            new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
+
+        final int iteration = 1000;
+        for (int i = 0; i < iteration; i++) {
+          final var proposal = rebalancePlanGenerator.generate(clusterInfo);
+          final var proposedClusterInfo = clusterInfoFromProposal(clusterInfo, proposal);
+
+          final var estimatedBrokerCost =
+              registeredBrokerCostFunction.parallelStream()
+                  .map(
+                      costFunction ->
+                          Map.entry(costFunction, costFunction.cost(proposedClusterInfo)))
+                  .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+          final var estimatedTPRCost =
               registeredTopicPartitionCostFunction.parallelStream()
                   .map(
                       costFunction ->
                           Map.entry(
                               costFunction,
-                              Utils.handleException(() -> costFunction.cost(clusterInfo))))
+                              Utils.handleException(() -> costFunction.cost(proposedClusterInfo))))
                   .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+          final var estimatedCostSum = costSum(estimatedBrokerCost, estimatedTPRCost);
 
-      // print out current score
-      BalancerUtils.printCost(currentBrokerCost);
-      BalancerUtils.printTopicPartitionReplicaCost(currentTopicPartitionCost);
+          rankedProposal.add(new ScoredProposal(estimatedCostSum, proposal));
+          while (rankedProposal.size() > 5) rankedProposal.pollLast();
+        }
 
-      final var rankedProposal =
-          new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
+        final var selectedProposal = rankedProposal.first();
+        final var currentCostSum = costSum(currentBrokerCost, currentTopicPartitionCost);
+        final var proposedCostSum = selectedProposal.score;
+        if (proposedCostSum < currentCostSum) {
+          System.out.println("[New Proposal Found]");
+          System.out.println("Current cost sum: " + currentCostSum);
+          System.out.println("Proposed cost sum: " + proposedCostSum);
+          BalancerUtils.describeProposal(
+              selectedProposal.proposal, BalancerUtils.currentAllocation(topicAdmin, clusterInfo));
 
-      final int iteration = 1000;
-      for (int i = 0; i < iteration; i++) {
-        final var proposal = rebalancePlanGenerator.generate(clusterInfo);
-        final var proposedClusterInfo = clusterInfoFromProposal(clusterInfo, proposal);
+          System.out.println("[Execution Started]");
+          if (rebalancePlanExecutor != null) rebalancePlanExecutor.run(selectedProposal.proposal);
+        } else {
+          System.out.println("[No Usable Proposal Found]");
+          System.out.println("Current cost sum: " + currentCostSum);
+          System.out.println("Best proposed cost sum calculated: " + proposedCostSum);
+        }
 
-        final var estimatedBrokerCost =
-            registeredBrokerCostFunction.parallelStream()
-                .map(
-                    costFunction -> Map.entry(costFunction, costFunction.cost(proposedClusterInfo)))
-                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-        final var estimatedTPRCost =
-            registeredTopicPartitionCostFunction.parallelStream()
-                .map(
-                    costFunction ->
-                        Map.entry(
-                            costFunction,
-                            Utils.handleException(() -> costFunction.cost(proposedClusterInfo))))
-                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-        final var estimatedCostSum = costSum(estimatedBrokerCost, estimatedTPRCost);
+        try {
+          TimeUnit.MILLISECONDS.sleep(periodMs);
+        } catch (InterruptedException e) {
+          e.printStackTrace();
+          break;
+        }
 
-        rankedProposal.add(new ScoredProposal(estimatedCostSum, proposal));
-        while (rankedProposal.size() > 5) rankedProposal.pollLast();
-      }
-
-      final var selectedProposal = rankedProposal.first();
-      final var currentCostSum = costSum(currentBrokerCost, currentTopicPartitionCost);
-      final var proposedCostSum = selectedProposal.score;
-      if (proposedCostSum < currentCostSum) {
-        System.out.println("[New Proposal Found]");
-        System.out.println("Current cost sum: " + currentCostSum);
-        System.out.println("Proposed cost sum: " + proposedCostSum);
-        BalancerUtils.describeProposal(
-            selectedProposal.proposal, BalancerUtils.currentAllocation(topicAdmin, clusterInfo));
-      } else {
-        System.out.println("[No Usable Proposal Found]");
-        System.out.println("Current cost sum: " + currentCostSum);
-        System.out.println("Best proposed cost sum calculated: " + proposedCostSum);
-      }
-
-      try {
-        TimeUnit.MILLISECONDS.sleep(periodMs);
-      } catch (InterruptedException e) {
-        e.printStackTrace();
-        break;
+      } catch (Exception exception) {
+        System.out.println("Failed to calculate cost functions, skip this iteration");
+        Utils.handleException(
+            () -> {
+              TimeUnit.SECONDS.sleep(1);
+              return 0;
+            });
+        exception.printStackTrace();
       }
     }
   }
