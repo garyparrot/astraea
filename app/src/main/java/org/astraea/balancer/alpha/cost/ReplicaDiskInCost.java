@@ -104,14 +104,23 @@ public class ReplicaDiskInCost implements CostFunction {
     Map<TopicPartitionReplica, Double> replicaIn = new HashMap<>();
     tpBeanObjects.forEach(
         (tpr, beanObjects) -> {
-          replicaIn.put(
-              tpr,
-              (double)
-                      ((long) beanObjects.get(1).beanObject().getAttributes().get("Value")
-                          - (long) beanObjects.get(0).beanObject().getAttributes().get("Value"))
-                  / 1048576
-                  / 10.0
-                  * clusterInfo.beans(tpr.brokerId()).size());
+            var sortedBeanObjects = beanObjects.stream().sorted(Comparator.comparing(HasBeanObject::createdTimestamp,Comparator.reverseOrder())).collect(Collectors.toList());
+            var duration = 2;
+            if (sortedBeanObjects.size() <= duration)
+            {
+               // throw new IllegalStateException("");
+            }else {
+                var beanObjectNew = sortedBeanObjects.get(0).beanObject();
+                var beanObjectOld =  sortedBeanObjects.get(duration-1).beanObject();
+                var a=(double)
+                        ( (long) beanObjectNew.getAttributes().get("Value") -
+                                (long) beanObjectOld.getAttributes().get("Value"))
+                        / ((beanObjectNew.createdTimestamp()-beanObjectOld.createdTimestamp())/1000)
+                        * clusterInfo.beans(tpr.brokerId()).size()
+                        / 1048576.0;
+                replicaIn.put(
+                        tpr,a);
+        }
         });
     return replicaIn;
   }
@@ -121,9 +130,10 @@ public class ReplicaDiskInCost implements CostFunction {
         org.astraea.argument.Argument.parse(new ReplicaDiskInCost.Argument(), args);
     var admin = TopicAdmin.of(argument.brokers);
     var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
-    var jmxAddress = Map.of(1001, 13189, 1002, 15517, 1003, 13834);
+    var jmxAddress = Map.of(1001, 15629, 1002, 10585, 1003, 12485);
     // set broker bandwidth upper limit to 10 MB/s;
     CostFunction costFunction = new ReplicaDiskInCost(argument.brokerBandwidthCap);
+
     for (var i = 1; i <= 2; i++) {
       jmxAddress.forEach(
           (b, port) -> {
@@ -151,6 +161,7 @@ public class ReplicaDiskInCost implements CostFunction {
           throw new RuntimeException(e);
         }
     }
+
     ClusterInfo clusterInfo = ClusterInfo.of(BalancerUtils.clusterSnapShot(admin), allBeans);
     costFunction.cost(clusterInfo).forEach((tp, score) -> System.out.println(tp + ":" + score));
   }

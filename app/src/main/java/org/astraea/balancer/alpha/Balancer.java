@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import javax.management.remote.JMXServiceURL;
 
 import org.apache.kafka.common.TopicPartitionReplica;
@@ -56,9 +57,9 @@ public class Balancer implements Runnable {
     // initialize member variables
     this.argument = argument;
     this.jmxServiceURLMap = argument.jmxServiceURLMap;
-    this.registeredBrokerCostFunction = Set.of(new LoadCost(), new MemoryWarningCost());
+    this.registeredBrokerCostFunction = Set.of();
     this.registeredTopicPartitionCostFunction =
-        Set.of(new ReplicaDiskInCost(argument.brokerBandwidthCap), new FolderSizeCost(argument.totalFolderCapacity));
+        Set.of(new ReplicaDiskInCost(argument.brokerBandwidthCap));
     this.scheduledExecutorService = Executors.newScheduledThreadPool(8);
 
     // initialize main component
@@ -66,8 +67,9 @@ public class Balancer implements Runnable {
     this.metricCollector =
         new MetricCollector(
             this.jmxServiceURLMap,
-            this.registeredBrokerCostFunction.stream()
-                .map(CostFunction::fetcher)
+                Stream.concat(
+            this.registeredBrokerCostFunction.stream().map(x -> x.fetcher()),
+                                this.registeredTopicPartitionCostFunction.stream().map(x -> x.fetcher()))
                 .collect(Collectors.toUnmodifiableList()),
             this.scheduledExecutorService);
     this.topicAdmin = TopicAdmin.of(argument.props());
