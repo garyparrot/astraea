@@ -34,8 +34,6 @@ import org.astraea.balancer.alpha.generator.RebalancePlanGenerator;
 import org.astraea.balancer.alpha.generator.ShufflePlanGenerator;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.CostFunction;
-import org.astraea.cost.LoadCost;
-import org.astraea.cost.MemoryWarningCost;
 import org.astraea.cost.NodeInfo;
 import org.astraea.cost.PartitionInfo;
 import org.astraea.metrics.HasBeanObject;
@@ -69,9 +67,9 @@ public class Balancer implements Runnable {
     this.metricCollector =
         new MetricCollector(
             this.jmxServiceURLMap,
-                Stream.concat(
-            this.registeredBrokerCostFunction.stream().map(x -> x.fetcher()),
-                                this.registeredTopicPartitionCostFunction.stream().map(x -> x.fetcher()))
+            Stream.concat(
+                    this.registeredBrokerCostFunction.stream().map(x -> x.fetcher()),
+                    this.registeredTopicPartitionCostFunction.stream().map(x -> x.fetcher()))
                 .collect(Collectors.toUnmodifiableList()),
             this.scheduledExecutorService);
     this.topicAdmin = TopicAdmin.of(argument.props());
