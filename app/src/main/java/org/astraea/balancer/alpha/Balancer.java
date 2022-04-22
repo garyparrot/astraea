@@ -8,7 +8,6 @@ import java.io.UncheckedIOException;
 import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
@@ -146,13 +145,15 @@ public class Balancer implements Runnable {
           BalancerUtils.describeProposal(
               selectedProposal.proposal, BalancerUtils.currentAllocation(topicAdmin, clusterInfo));
 
-          final var proposedClusterInfo = clusterInfoFromProposal(clusterInfo, selectedProposal.proposal);
-          var collect = registeredTopicPartitionCostFunction.parallelStream()
+          final var proposedClusterInfo =
+              clusterInfoFromProposal(clusterInfo, selectedProposal.proposal);
+          var collect =
+              registeredTopicPartitionCostFunction.parallelStream()
                   .map(
-                          costFunction ->
-                                  Map.entry(
-                                          costFunction,
-                                          Utils.handleException(() -> costFunction.cost(proposedClusterInfo))))
+                      costFunction ->
+                          Map.entry(
+                              costFunction,
+                              Utils.handleException(() -> costFunction.cost(proposedClusterInfo))))
                   .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
           BalancerUtils.printTopicPartitionReplicaCost(collect);
 
