@@ -23,13 +23,15 @@ import org.astraea.metrics.jmx.MBeanClient;
 /** Doing metric collector for balancer. */
 public class MetricCollector implements AutoCloseable {
 
-  private final long fetchInterval = Duration.ofSeconds(1).toMillis();
+  private final long fetchInterval = Duration.ofSeconds(10).toMillis();
   /**
    * The number of old time series to keep in data structure. note that this is not a strict upper
    * limit. The actual size might exceed. This issue is minor and fixing that might cause
    * performance issue. So no. This number must be larger than zero.
    */
-  private final int timeSeriesKeeps = 5000;
+  // TODO: guess what? this value must be bigger once there are many topic/partition/broker. A big
+  // thanks to the design of ClusterInfo.
+  private final int timeSeriesKeeps = 50000;
 
   private final Map<Integer, MBeanClient> mBeanClientMap;
   private final Map<Integer, JMXServiceURL> jmxServiceURLMap;
