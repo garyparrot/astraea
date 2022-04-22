@@ -23,7 +23,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.management.remote.JMXServiceURL;
-import org.astraea.Utils;
 import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
 import org.astraea.balancer.alpha.executor.RebalancePlanExecutor;
@@ -80,12 +79,12 @@ public class Balancer implements Runnable {
     this.metricCollector.start();
 
     while (!Thread.interrupted()) {
-        try {
-          work();
-        } catch (Exception exception) {
-          System.out.println("Failed to calculate cost functions, skip this iteration");
-          exception.printStackTrace();
-        }
+      try {
+        work();
+      } catch (Exception exception) {
+        System.out.println("Failed to calculate cost functions, skip this iteration");
+        exception.printStackTrace();
+      }
       try {
         TimeUnit.MILLISECONDS.sleep(1000);
       } catch (InterruptedException e) {
@@ -98,10 +97,10 @@ public class Balancer implements Runnable {
   private void work() throws Exception {
     // generate cluster info
     final var clusterInfo =
-            ClusterInfo.of(clusterSnapShot(topicAdmin), metricCollector.fetchMetrics());
+        ClusterInfo.of(clusterSnapShot(topicAdmin), metricCollector.fetchMetrics());
 
     // friendly info
-    if(clusterInfo.topics().isEmpty()) {
+    if (clusterInfo.topics().isEmpty()) {
       System.out.println("No topic in this cluster, there is nothing to do.");
       return;
     }
@@ -111,17 +110,17 @@ public class Balancer implements Runnable {
 
     // dump metrics into cost function
     final var brokerCosts =
-            registeredCostFunction.parallelStream()
-                    .filter(costFunction -> costFunction instanceof HasBrokerCost)
-                    .map(costFunction -> (HasBrokerCost) costFunction)
-                    .map(costFunction -> Map.entry(costFunction, costFunction.brokerCost(clusterInfo)))
-                    .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+        registeredCostFunction.parallelStream()
+            .filter(costFunction -> costFunction instanceof HasBrokerCost)
+            .map(costFunction -> (HasBrokerCost) costFunction)
+            .map(costFunction -> Map.entry(costFunction, costFunction.brokerCost(clusterInfo)))
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
 
     // print out current score
     BalancerUtils.printCost(brokerCosts);
 
     final var rankedProposal =
-            new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
+        new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
 
     final int iteration = 20000;
     for (int i = 0; i < iteration; i++) {
@@ -129,13 +128,13 @@ public class Balancer implements Runnable {
       final var proposedClusterInfo = clusterInfoFromProposal(clusterInfo, proposal);
 
       final var proposedBrokerCosts =
-              registeredCostFunction.parallelStream()
-                      .filter(costFunction -> costFunction instanceof HasBrokerCost)
-                      .map(costFunction -> (HasBrokerCost) costFunction)
-                      .map(
-                              costFunction ->
-                                      Map.entry(costFunction, costFunction.brokerCost(proposedClusterInfo)))
-                      .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+          registeredCostFunction.parallelStream()
+              .filter(costFunction -> costFunction instanceof HasBrokerCost)
+              .map(costFunction -> (HasBrokerCost) costFunction)
+              .map(
+                  costFunction ->
+                      Map.entry(costFunction, costFunction.brokerCost(proposedClusterInfo)))
+              .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
 
       final var estimatedCostSum = costSum(proposedBrokerCosts);
 
@@ -151,7 +150,7 @@ public class Balancer implements Runnable {
       System.out.println("Current cost sum: " + currentCostSum);
       System.out.println("Proposed cost sum: " + proposedCostSum);
       BalancerUtils.describeProposal(
-              selectedProposal.proposal, BalancerUtils.currentAllocation(topicAdmin, clusterInfo));
+          selectedProposal.proposal, BalancerUtils.currentAllocation(topicAdmin, clusterInfo));
       System.out.println("[Detail of the cost of current Proposal]");
       BalancerUtils.printCost(selectedProposal.costs);
 
@@ -162,15 +161,14 @@ public class Balancer implements Runnable {
       System.out.println("Current cost sum: " + currentCostSum);
       System.out.println("Best proposed cost sum calculated: " + proposedCostSum);
     }
-
   }
 
   private void attemptWarmUpMetrics(int requiredMetrics) throws InterruptedException {
     Supplier<Boolean> isWarmed =
-            () ->
-                    metricCollector.fetchMetrics().values().stream()
-                            .map(metricOfBroker -> metricOfBroker.size() >= requiredMetrics)
-                            .filter(indicator -> !indicator)
+        () ->
+            metricCollector.fetchMetrics().values().stream()
+                .map(metricOfBroker -> metricOfBroker.size() >= requiredMetrics)
+                .filter(indicator -> !indicator)
                 .findAny()
                 .isEmpty();
     Supplier<Double> warpUpProgress =

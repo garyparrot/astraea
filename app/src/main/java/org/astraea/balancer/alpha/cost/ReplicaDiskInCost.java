@@ -69,7 +69,8 @@ public class ReplicaDiskInCost implements HasBrokerCost, HasPartitionCost {
                         entry.getKey(),
                         entry.getValue().stream()
                             .mapToDouble(
-                                x -> topicPartitionDataRate.get(
+                                x ->
+                                    topicPartitionDataRate.get(
                                         TopicPartition.of(x.topic(), x.partition())))
                             .sum()))
             .map(
@@ -111,9 +112,11 @@ public class ReplicaDiskInCost implements HasBrokerCost, HasPartitionCost {
                     .map(
                         metrics -> {
                           // calculate the increase rate over a specific window of time
-                          var sizeTimeSeries = metrics.getValue()
-                                  .stream()
-                                  .sorted(Comparator.comparingLong(HasBeanObject::createdTimestamp).reversed())
+                          var sizeTimeSeries =
+                              metrics.getValue().stream()
+                                  .sorted(
+                                      Comparator.comparingLong(HasBeanObject::createdTimestamp)
+                                          .reversed())
                                   .collect(Collectors.toUnmodifiableList());
                           var latestSize = sizeTimeSeries.stream().findFirst().orElseThrow();
                           var windowSize =
