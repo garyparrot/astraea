@@ -5,15 +5,12 @@ import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.metrics.collector.Fetcher;
 
-public class NetworkCost implements CostFunction {
+public class NetworkCost {
 
-  @Override
   public Map<TopicPartitionReplica, Double> cost(ClusterInfo clusterInfo) {
-
     return null;
   }
 
-  @Override
   public Fetcher fetcher() {
     return null;
   }

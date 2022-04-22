@@ -18,12 +18,11 @@ import java.util.TreeSet;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import javax.management.remote.JMXServiceURL;
-import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.Utils;
 import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
@@ -31,8 +30,10 @@ import org.astraea.balancer.alpha.executor.RebalancePlanExecutor;
 import org.astraea.balancer.alpha.executor.StraightPlanExecutor;
 import org.astraea.balancer.alpha.generator.RebalancePlanGenerator;
 import org.astraea.balancer.alpha.generator.ShufflePlanGenerator;
+import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.CostFunction;
+import org.astraea.cost.HasBrokerCost;
 import org.astraea.cost.NodeInfo;
 import org.astraea.cost.PartitionInfo;
 import org.astraea.metrics.HasBeanObject;
@@ -44,9 +45,7 @@ public class Balancer implements Runnable {
   private final Thread balancerThread;
   private final Map<Integer, JMXServiceURL> jmxServiceURLMap;
   private final MetricCollector metricCollector;
-  private final Set<CostFunction> registeredBrokerCostFunction;
-  private final Set<org.astraea.balancer.alpha.cost.CostFunction>
-      registeredTopicPartitionCostFunction;
+  private final Set<CostFunction> registeredCostFunction;
   private final ScheduledExecutorService scheduledExecutorService;
   private final RebalancePlanGenerator rebalancePlanGenerator;
   private final TopicAdmin topicAdmin;
@@ -56,9 +55,7 @@ public class Balancer implements Runnable {
     // initialize member variables
     this.argument = argument;
     this.jmxServiceURLMap = argument.jmxServiceURLMap;
-    this.registeredBrokerCostFunction = Set.of();
-    this.registeredTopicPartitionCostFunction =
-        Set.of(new ReplicaDiskInCost(argument.brokerBandwidthCap));
+    this.registeredCostFunction = Set.of(new ReplicaDiskInCost(argument.brokerBandwidthCap));
     this.scheduledExecutorService = Executors.newScheduledThreadPool(8);
 
     // initialize main component
@@ -66,9 +63,8 @@ public class Balancer implements Runnable {
     this.metricCollector =
         new MetricCollector(
             this.jmxServiceURLMap,
-            Stream.concat(
-                    this.registeredBrokerCostFunction.stream().map(x -> x.fetcher()),
-                    this.registeredTopicPartitionCostFunction.stream().map(x -> x.fetcher()))
+            this.registeredCostFunction.stream()
+                .map(CostFunction::fetcher)
                 .collect(Collectors.toUnmodifiableList()),
             this.scheduledExecutorService);
     this.topicAdmin = TopicAdmin.of(argument.props());
@@ -86,60 +82,48 @@ public class Balancer implements Runnable {
     while (!Thread.interrupted()) {
       try {
         // warm-up the metrics, each broker must have at least 500 metrics collected.
-        attemptWarmUpMetrics(500);
+        attemptWarmUpMetrics(300);
 
         // generate cluster info
         final var clusterInfo =
             ClusterInfo.of(clusterSnapShot(topicAdmin), metricCollector.fetchMetrics());
 
         // dump metrics into cost function
-        Map<CostFunction, Map<Integer, Double>> currentBrokerCost =
-            registeredBrokerCostFunction.parallelStream()
-                .map(costFunction -> Map.entry(costFunction, costFunction.cost(clusterInfo)))
+        final var brokerCosts =
+            registeredCostFunction.parallelStream()
+                .filter(costFunction -> costFunction instanceof HasBrokerCost)
+                .map(costFunction -> (HasBrokerCost) costFunction)
+                .map(costFunction -> Map.entry(costFunction, costFunction.brokerCost(clusterInfo)))
                 .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-        Map<org.astraea.balancer.alpha.cost.CostFunction, Map<TopicPartitionReplica, Double>>
-            currentTopicPartitionCost =
-                registeredTopicPartitionCostFunction.parallelStream()
-                    .map(
-                        costFunction ->
-                            Map.entry(
-                                costFunction,
-                                Utils.handleException(() -> costFunction.cost(clusterInfo))))
-                    .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+
         // print out current score
-        BalancerUtils.printCost(currentBrokerCost);
-        BalancerUtils.printTopicPartitionReplicaCost(currentTopicPartitionCost);
+        BalancerUtils.printCost(brokerCosts);
 
         final var rankedProposal =
             new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
 
-        final int iteration = 1000;
+        final int iteration = 20000;
         for (int i = 0; i < iteration; i++) {
           final var proposal = rebalancePlanGenerator.generate(clusterInfo);
           final var proposedClusterInfo = clusterInfoFromProposal(clusterInfo, proposal);
 
-          final var estimatedBrokerCost =
-              registeredBrokerCostFunction.parallelStream()
+          final var proposedBrokerCosts =
+              registeredCostFunction.parallelStream()
+                  .filter(costFunction -> costFunction instanceof HasBrokerCost)
+                  .map(costFunction -> (HasBrokerCost) costFunction)
                   .map(
                       costFunction ->
-                          Map.entry(costFunction, costFunction.cost(proposedClusterInfo)))
+                          Map.entry(costFunction, costFunction.brokerCost(proposedClusterInfo)))
                   .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-          final var estimatedTPRCost =
-              registeredTopicPartitionCostFunction.parallelStream()
-                  .map(
-                      costFunction ->
-                          Map.entry(
-                              costFunction,
-                              Utils.handleException(() -> costFunction.cost(proposedClusterInfo))))
-                  .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-          final var estimatedCostSum = costSum(estimatedBrokerCost, estimatedTPRCost);
 
-          rankedProposal.add(new ScoredProposal(estimatedCostSum, proposal));
+          final var estimatedCostSum = costSum(proposedBrokerCosts);
+
+          rankedProposal.add(new ScoredProposal(estimatedCostSum, proposedBrokerCosts, proposal));
           while (rankedProposal.size() > 5) rankedProposal.pollLast();
         }
 
         final var selectedProposal = rankedProposal.first();
-        final var currentCostSum = costSum(currentBrokerCost, currentTopicPartitionCost);
+        final var currentCostSum = costSum(brokerCosts);
         final var proposedCostSum = selectedProposal.score;
         if (proposedCostSum < currentCostSum) {
           System.out.println("[New Proposal Found]");
@@ -147,20 +131,10 @@ public class Balancer implements Runnable {
           System.out.println("Proposed cost sum: " + proposedCostSum);
           BalancerUtils.describeProposal(
               selectedProposal.proposal, BalancerUtils.currentAllocation(topicAdmin, clusterInfo));
+          System.out.println("[Detail of the cost of current Proposal]");
+          BalancerUtils.printCost(selectedProposal.costs);
 
-          final var proposedClusterInfo =
-              clusterInfoFromProposal(clusterInfo, selectedProposal.proposal);
-          var collect =
-              registeredTopicPartitionCostFunction.parallelStream()
-                  .map(
-                      costFunction ->
-                          Map.entry(
-                              costFunction,
-                              Utils.handleException(() -> costFunction.cost(proposedClusterInfo))))
-                  .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-          BalancerUtils.printTopicPartitionReplicaCost(collect);
-
-          System.out.println("[Execution Started]");
+          System.out.println("[Balance Execution Started]");
           if (rebalancePlanExecutor != null) rebalancePlanExecutor.run(selectedProposal.proposal);
         } else {
           System.out.println("[No Usable Proposal Found]");
@@ -188,16 +162,29 @@ public class Balancer implements Runnable {
   }
 
   private void attemptWarmUpMetrics(int requiredMetrics) throws InterruptedException {
-    boolean isMetricsReady = true;
-    do {
-      if (!isMetricsReady) TimeUnit.SECONDS.sleep(3);
-      isMetricsReady =
-          metricCollector.fetchMetrics().values().stream()
-              .map(metricOfBroker -> metricOfBroker.size() > requiredMetrics)
-              .filter(indicator -> !indicator)
-              .findAny()
-              .isEmpty();
-    } while (!isMetricsReady);
+    Supplier<Boolean> isWarmed =
+        () ->
+            metricCollector.fetchMetrics().values().stream()
+                .map(metricOfBroker -> metricOfBroker.size() >= requiredMetrics)
+                .filter(indicator -> !indicator)
+                .findAny()
+                .isEmpty();
+    Supplier<Double> warpUpProgress =
+        () -> {
+          var brokerMetrics = metricCollector.fetchMetrics();
+          var sumOfMetrics =
+              brokerMetrics.values().stream()
+                  .mapToDouble(
+                      metricOfBroker -> (double) Math.min(requiredMetrics, metricOfBroker.size()))
+                  .sum();
+          return sumOfMetrics / (brokerMetrics.size() * requiredMetrics);
+        };
+
+    while (!isWarmed.get()) {
+      System.out.printf(
+          "Attempts to warm up metric (%.2f%%/100.00%%)%n", warpUpProgress.get() * 100.0);
+      TimeUnit.SECONDS.sleep(3);
+    }
   }
 
   /** create a fake cluster info based on given proposal */
@@ -260,22 +247,24 @@ public class Balancer implements Runnable {
    * Given a final score for this all the cost function results, the value will be a non-negative
    * real number. Basically, 0 means the most ideal state given all the cost functions.
    */
-  private double costSum(
-      Map<CostFunction, Map<Integer, Double>> costOfProposal,
-      Map<org.astraea.balancer.alpha.cost.CostFunction, Map<TopicPartitionReplica, Double>>
-          costOfTPR) {
-    // TODO: replace this with a much more meaningful implementation
-    var a =
-        costOfProposal.values().stream()
-            .flatMapToDouble(x -> x.values().stream().mapToDouble(Double::doubleValue))
-            .average()
-            .orElse(0);
-    var b =
-        costOfTPR.values().stream()
-            .flatMapToDouble(x -> x.values().stream().mapToDouble(Double::doubleValue))
-            .average()
-            .orElse(0);
-    return (a + b) / 2;
+  private double costSum(Map<HasBrokerCost, BrokerCost> costOfProposal) {
+    final BrokerCost replicaDiskInCost =
+        costOfProposal.entrySet().stream()
+            .filter(x -> x.getKey().getClass() == ReplicaDiskInCost.class)
+            .map(Map.Entry::getValue)
+            .findFirst()
+            .orElseThrow();
+
+    final var cost = replicaDiskInCost.value().values();
+    final var average = cost.stream().mapToDouble(x -> x).average().orElseThrow();
+    final var variance =
+        cost.stream().mapToDouble(x -> x).map(x -> (x - average) * (x - average)).sum()
+            / cost.size();
+    final var deviation = Math.sqrt(variance);
+    //noinspection UnnecessaryLocalVariable
+    final var coefficientOfVariation = deviation / average;
+
+    return coefficientOfVariation;
   }
 
   public void stop() {
@@ -435,9 +424,14 @@ public class Balancer implements Runnable {
   private static class ScoredProposal {
     private final double score;
     private final RebalancePlanProposal proposal;
+    private final Map<HasBrokerCost, BrokerCost> costs;
 
-    private ScoredProposal(double score, RebalancePlanProposal proposal) {
-      this.score = score;
+    public ScoredProposal(
+        double estimatedCostSum,
+        Map<HasBrokerCost, BrokerCost> proposedBrokerCosts,
+        RebalancePlanProposal proposal) {
+      this.score = estimatedCostSum;
+      this.costs = proposedBrokerCosts;
       this.proposal = proposal;
     }
   }

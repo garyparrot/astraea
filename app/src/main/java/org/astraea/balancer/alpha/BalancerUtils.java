@@ -11,7 +11,9 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.Utils;
+import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
+import org.astraea.cost.HasBrokerCost;
 import org.astraea.cost.NodeInfo;
 import org.astraea.cost.PartitionInfo;
 import org.astraea.metrics.HasBeanObject;
@@ -65,16 +67,15 @@ public class BalancerUtils {
         });
   }
 
-  public static void printCost(Map<?, Map<Integer, Double>> brokerScores) {
-    brokerScores.forEach(
-        (key, value) -> {
-          System.out.printf("[%s]%n", key.getClass().getSimpleName());
-          value.entrySet().stream()
-              .sorted(Map.Entry.comparingByKey())
-              .forEachOrdered(
-                  entry ->
-                      System.out.printf(" Broker #%5d: %f%n", entry.getKey(), entry.getValue()));
-          System.out.println();
+  public static void printCost(Map<HasBrokerCost, BrokerCost> brokerCost) {
+    brokerCost.forEach(
+        (costFunction, cost) -> {
+          System.out.println("[" + costFunction.getClass().getSimpleName() + "]");
+          cost.value()
+              .forEach(
+                  (brokerId, score) -> {
+                    System.out.printf(" broker # %d : %f%n", brokerId, score);
+                  });
         });
   }
 

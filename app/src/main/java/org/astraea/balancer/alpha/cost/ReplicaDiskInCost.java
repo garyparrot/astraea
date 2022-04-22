@@ -23,14 +23,21 @@ import java.util.stream.Stream;
 import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.BalancerUtils;
+import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
+import org.astraea.cost.HasBrokerCost;
+import org.astraea.cost.HasPartitionCost;
+import org.astraea.cost.NodeInfo;
+import org.astraea.cost.PartitionCost;
+import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
 import org.astraea.metrics.collector.BeanCollector;
 import org.astraea.metrics.collector.Fetcher;
+import org.astraea.metrics.kafka.BrokerTopicMetricsResult;
 import org.astraea.metrics.kafka.KafkaMetrics;
 import org.astraea.topic.TopicAdmin;
 
-public class ReplicaDiskInCost implements CostFunction {
+public class ReplicaDiskInCost implements HasBrokerCost, HasPartitionCost {
   Map<Integer, Integer> brokerBandwidthCap;
 
   public ReplicaDiskInCost(Map<Integer, Integer> brokerBandwidthCap) {
@@ -38,9 +45,35 @@ public class ReplicaDiskInCost implements CostFunction {
   }
 
   @Override
-  public Map<TopicPartitionReplica, Double> cost(ClusterInfo clusterInfo)
-      throws InterruptedException {
-    // a replica average data in rate (MB/s).
+  public BrokerCost brokerCost(ClusterInfo clusterInfo) {
+    final List<NodeInfo> nodes = clusterInfo.nodes();
+    nodes.stream()
+        .map(
+            nodeInfo -> {
+              final var nodeMetrics = clusterInfo.allBeans().get(nodeInfo.id());
+              nodeMetrics.stream()
+                  .filter(x -> x instanceof BrokerTopicMetricsResult)
+                  .filter(x -> x.beanObject().getProperties().get("type").equals("Log"))
+                  .filter(x -> x.beanObject().getProperties().get("name").equals("Size"))
+                  .collect(
+                      Collectors.groupingBy(
+                          x ->
+                              TopicPartition.of(
+                                  x.beanObject().getProperties().get("topic"),
+                                  Integer.parseInt(
+                                      x.beanObject().getProperties().get("partition")))));
+              return null;
+            });
+    return new BrokerCost() {
+      @Override
+      public Map<Integer, Double> value() {
+        return null;
+      }
+    };
+  }
+
+  @Override
+  public PartitionCost partitionCost(ClusterInfo clusterInfo) {
     var replicaIn = replicaInCount(clusterInfo);
 
     var dataInRate =
@@ -54,7 +87,47 @@ public class ReplicaDiskInCost implements CostFunction {
           if (score >= 1) score = 1;
           dataInRate.put(tpr, score);
         });
-    return dataInRate;
+    return new PartitionCost() {
+      @Override
+      public Map<TopicPartition, Double> value(String topic) {
+        return dataInRate.entrySet().stream()
+            .filter(x -> x.getKey().topic().equals(topic))
+            .collect(
+                Collectors.groupingBy(
+                    x -> TopicPartition.of(x.getKey().topic(), x.getKey().partition())))
+            .entrySet()
+            .stream()
+            .map(
+                entry ->
+                    Map.entry(
+                        entry.getKey(),
+                        entry.getValue().stream()
+                            .mapToDouble(Map.Entry::getValue)
+                            .max()
+                            .orElseThrow()))
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+      }
+
+      @Override
+      public Map<TopicPartition, Double> value(int brokerId) {
+        return dataInRate.entrySet().stream()
+            .filter(x -> x.getKey().brokerId() == brokerId)
+            .collect(
+                Collectors.groupingBy(
+                    x -> TopicPartition.of(x.getKey().topic(), x.getKey().partition())))
+            .entrySet()
+            .stream()
+            .map(
+                entry ->
+                    Map.entry(
+                        entry.getKey(),
+                        entry.getValue().stream()
+                            .mapToDouble(Map.Entry::getValue)
+                            .max()
+                            .orElseThrow()))
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+      }
+    };
   }
 
   /** @return the metrics getters. Those getters are used to fetch mbeans. */
@@ -133,7 +206,7 @@ public class ReplicaDiskInCost implements CostFunction {
     var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
     var jmxAddress = Map.of(1001, 15629, 1002, 10585, 1003, 12485);
     // set broker bandwidth upper limit to 10 MB/s;
-    CostFunction costFunction = new ReplicaDiskInCost(argument.brokerBandwidthCap);
+    ReplicaDiskInCost costFunction = new ReplicaDiskInCost(argument.brokerBandwidthCap);
 
     for (var i = 1; i <= 2; i++) {
       jmxAddress.forEach(
@@ -164,7 +237,12 @@ public class ReplicaDiskInCost implements CostFunction {
     }
 
     ClusterInfo clusterInfo = ClusterInfo.of(BalancerUtils.clusterSnapShot(admin), allBeans);
-    costFunction.cost(clusterInfo).forEach((tp, score) -> System.out.println(tp + ":" + score));
+    for (Integer brokerId : jmxAddress.keySet()) {
+      costFunction
+          .partitionCost(clusterInfo)
+          .value(brokerId)
+          .forEach((tp, score) -> System.out.println(tp + ":" + score));
+    }
   }
 
   static class Argument extends org.astraea.argument.Argument {

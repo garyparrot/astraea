@@ -25,7 +25,7 @@ import org.astraea.metrics.collector.Fetcher;
 import org.astraea.metrics.kafka.KafkaMetrics;
 import org.astraea.topic.TopicAdmin;
 
-public class FolderSizeCost implements CostFunction {
+public class FolderSizeCost {
   static TopicAdmin admin;
   Map<String, Integer> totalFolderCapacity;
 
@@ -33,7 +33,6 @@ public class FolderSizeCost implements CostFunction {
     this.totalFolderCapacity = totalBrokerCapacity;
   }
 
-  @Override
   public Map<TopicPartitionReplica, Double> cost(ClusterInfo clusterInfo) {
 
     var usedDiskSpace =
@@ -65,7 +64,6 @@ public class FolderSizeCost implements CostFunction {
   }
 
   /** @return the metrics getters. Those getters are used to fetch mbeans. */
-  @Override
   public Fetcher fetcher() {
     return client -> new java.util.ArrayList<>(KafkaMetrics.TopicPartition.Size.fetch(client));
   }
@@ -75,7 +73,7 @@ public class FolderSizeCost implements CostFunction {
     admin = TopicAdmin.of(argument.brokers);
     var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
     var jmxAddress = Map.of(1001, 13189, 1002, 15517, 1003, 13834);
-    CostFunction costFunction = new FolderSizeCost(argument.totalFolderCapacity);
+    FolderSizeCost costFunction = new FolderSizeCost(argument.totalFolderCapacity);
     jmxAddress.forEach(
         (b, port) ->
             allBeans.put(
