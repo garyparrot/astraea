@@ -27,7 +27,6 @@ import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.HasBrokerCost;
 import org.astraea.cost.HasPartitionCost;
-import org.astraea.cost.NodeInfo;
 import org.astraea.cost.PartitionCost;
 import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
@@ -45,8 +44,6 @@ public class ReplicaDiskInCost implements HasBrokerCost, HasPartitionCost {
 
   @Override
   public BrokerCost brokerCost(ClusterInfo clusterInfo) {
-    final List<NodeInfo> nodes = clusterInfo.nodes();
-
     final Map<Integer, List<TopicPartitionReplica>> topicPartitionOfEachBroker =
         clusterInfo.topics().stream()
             .flatMap(topic -> clusterInfo.partitions(topic).stream())
@@ -70,14 +67,13 @@ public class ReplicaDiskInCost implements HasBrokerCost, HasPartitionCost {
                     Map.entry(
                         entry.getKey(),
                         entry.getValue().stream().mapToDouble(replicaIn::get).sum()))
+            .map(
+                entry ->
+                    Map.entry(
+                        entry.getKey(), entry.getValue() / brokerBandwidthCap.get(entry.getKey())))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-    return new BrokerCost() {
-      @Override
-      public Map<Integer, Double> value() {
-        return brokerLoad;
-      }
-    };
+    return () -> brokerLoad;
   }
 
   @Override
