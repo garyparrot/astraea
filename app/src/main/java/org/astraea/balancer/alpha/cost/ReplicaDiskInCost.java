@@ -33,7 +33,6 @@ import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
 import org.astraea.metrics.collector.BeanCollector;
 import org.astraea.metrics.collector.Fetcher;
-import org.astraea.metrics.kafka.BrokerTopicMetricsResult;
 import org.astraea.metrics.kafka.KafkaMetrics;
 import org.astraea.topic.TopicAdmin;
 
@@ -47,27 +46,36 @@ public class ReplicaDiskInCost implements HasBrokerCost, HasPartitionCost {
   @Override
   public BrokerCost brokerCost(ClusterInfo clusterInfo) {
     final List<NodeInfo> nodes = clusterInfo.nodes();
-    nodes.stream()
-        .map(
-            nodeInfo -> {
-              final var nodeMetrics = clusterInfo.allBeans().get(nodeInfo.id());
-              nodeMetrics.stream()
-                  .filter(x -> x instanceof BrokerTopicMetricsResult)
-                  .filter(x -> x.beanObject().getProperties().get("type").equals("Log"))
-                  .filter(x -> x.beanObject().getProperties().get("name").equals("Size"))
-                  .collect(
-                      Collectors.groupingBy(
-                          x ->
-                              TopicPartition.of(
-                                  x.beanObject().getProperties().get("topic"),
-                                  Integer.parseInt(
-                                      x.beanObject().getProperties().get("partition")))));
-              return null;
-            });
+
+    final Map<Integer, List<TopicPartitionReplica>> topicPartitionOfEachBroker =
+        clusterInfo.topics().stream()
+            .flatMap(topic -> clusterInfo.partitions(topic).stream())
+            .flatMap(
+                partitionInfo ->
+                    partitionInfo.replicas().stream()
+                        .map(
+                            replica ->
+                                new TopicPartitionReplica(
+                                    partitionInfo.topic(),
+                                    partitionInfo.partition(),
+                                    replica.id())))
+            .collect(Collectors.groupingBy(TopicPartitionReplica::brokerId));
+
+    final var replicaIn = replicaInCount(clusterInfo);
+
+    final var brokerLoad =
+        topicPartitionOfEachBroker.entrySet().stream()
+            .map(
+                entry ->
+                    Map.entry(
+                        entry.getKey(),
+                        entry.getValue().stream().mapToDouble(replicaIn::get).sum()))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
     return new BrokerCost() {
       @Override
       public Map<Integer, Double> value() {
-        return null;
+        return brokerLoad;
       }
     };
   }

@@ -190,11 +190,11 @@ public final class KafkaMetrics {
                   .property("type", "Log")
                   .property("topic", "*")
                   .property("partition", "*")
-                  .property("name", "Size")
+                  .property("name", metricName)
                   .build())
           .forEach(
               beanObject -> {
-                beanList.add(new BrokerTopicMetricsResult(beanObject));
+                beanList.add(HasValue.of(beanObject));
               });
       return beanList;
     }
