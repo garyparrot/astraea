@@ -59,7 +59,7 @@ public class ReplicaDiskInCost implements HasBrokerCost, HasPartitionCost {
                                     replica.id())))
             .collect(Collectors.groupingBy(TopicPartitionReplica::brokerId));
 
-    final var topicPartitionDataRate = topicPartitionDataRate(clusterInfo, Duration.ofSeconds(3));
+    final var topicPartitionDataRate = topicPartitionDataRate(clusterInfo, Duration.ofSeconds(60));
 
     final var brokerLoad =
         topicPartitionOfEachBroker.entrySet().stream()
@@ -127,7 +127,10 @@ public class ReplicaDiskInCost implements HasBrokerCost, HasPartitionCost {
                                               > latestSize.createdTimestamp()
                                                   - sampleWindow.toMillis())
                                   .findFirst()
-                                  .orElseThrow();
+                                  .orElseThrow(
+                                      () ->
+                                          new IllegalStateException(
+                                              "No sufficient info to determine data rate, try later."));
                           var dataRate =
                               ((double) (latestSize.value() - windowSize.value()))
                                   / ((double)
