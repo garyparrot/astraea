@@ -50,6 +50,7 @@ public class Balancer implements Runnable {
   private final RebalancePlanGenerator rebalancePlanGenerator;
   private final TopicAdmin topicAdmin;
   private final RebalancePlanExecutor rebalancePlanExecutor;
+  private final Set<String> topicIgnoreList;
 
   public Balancer(Argument argument) {
     // initialize member variables
@@ -70,6 +71,8 @@ public class Balancer implements Runnable {
     this.topicAdmin = TopicAdmin.of(argument.props());
     this.rebalancePlanGenerator = new ShufflePlanGenerator(2, 5);
     this.rebalancePlanExecutor = new StraightPlanExecutor(argument.brokers, topicAdmin);
+
+    this.topicIgnoreList = BalancerUtils.privateTopics(this.topicAdmin);
   }
 
   public void start() {
@@ -78,6 +81,8 @@ public class Balancer implements Runnable {
 
   public void run() {
     this.metricCollector.start();
+
+    System.out.println("Ignored topics: " + topicIgnoreList);
 
     while (!Thread.interrupted()) {
       try {
@@ -98,7 +103,8 @@ public class Balancer implements Runnable {
   private void work() throws Exception {
     // generate cluster info
     final var clusterInfo =
-        ClusterInfo.of(clusterSnapShot(topicAdmin), metricCollector.fetchMetrics());
+        ClusterInfo.of(
+            clusterSnapShot(topicAdmin, topicIgnoreList), metricCollector.fetchMetrics());
 
     // friendly info
     if (clusterInfo.topics().isEmpty()) {

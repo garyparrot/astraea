@@ -3,6 +3,7 @@ package org.astraea.balancer.alpha;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -151,6 +152,10 @@ public class BalancerUtils {
   }
 
   public static ClusterInfo clusterSnapShot(TopicAdmin topicAdmin) {
+    return clusterSnapShot(topicAdmin, Set.of());
+  }
+
+  public static ClusterInfo clusterSnapShot(TopicAdmin topicAdmin, Set<String> topicToIgnore) {
     final var nodeInfo =
         Utils.handleException(() -> topicAdmin.adminClient().describeCluster().nodes().get())
             .stream()
@@ -158,7 +163,10 @@ public class BalancerUtils {
             .collect(Collectors.toUnmodifiableList());
     final var nodeInfoMap =
         nodeInfo.stream().collect(Collectors.toUnmodifiableMap(NodeInfo::id, Function.identity()));
-    final var topics = topicAdmin.topicNames();
+    final var topics =
+        topicAdmin.topicNames().stream()
+            .filter(topic -> !topicToIgnore.contains(topic))
+            .collect(Collectors.toUnmodifiableSet());
     final var partitionInfo =
         topicAdmin.replicas(topics).entrySet().stream()
             .flatMap(
@@ -243,5 +251,11 @@ public class BalancerUtils {
             fancyIndicator[(count++) % fancyIndicator.length]);
       }
     };
+  }
+
+  public static Set<String> privateTopics(TopicAdmin topicAdmin) {
+    final Set<String> topic = new HashSet<>(topicAdmin.topicNames());
+    topic.removeAll(topicAdmin.publicTopicNames());
+    return topic;
   }
 }
