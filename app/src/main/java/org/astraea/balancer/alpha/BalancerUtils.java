@@ -6,6 +6,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -214,6 +216,31 @@ public class BalancerUtils {
       @Override
       public Map<Integer, Collection<HasBeanObject>> allBeans() {
         return Map.of();
+      }
+    };
+  }
+
+  public static Runnable generationWatcher(int totalIteration, AtomicInteger finishedIteration) {
+    return () -> {
+      var fancyIndicator = new char[] {'/', '-', '\\', '|'};
+      var count = 0;
+      var startedTime = System.currentTimeMillis();
+      while (!Thread.currentThread().isInterrupted()) {
+        try {
+          TimeUnit.SECONDS.sleep(1);
+        } catch (InterruptedException ignored) {
+          // no need to print anything since this watcher is not really important after all
+          return;
+        }
+        var finishedIterationCount = finishedIteration.get();
+        var passedSecond = (System.currentTimeMillis() - startedTime) / 1000;
+        System.out.printf(
+            "Progress [%d/%d], %d second%s passed %s%n",
+            finishedIterationCount,
+            totalIteration,
+            passedSecond,
+            (passedSecond == 1) ? "" : "s",
+            fancyIndicator[(count++) % fancyIndicator.length]);
       }
     };
   }

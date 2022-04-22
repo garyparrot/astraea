@@ -18,6 +18,7 @@ import java.util.TreeSet;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -122,7 +123,11 @@ public class Balancer implements Runnable {
     final var rankedProposal =
         new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
 
+    final AtomicInteger progress = new AtomicInteger();
     final int iteration = 20000;
+    final var watcherTask =
+        scheduledExecutorService.schedule(
+            BalancerUtils.generationWatcher(iteration, progress), 0, TimeUnit.SECONDS);
     for (int i = 0; i < iteration; i++) {
       final var proposal = rebalancePlanGenerator.generate(clusterInfo);
       final var proposedClusterInfo = clusterInfoFromProposal(clusterInfo, proposal);
@@ -140,7 +145,10 @@ public class Balancer implements Runnable {
 
       rankedProposal.add(new ScoredProposal(estimatedCostSum, proposedBrokerCosts, proposal));
       while (rankedProposal.size() > 5) rankedProposal.pollLast();
+
+      progress.incrementAndGet();
     }
+    watcherTask.cancel(true);
 
     final var selectedProposal = rankedProposal.first();
     final var currentCostSum = costSum(brokerCosts);
