@@ -146,6 +146,16 @@ public class Balancer implements Runnable {
           BalancerUtils.describeProposal(
               selectedProposal.proposal, BalancerUtils.currentAllocation(topicAdmin, clusterInfo));
 
+          final var proposedClusterInfo = clusterInfoFromProposal(clusterInfo, selectedProposal.proposal);
+          var collect = registeredTopicPartitionCostFunction.parallelStream()
+                  .map(
+                          costFunction ->
+                                  Map.entry(
+                                          costFunction,
+                                          Utils.handleException(() -> costFunction.cost(proposedClusterInfo))))
+                  .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+          BalancerUtils.printTopicPartitionReplicaCost(collect);
+
           System.out.println("[Execution Started]");
           if (rebalancePlanExecutor != null) rebalancePlanExecutor.run(selectedProposal.proposal);
         } else {
