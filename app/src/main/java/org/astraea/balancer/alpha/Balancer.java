@@ -84,8 +84,6 @@ public class Balancer implements Runnable {
   public void run() {
     this.metricCollector.start();
 
-    // schedule a check for a period of time
-    final long periodMs = Duration.ofSeconds(30).toMillis();
     while (!Thread.interrupted()) {
       try {
         // generate cluster info
@@ -157,7 +155,7 @@ public class Balancer implements Runnable {
         }
 
         try {
-          TimeUnit.MILLISECONDS.sleep(periodMs);
+          TimeUnit.MILLISECONDS.sleep(1000);
         } catch (InterruptedException e) {
           e.printStackTrace();
           break;
