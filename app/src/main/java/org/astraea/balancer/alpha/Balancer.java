@@ -85,6 +85,9 @@ public class Balancer implements Runnable {
 
     while (!Thread.interrupted()) {
       try {
+        // warm-up the metrics, each broker must have at least 500 metrics collected.
+        attemptWarmUpMetrics(500);
+
         // generate cluster info
         final var clusterInfo =
             ClusterInfo.of(clusterSnapShot(topicAdmin), metricCollector.fetchMetrics());
@@ -182,6 +185,19 @@ public class Balancer implements Runnable {
         exception.printStackTrace();
       }
     }
+  }
+
+  private void attemptWarmUpMetrics(int requiredMetrics) throws InterruptedException {
+    boolean isMetricsReady = true;
+    do {
+      if (!isMetricsReady) TimeUnit.SECONDS.sleep(3);
+      isMetricsReady =
+          metricCollector.fetchMetrics().values().stream()
+              .map(metricOfBroker -> metricOfBroker.size() > requiredMetrics)
+              .filter(indicator -> !indicator)
+              .findAny()
+              .isEmpty();
+    } while (!isMetricsReady);
   }
 
   /** create a fake cluster info based on given proposal */
