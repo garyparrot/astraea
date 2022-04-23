@@ -142,8 +142,8 @@ public class Balancer implements Runnable {
 
     // print out current score
     System.out.println("[Cost of Current Cluster]");
-    BalancerUtils.printCost(brokerCosts);
-    // TODO: Print topicPartitionCosts
+    BalancerUtils.printBrokerCost(brokerCosts);
+    BalancerUtils.printPartitionCost(topicPartitionCosts, clusterInfo.nodes());
 
     final var rankedProposal =
         new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
@@ -195,8 +195,8 @@ public class Balancer implements Runnable {
       BalancerUtils.describeProposal(
           selectedProposal.proposal, BalancerUtils.currentAllocation(topicAdmin, clusterInfo));
       System.out.println("[Detail of the cost of current Proposal]");
-      BalancerUtils.printCost(selectedProposal.costs);
-      // TODO: Print topicPartitionCosts
+      BalancerUtils.printBrokerCost(selectedProposal.brokerCosts);
+      BalancerUtils.printPartitionCost(selectedProposal.partitionCosts, clusterInfo.nodes());
 
       System.out.println("[Balance Execution Started]");
       if (rebalancePlanExecutor != null) rebalancePlanExecutor.run(selectedProposal.proposal);
@@ -473,8 +473,8 @@ public class Balancer implements Runnable {
   private static class ScoredProposal {
     private final double score;
     private final RebalancePlanProposal proposal;
-    private final Map<HasBrokerCost, BrokerCost> costs;
-    private final Map<HasPartitionCost, PartitionCost> costs2;
+    private final Map<HasBrokerCost, BrokerCost> brokerCosts;
+    private final Map<HasPartitionCost, PartitionCost> partitionCosts;
 
     public ScoredProposal(
         double estimatedCostSum,
@@ -482,8 +482,8 @@ public class Balancer implements Runnable {
         Map<HasPartitionCost, PartitionCost> proposedTopicPartitionCosts,
         RebalancePlanProposal proposal) {
       this.score = estimatedCostSum;
-      this.costs = proposedBrokerCosts;
-      this.costs2 = proposedTopicPartitionCosts;
+      this.brokerCosts = proposedBrokerCosts;
+      this.partitionCosts = proposedTopicPartitionCosts;
       this.proposal = proposal;
     }
   }

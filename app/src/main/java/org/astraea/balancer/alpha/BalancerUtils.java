@@ -17,8 +17,11 @@ import org.astraea.Utils;
 import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.HasBrokerCost;
+import org.astraea.cost.HasPartitionCost;
 import org.astraea.cost.NodeInfo;
+import org.astraea.cost.PartitionCost;
 import org.astraea.cost.PartitionInfo;
+import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
 import org.astraea.topic.Replica;
 import org.astraea.topic.TopicAdmin;
@@ -70,7 +73,7 @@ public class BalancerUtils {
         });
   }
 
-  public static void printCost(Map<HasBrokerCost, BrokerCost> brokerCost) {
+  public static void printBrokerCost(Map<HasBrokerCost, BrokerCost> brokerCost) {
     brokerCost.forEach(
         (costFunction, cost) -> {
           System.out.println("[" + costFunction.getClass().getSimpleName() + "]");
@@ -79,6 +82,32 @@ public class BalancerUtils {
                   (brokerId, score) -> {
                     System.out.printf(" broker # %d : %f%n", brokerId, score);
                   });
+        });
+  }
+
+  public static void printPartitionCost(
+      Map<HasPartitionCost, PartitionCost> partitionCost, List<NodeInfo> nodeInfo) {
+    partitionCost.forEach(
+        (costFunction, cost) -> {
+          System.out.println("[" + costFunction.getClass().getSimpleName() + "]");
+          nodeInfo.forEach(
+              node -> {
+                var sortedKey =
+                    cost.value(node.id()).keySet().stream()
+                        .sorted(
+                            Comparator.comparing(TopicPartition::topic)
+                                .thenComparing(TopicPartition::partition))
+                        .collect(Collectors.toList());
+                System.out.println(" broker # " + node.id());
+                sortedKey.forEach(
+                    key ->
+                        System.out.println(
+                            key.topic()
+                                + "-"
+                                + key.partition()
+                                + ": "
+                                + cost.value(node.id()).get(key)));
+              });
         });
   }
 

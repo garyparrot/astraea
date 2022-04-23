@@ -35,9 +35,9 @@ public class ReplicaMigrateCost implements HasPartitionCost {
     var totalUsedSizeInBroker = new HashMap<Integer, Long>();
     TreeMap<TopicPartitionReplica, Double> replicaCost =
         new TreeMap<>(
-            Comparator.comparing(TopicPartitionReplica::brokerId)
-                .thenComparing(TopicPartitionReplica::topic)
-                .thenComparing(TopicPartitionReplica::partition));
+            Comparator.comparing(TopicPartitionReplica::topic)
+                .thenComparing(TopicPartitionReplica::partition)
+                .thenComparing(TopicPartitionReplica::brokerId));
     clusterInfo
         .allBeans()
         .keySet()
@@ -60,7 +60,10 @@ public class ReplicaMigrateCost implements HasPartitionCost {
     return new PartitionCost() {
       @Override
       public Map<TopicPartition, Double> value(String topic) {
-        Map<TopicPartition, Double> scores = new HashMap<>();
+        Map<TopicPartition, Double> scores =
+            new TreeMap<>(
+                Comparator.comparing(TopicPartition::topic)
+                    .thenComparing(TopicPartition::partition));
         clusterInfo
             .nodes()
             .forEach(
@@ -87,6 +90,9 @@ public class ReplicaMigrateCost implements HasPartitionCost {
       @Override
       public Map<TopicPartition, Double> value(int brokerId) {
         return replicaCost.entrySet().stream()
+            .sorted(Comparator.comparing(x -> x.getKey().topic()))
+            .collect(Collectors.toList())
+            .stream()
             .filter((tprScore) -> tprScore.getKey().brokerId() == brokerId)
             .collect(
                 Collectors.toMap(
@@ -115,7 +121,7 @@ public class ReplicaMigrateCost implements HasPartitionCost {
                                   Integer.parseInt(
                                       beanObject.beanObject().getProperties().get("partition")),
                                   broker),
-                              ((HasValue) beanObject).value()));
+                              (beanObject).value()));
             });
     return sizeOfReplica;
   }
@@ -157,7 +163,7 @@ public class ReplicaMigrateCost implements HasPartitionCost {
         .value("test-1")
         .forEach(
             (tp, score) -> {
-              System.out.println(tp.topic() + " " + tp.partition() + ":" + score);
+              System.out.println(tp.topic() + " " + tp.partition() + ": " + score);
             });
   }
 }
