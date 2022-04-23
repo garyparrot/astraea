@@ -1,6 +1,7 @@
 package org.astraea.topic;
 
 import java.io.Closeable;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -61,6 +62,12 @@ public interface TopicAdmin extends Closeable {
   Set<Integer> brokerIds();
 
   /**
+   * @parm partitions map of TopicPartition and target brokers
+   * @return true if the leader is change successful changed
+   */
+  Map<TopicPartition, Boolean> changeReplicaLeader(Map<TopicPartition, Integer> partitions);
+
+  /**
    * @param topics topic names
    * @param brokersID brokers ID
    * @return the partitions of brokers
@@ -71,7 +78,7 @@ public interface TopicAdmin extends Closeable {
    * @param brokers a Set containing broker's ID
    * @return all log directory
    */
-  Map<Integer, Set<String>> brokerFolders(Set<Integer> brokers);
+  Map<Integer, Set<String>> brokerFolders(Collection<Integer> brokers);
 
   /** @return a partition migrator used to move partitions to another broker or folder. */
   Migrator migrator();
