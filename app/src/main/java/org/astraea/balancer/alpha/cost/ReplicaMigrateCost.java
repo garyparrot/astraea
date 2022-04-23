@@ -58,12 +58,32 @@ public class ReplicaMigrateCost implements HasPartitionCost {
           replicaCost.put(tpr, (double) size / totalUsedSizeInBroker.get(tpr.brokerId()));
         });
     return new PartitionCost() {
+
       @Override
       public Map<TopicPartition, Double> value(String topic) {
-        Map<TopicPartition, Double> scores =
-            new TreeMap<>(
-                Comparator.comparing(TopicPartition::topic)
-                    .thenComparing(TopicPartition::partition));
+        return clusterInfo.partitions(topic).stream()
+            .map(
+                partitionInfo ->
+                    TopicPartition.of(partitionInfo.topic(), partitionInfo.partition()))
+            .map(
+                tp -> {
+                  final var score =
+                      replicaCost.entrySet().stream()
+                          .filter(
+                              x ->
+                                  x.getKey().topic().equals(tp.topic())
+                                      && (x.getKey().partition() == tp.partition()))
+                          .mapToDouble(Map.Entry::getValue)
+                          .max()
+                          .orElseThrow(
+                              () ->
+                                  new IllegalStateException(
+                                      tp + " topic/partition size not found"));
+                  return Map.entry(tp, score);
+                })
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        /*
         clusterInfo
             .nodes()
             .forEach(
@@ -85,6 +105,7 @@ public class ReplicaMigrateCost implements HasPartitionCost {
                                   tprScore.getValue()));
                 });
         return scores;
+           */
       }
 
       @Override

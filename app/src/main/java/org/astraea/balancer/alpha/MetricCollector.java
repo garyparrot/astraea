@@ -32,7 +32,7 @@ public class MetricCollector implements AutoCloseable {
    */
   // TODO: guess what? this value must be bigger once there are many topic/partition/broker. A big
   // thanks to the design of ClusterInfo.
-  private final int timeSeriesKeeps = 50000;
+  private final int timeSeriesKeeps = 1000;
 
   private final Map<Integer, MBeanClient> mBeanClientMap;
   private final Map<Integer, JMXServiceURL> jmxServiceURLMap;

@@ -3,6 +3,7 @@ package org.astraea.balancer.alpha;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -180,6 +181,39 @@ public class BalancerUtils {
     System.out.println();
   }
 
+  public static Map<TopicPartition, List<Integer>> diffAllocation(
+      ClusterLogAllocation proposal, ClusterLogAllocation currentAllocation) {
+    final var balanceAllocation = proposal;
+    if (balanceAllocation.allocation().size() > 0) {
+      final var diff = new HashMap<TopicPartition, List<Integer>>();
+
+      balanceAllocation
+          .allocation()
+          .forEach(
+              (topic, partitionMap) -> {
+                partitionMap.forEach(
+                    (partitionId, replicaAllocation) -> {
+                      final var originalState =
+                          currentAllocation.allocation().get(topic).get(partitionId);
+                      final var finalState =
+                          balanceAllocation.allocation().get(topic).get(partitionId);
+
+                      final var toReplicate =
+                          finalState.stream()
+                              .filter(id -> !originalState.contains(id))
+                              .sorted()
+                              .collect(Collectors.toUnmodifiableList());
+
+                      diff.put(TopicPartition.of(topic, partitionId), toReplicate);
+                    });
+              });
+
+      return diff;
+    } else {
+      return Map.of();
+    }
+  }
+
   public static ClusterInfo clusterSnapShot(TopicAdmin topicAdmin) {
     return clusterSnapShot(topicAdmin, Set.of());
   }
@@ -278,6 +312,15 @@ public class BalancerUtils {
             fancyIndicator[(count++) % fancyIndicator.length]);
       }
     };
+  }
+
+  public static double coefficientOfVariance(Collection<Double> values) {
+    final var average = values.stream().mapToDouble(x -> x).average().orElseThrow();
+    final var variance =
+        values.stream().mapToDouble(x -> x).map(x -> (x - average) * (x - average)).sum()
+            / values.size();
+    final var deviation = Math.sqrt(variance);
+    return (average != 0) ? (deviation / average) : 0;
   }
 
   public static Set<String> privateTopics(TopicAdmin topicAdmin) {

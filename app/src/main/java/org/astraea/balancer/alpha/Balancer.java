@@ -1,6 +1,7 @@
 package org.astraea.balancer.alpha;
 
 import static org.astraea.balancer.alpha.BalancerUtils.clusterSnapShot;
+import static org.astraea.balancer.alpha.BalancerUtils.diffAllocation;
 
 import com.beust.jcommander.Parameter;
 import java.io.IOException;
@@ -44,6 +45,8 @@ import org.astraea.cost.PartitionCost;
 import org.astraea.cost.PartitionInfo;
 import org.astraea.metrics.HasBeanObject;
 import org.astraea.topic.TopicAdmin;
+import org.astraea.utils.DataSize;
+import org.astraea.utils.DataUnit;
 
 public class Balancer implements Runnable {
 
@@ -116,6 +119,7 @@ public class Balancer implements Runnable {
     final var clusterInfo =
         ClusterInfo.of(
             clusterSnapShot(topicAdmin, topicIgnoreList), metricCollector.fetchMetrics());
+    final var currentAllocation = BalancerUtils.currentAllocation(topicAdmin, clusterInfo);
 
     // friendly info
     if (clusterInfo.topics().isEmpty()) {
@@ -174,7 +178,12 @@ public class Balancer implements Runnable {
                       Map.entry(costFunction, costFunction.partitionCost(proposedClusterInfo)))
               .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
 
-      final var estimatedCostSum = costSum(proposedBrokerCosts, proposedTopicPartitionCosts);
+      final var estimatedCostSum =
+          costSum(
+              proposal.rebalancePlan().get(),
+              currentAllocation,
+              proposedBrokerCosts,
+              proposedTopicPartitionCosts);
 
       rankedProposal.add(
           new ScoredProposal(
@@ -186,7 +195,12 @@ public class Balancer implements Runnable {
     watcherTask.cancel(true);
 
     final var selectedProposal = rankedProposal.first();
-    final var currentCostSum = costSum(brokerCosts, topicPartitionCosts);
+    final var currentCostSum =
+        costSum(
+            selectedProposal.proposal.rebalancePlan().get(),
+            currentAllocation,
+            brokerCosts,
+            topicPartitionCosts);
     final var proposedCostSum = selectedProposal.score;
     if (proposedCostSum < currentCostSum) {
       System.out.println("[New Proposal Found]");
@@ -284,6 +298,8 @@ public class Balancer implements Runnable {
    * real number. Basically, 0 means the most ideal state given all the cost functions.
    */
   private double costSum(
+      ClusterLogAllocation proposedCluster,
+      ClusterLogAllocation originalCluster,
       Map<HasBrokerCost, BrokerCost> costOfProposal,
       Map<HasPartitionCost, PartitionCost> costOfProposal2) {
     final BrokerCost replicaDiskInCost =
@@ -292,17 +308,50 @@ public class Balancer implements Runnable {
             .map(Map.Entry::getValue)
             .findFirst()
             .orElseThrow();
+    final BrokerCost leaderCountCost =
+        costOfProposal.entrySet().stream()
+            .filter(x -> x.getKey().getClass() == NumberOfLeaderCost.class)
+            .map(Map.Entry::getValue)
+            .findFirst()
+            .orElseThrow();
+    final PartitionCost replicaMigrateCost =
+        costOfProposal2.entrySet().stream()
+            .filter(x -> x.getKey().getClass() == ReplicaMigrateCost.class)
+            .map(Map.Entry::getValue)
+            .findFirst()
+            .orElseThrow();
 
-    final var cost = replicaDiskInCost.value().values();
-    final var average = cost.stream().mapToDouble(x -> x).average().orElseThrow();
-    final var variance =
-        cost.stream().mapToDouble(x -> x).map(x -> (x - average) * (x - average)).sum()
-            / cost.size();
-    final var deviation = Math.sqrt(variance);
-    //noinspection UnnecessaryLocalVariable
-    final var coefficientOfVariation = deviation / average;
+    // replicaMigrationCost
+    final var topicPartitionCopyMap = diffAllocation(proposedCluster, originalCluster);
+    final Map<Integer, Double> brokerMigrationCost =
+        topicPartitionCopyMap.entrySet().stream()
+            .flatMap(entry -> entry.getValue().stream().map(x -> Map.entry(x, entry.getKey())))
+            .collect(
+                Collectors.groupingBy(
+                    Map.Entry::getKey,
+                    Collectors.mapping(Map.Entry::getValue, Collectors.toUnmodifiableList())))
+            .entrySet()
+            .stream()
+            .map(
+                entry ->
+                    Map.entry(
+                        entry.getKey(),
+                        entry.getValue().stream()
+                            .mapToDouble(tp -> replicaMigrateCost.value(tp.topic()).get(tp))
+                            .sum()))
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+    final var migrationCost = brokerMigrationCost.values().stream().mapToDouble(x -> x).sum();
+    final var overflow =
+        (DataUnit.Byte.of((long) migrationCost).compareTo(argument.affordableMigrationBandwidth)
+            > 0);
 
-    return coefficientOfVariation;
+    // replicaDiskInCost
+    final var covOfDiskIn = BalancerUtils.coefficientOfVariance(replicaDiskInCost.value().values());
+
+    // leaderCountCost
+    final var covOfLeader = BalancerUtils.coefficientOfVariance(leaderCountCost.value().values());
+
+    return covOfDiskIn * 3 + covOfLeader * 1 + (overflow ? 999999999.0 : 0);
   }
 
   public void stop() {
@@ -354,6 +403,12 @@ public class Balancer implements Runnable {
         names = {"--metric-warm-up"},
         description = "Ensure the balance have fetched a certain amount of metrics before continue")
     int metricWarmUpCount = 3;
+
+    @Parameter(
+        names = {"--affordable-migration-bandwidth"},
+        description = "The bandwidth threshold for a affordable migration",
+        converter = DataSize.Field.class)
+    DataSize affordableMigrationBandwidth = DataUnit.MiB.of(30);
 
     public static class JmxServiceUrlMappingFileField extends Field<Map<Integer, JMXServiceURL>> {
       static final Pattern serviceUrlKeyPattern =
