@@ -72,7 +72,7 @@ public class FolderSizeCost {
     final var argument = org.astraea.argument.Argument.parse(new FolderSizeCost.Argument(), args);
     admin = TopicAdmin.of(argument.brokers);
     var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
-    var jmxAddress = Map.of(1001, 13189, 1002, 15517, 1003, 13834);
+    var jmxAddress = Map.of(1001, 18661, 1002, 18732, 1003, 10474);
     FolderSizeCost costFunction = new FolderSizeCost(argument.totalFolderCapacity);
     jmxAddress.forEach(
         (b, port) ->

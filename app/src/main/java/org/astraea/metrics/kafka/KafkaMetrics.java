@@ -160,6 +160,42 @@ public final class KafkaMetrics {
     }
   }
 
+  public enum ReplicaManager {
+    AtMinIsrPartitionCount("AtMinIsrPartitionCount"),
+    LeaderCount("LeaderCount"),
+    OfflineReplicaCount("OfflineReplicaCount"),
+    PartitionCount("PartitionCount"),
+    ReassigningPartitions("ReassigningPartitions"),
+    UnderMinIsrPartitionCount("UnderMinIsrPartitionCount"),
+    UnderReplicatedPartitions("UnderReplicatedPartition");
+    private final String metricName;
+
+    ReplicaManager(String name) {
+      this.metricName = name;
+    }
+
+    public String metricName() {
+      return metricName;
+    }
+
+    public static ReplicaManager of(String metricName) {
+      return Arrays.stream(ReplicaManager.values())
+              .filter(metric -> metric.metricName().equalsIgnoreCase(metricName))
+              .findFirst()
+              .orElseThrow(() -> new IllegalArgumentException("No such metric: " + metricName));
+    }
+    public Collection<HasBeanObject> fetch(MBeanClient mBeanClient) {
+      Collection<HasBeanObject> beanList = new ArrayList<>();
+              mBeanClient.queryBeans(
+                      BeanQuery.builder("kafka.server")
+                              .property("type", "ReplicaManager")
+                              .property("name", metricName)
+                              .build())
+              .forEach(
+                      beanObject -> beanList.add(HasValue.of(beanObject)));
+      return beanList;
+    }
+  }
   public enum TopicPartition {
     LodEndOffset("LodEndOffset"),
     LogStartOffset("LogStartOffset"),
@@ -193,9 +229,7 @@ public final class KafkaMetrics {
                   .property("name", "Size")
                   .build())
           .forEach(
-              beanObject -> {
-                beanList.add(new BrokerTopicMetricsResult(beanObject));
-              });
+              beanObject -> beanList.add(new BrokerTopicMetricsResult(beanObject)));
       return beanList;
     }
 
