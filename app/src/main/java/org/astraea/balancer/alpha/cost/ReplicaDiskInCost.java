@@ -27,13 +27,12 @@ import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.HasBrokerCost;
 import org.astraea.cost.HasPartitionCost;
-import org.astraea.cost.NodeInfo;
 import org.astraea.cost.PartitionCost;
 import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
 import org.astraea.metrics.collector.BeanCollector;
 import org.astraea.metrics.collector.Fetcher;
-import org.astraea.metrics.kafka.BrokerTopicMetricsResult;
+import org.astraea.metrics.kafka.HasValue;
 import org.astraea.metrics.kafka.KafkaMetrics;
 import org.astraea.topic.TopicAdmin;
 
@@ -46,30 +45,110 @@ public class ReplicaDiskInCost implements HasBrokerCost, HasPartitionCost {
 
   @Override
   public BrokerCost brokerCost(ClusterInfo clusterInfo) {
-    final List<NodeInfo> nodes = clusterInfo.nodes();
-    nodes.stream()
+    final Map<Integer, List<TopicPartitionReplica>> topicPartitionOfEachBroker =
+        clusterInfo.topics().stream()
+            .flatMap(topic -> clusterInfo.partitions(topic).stream())
+            .flatMap(
+                partitionInfo ->
+                    partitionInfo.replicas().stream()
+                        .map(
+                            replica ->
+                                new TopicPartitionReplica(
+                                    partitionInfo.topic(),
+                                    partitionInfo.partition(),
+                                    replica.id())))
+            .collect(Collectors.groupingBy(TopicPartitionReplica::brokerId));
+
+    final var topicPartitionDataRate = topicPartitionDataRate(clusterInfo, Duration.ofSeconds(60));
+
+    final var brokerLoad =
+        topicPartitionOfEachBroker.entrySet().stream()
+            .map(
+                entry ->
+                    Map.entry(
+                        entry.getKey(),
+                        entry.getValue().stream()
+                            .mapToDouble(
+                                x ->
+                                    topicPartitionDataRate.get(
+                                        TopicPartition.of(x.topic(), x.partition())))
+                            .sum()))
+            .map(
+                entry ->
+                    Map.entry(
+                        entry.getKey(), entry.getValue() / brokerBandwidthCap.get(entry.getKey())))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+    return () -> brokerLoad;
+  }
+
+  /**
+   * Calculate the maximum increase rate of each topic/partition, across the whole cluster.
+   *
+   * @param clusterInfo the clusterInfo that offers the metrics related to topic/partition size
+   * @param sampleWindow the time interval for calculating the data rate, noted that if the metrics
+   *     doesn't have the sufficient old metric then an exception will likely be thrown.
+   * @return a map contain the maximum increase rate of each topic/partition log
+   */
+  public Map<TopicPartition, Double> topicPartitionDataRate(
+      ClusterInfo clusterInfo, Duration sampleWindow) {
+    return clusterInfo.allBeans().entrySet().parallelStream()
         .map(
-            nodeInfo -> {
-              final var nodeMetrics = clusterInfo.allBeans().get(nodeInfo.id());
-              nodeMetrics.stream()
-                  .filter(x -> x instanceof BrokerTopicMetricsResult)
-                  .filter(x -> x.beanObject().getProperties().get("type").equals("Log"))
-                  .filter(x -> x.beanObject().getProperties().get("name").equals("Size"))
-                  .collect(
-                      Collectors.groupingBy(
-                          x ->
-                              TopicPartition.of(
-                                  x.beanObject().getProperties().get("topic"),
-                                  Integer.parseInt(
-                                      x.beanObject().getProperties().get("partition")))));
-              return null;
-            });
-    return new BrokerCost() {
-      @Override
-      public Map<Integer, Double> value() {
-        return null;
-      }
-    };
+            entry ->
+                entry.getValue().parallelStream()
+                    .filter(bean -> bean instanceof HasValue)
+                    .filter(bean -> bean.beanObject().getProperties().get("type").equals("Log"))
+                    .filter(bean -> bean.beanObject().getProperties().get("name").equals("Size"))
+                    .map(bean -> (HasValue) bean)
+                    .collect(
+                        Collectors.groupingBy(
+                            bean ->
+                                TopicPartition.of(
+                                    bean.beanObject().getProperties().get("topic"),
+                                    Integer.parseInt(
+                                        bean.beanObject().getProperties().get("partition")))))
+                    .entrySet()
+                    .parallelStream()
+                    .map(
+                        metrics -> {
+                          // calculate the increase rate over a specific window of time
+                          var sizeTimeSeries =
+                              metrics.getValue().stream()
+                                  .sorted(
+                                      Comparator.comparingLong(HasBeanObject::createdTimestamp)
+                                          .reversed())
+                                  .collect(Collectors.toUnmodifiableList());
+                          var latestSize = sizeTimeSeries.stream().findFirst().orElseThrow();
+                          var windowSize =
+                              sizeTimeSeries.stream()
+                                  .dropWhile(
+                                      bean ->
+                                          bean.createdTimestamp()
+                                              > latestSize.createdTimestamp()
+                                                  - sampleWindow.toMillis())
+                                  .findFirst()
+                                  .orElseThrow(
+                                      () ->
+                                          new IllegalStateException(
+                                              "No sufficient info to determine data rate, try later."));
+                          var dataRate =
+                              ((double) (latestSize.value() - windowSize.value()))
+                                  / ((double)
+                                      (latestSize.createdTimestamp()
+                                          - windowSize.createdTimestamp()));
+                          return Map.entry(metrics.getKey(), dataRate);
+                        })
+                    .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue)))
+        .flatMap(logSizeMap -> logSizeMap.entrySet().stream())
+        .collect(
+            Collectors.groupingBy(
+                Map.Entry::getKey,
+                Collectors.mapping(
+                    Map.Entry::getValue, Collectors.maxBy(Comparator.comparingDouble(x -> x)))))
+        .entrySet()
+        .parallelStream()
+        .map(x -> Map.entry(x.getKey(), x.getValue().orElseThrow()))
+        .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
   @Override

@@ -3,9 +3,12 @@ package org.astraea.balancer.alpha;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -149,6 +152,10 @@ public class BalancerUtils {
   }
 
   public static ClusterInfo clusterSnapShot(TopicAdmin topicAdmin) {
+    return clusterSnapShot(topicAdmin, Set.of());
+  }
+
+  public static ClusterInfo clusterSnapShot(TopicAdmin topicAdmin, Set<String> topicToIgnore) {
     final var nodeInfo =
         Utils.handleException(() -> topicAdmin.adminClient().describeCluster().nodes().get())
             .stream()
@@ -156,7 +163,10 @@ public class BalancerUtils {
             .collect(Collectors.toUnmodifiableList());
     final var nodeInfoMap =
         nodeInfo.stream().collect(Collectors.toUnmodifiableMap(NodeInfo::id, Function.identity()));
-    final var topics = topicAdmin.topicNames();
+    final var topics =
+        topicAdmin.topicNames().stream()
+            .filter(topic -> !topicToIgnore.contains(topic))
+            .collect(Collectors.toUnmodifiableSet());
     final var partitionInfo =
         topicAdmin.replicas(topics).entrySet().stream()
             .flatMap(
@@ -216,5 +226,36 @@ public class BalancerUtils {
         return Map.of();
       }
     };
+  }
+
+  public static Runnable generationWatcher(int totalIteration, AtomicInteger finishedIteration) {
+    return () -> {
+      var fancyIndicator = new char[] {'/', '-', '\\', '|'};
+      var count = 0;
+      var startedTime = System.currentTimeMillis();
+      while (!Thread.currentThread().isInterrupted()) {
+        try {
+          TimeUnit.SECONDS.sleep(1);
+        } catch (InterruptedException ignored) {
+          // no need to print anything since this watcher is not really important after all
+          return;
+        }
+        var finishedIterationCount = finishedIteration.get();
+        var passedSecond = (System.currentTimeMillis() - startedTime) / 1000;
+        System.out.printf(
+            "Progress [%d/%d], %d second%s passed %s%n",
+            finishedIterationCount,
+            totalIteration,
+            passedSecond,
+            (passedSecond == 1) ? "" : "s",
+            fancyIndicator[(count++) % fancyIndicator.length]);
+      }
+    };
+  }
+
+  public static Set<String> privateTopics(TopicAdmin topicAdmin) {
+    final Set<String> topic = new HashSet<>(topicAdmin.topicNames());
+    topic.removeAll(topicAdmin.publicTopicNames());
+    return topic;
   }
 }

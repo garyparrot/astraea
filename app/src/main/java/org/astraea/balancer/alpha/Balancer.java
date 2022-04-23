@@ -18,12 +18,12 @@ import java.util.TreeSet;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.management.remote.JMXServiceURL;
-import org.astraea.Utils;
 import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
 import org.astraea.balancer.alpha.executor.RebalancePlanExecutor;
@@ -50,6 +50,7 @@ public class Balancer implements Runnable {
   private final RebalancePlanGenerator rebalancePlanGenerator;
   private final TopicAdmin topicAdmin;
   private final RebalancePlanExecutor rebalancePlanExecutor;
+  private final Set<String> topicIgnoreList;
 
   public Balancer(Argument argument) {
     // initialize member variables
@@ -70,6 +71,8 @@ public class Balancer implements Runnable {
     this.topicAdmin = TopicAdmin.of(argument.props());
     this.rebalancePlanGenerator = new ShufflePlanGenerator(2, 5);
     this.rebalancePlanExecutor = new StraightPlanExecutor(argument.brokers, topicAdmin);
+
+    this.topicIgnoreList = BalancerUtils.privateTopics(this.topicAdmin);
   }
 
   public void start() {
@@ -79,85 +82,98 @@ public class Balancer implements Runnable {
   public void run() {
     this.metricCollector.start();
 
+    System.out.println("Ignored topics: " + topicIgnoreList);
+
     while (!Thread.interrupted()) {
       try {
-        // warm-up the metrics, each broker must have at least 500 metrics collected.
-        attemptWarmUpMetrics(300);
-
-        // generate cluster info
-        final var clusterInfo =
-            ClusterInfo.of(clusterSnapShot(topicAdmin), metricCollector.fetchMetrics());
-
-        // dump metrics into cost function
-        final var brokerCosts =
-            registeredCostFunction.parallelStream()
-                .filter(costFunction -> costFunction instanceof HasBrokerCost)
-                .map(costFunction -> (HasBrokerCost) costFunction)
-                .map(costFunction -> Map.entry(costFunction, costFunction.brokerCost(clusterInfo)))
-                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-
-        // print out current score
-        BalancerUtils.printCost(brokerCosts);
-
-        final var rankedProposal =
-            new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
-
-        final int iteration = 20000;
-        for (int i = 0; i < iteration; i++) {
-          final var proposal = rebalancePlanGenerator.generate(clusterInfo);
-          final var proposedClusterInfo = clusterInfoFromProposal(clusterInfo, proposal);
-
-          final var proposedBrokerCosts =
-              registeredCostFunction.parallelStream()
-                  .filter(costFunction -> costFunction instanceof HasBrokerCost)
-                  .map(costFunction -> (HasBrokerCost) costFunction)
-                  .map(
-                      costFunction ->
-                          Map.entry(costFunction, costFunction.brokerCost(proposedClusterInfo)))
-                  .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-
-          final var estimatedCostSum = costSum(proposedBrokerCosts);
-
-          rankedProposal.add(new ScoredProposal(estimatedCostSum, proposedBrokerCosts, proposal));
-          while (rankedProposal.size() > 5) rankedProposal.pollLast();
-        }
-
-        final var selectedProposal = rankedProposal.first();
-        final var currentCostSum = costSum(brokerCosts);
-        final var proposedCostSum = selectedProposal.score;
-        if (proposedCostSum < currentCostSum) {
-          System.out.println("[New Proposal Found]");
-          System.out.println("Current cost sum: " + currentCostSum);
-          System.out.println("Proposed cost sum: " + proposedCostSum);
-          BalancerUtils.describeProposal(
-              selectedProposal.proposal, BalancerUtils.currentAllocation(topicAdmin, clusterInfo));
-          System.out.println("[Detail of the cost of current Proposal]");
-          BalancerUtils.printCost(selectedProposal.costs);
-
-          System.out.println("[Balance Execution Started]");
-          if (rebalancePlanExecutor != null) rebalancePlanExecutor.run(selectedProposal.proposal);
-        } else {
-          System.out.println("[No Usable Proposal Found]");
-          System.out.println("Current cost sum: " + currentCostSum);
-          System.out.println("Best proposed cost sum calculated: " + proposedCostSum);
-        }
-
-        try {
-          TimeUnit.MILLISECONDS.sleep(1000);
-        } catch (InterruptedException e) {
-          e.printStackTrace();
-          break;
-        }
-
+        work();
       } catch (Exception exception) {
         System.out.println("Failed to calculate cost functions, skip this iteration");
-        Utils.handleException(
-            () -> {
-              TimeUnit.SECONDS.sleep(1);
-              return 0;
-            });
         exception.printStackTrace();
       }
+      try {
+        TimeUnit.MILLISECONDS.sleep(1000);
+      } catch (InterruptedException e) {
+        e.printStackTrace();
+        break;
+      }
+    }
+  }
+
+  private void work() throws Exception {
+    // generate cluster info
+    final var clusterInfo =
+        ClusterInfo.of(
+            clusterSnapShot(topicAdmin, topicIgnoreList), metricCollector.fetchMetrics());
+
+    // friendly info
+    if (clusterInfo.topics().isEmpty()) {
+      System.out.println("No topic in this cluster, there is nothing to do.");
+      return;
+    }
+
+    // warm up the metrics, each broker must have at least a certain amount of metrics collected.
+    attemptWarmUpMetrics(500);
+
+    // dump metrics into cost function
+    final var brokerCosts =
+        registeredCostFunction.parallelStream()
+            .filter(costFunction -> costFunction instanceof HasBrokerCost)
+            .map(costFunction -> (HasBrokerCost) costFunction)
+            .map(costFunction -> Map.entry(costFunction, costFunction.brokerCost(clusterInfo)))
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+
+    // print out current score
+    BalancerUtils.printCost(brokerCosts);
+
+    final var rankedProposal =
+        new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
+
+    final AtomicInteger progress = new AtomicInteger();
+    final int iteration = 20000;
+    final var watcherTask =
+        scheduledExecutorService.schedule(
+            BalancerUtils.generationWatcher(iteration, progress), 0, TimeUnit.SECONDS);
+    for (int i = 0; i < iteration; i++) {
+      final var proposal = rebalancePlanGenerator.generate(clusterInfo);
+      final var proposedClusterInfo = clusterInfoFromProposal(clusterInfo, proposal);
+
+      final var proposedBrokerCosts =
+          registeredCostFunction.parallelStream()
+              .filter(costFunction -> costFunction instanceof HasBrokerCost)
+              .map(costFunction -> (HasBrokerCost) costFunction)
+              .map(
+                  costFunction ->
+                      Map.entry(costFunction, costFunction.brokerCost(proposedClusterInfo)))
+              .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+
+      final var estimatedCostSum = costSum(proposedBrokerCosts);
+
+      rankedProposal.add(new ScoredProposal(estimatedCostSum, proposedBrokerCosts, proposal));
+      while (rankedProposal.size() > 5) rankedProposal.pollLast();
+
+      progress.incrementAndGet();
+    }
+    watcherTask.cancel(true);
+
+    final var selectedProposal = rankedProposal.first();
+    final var currentCostSum = costSum(brokerCosts);
+    final var proposedCostSum = selectedProposal.score;
+    if (proposedCostSum < currentCostSum) {
+      System.out.println("[New Proposal Found]");
+      System.out.println("Current cost sum: " + currentCostSum);
+      System.out.println("Proposed cost sum: " + proposedCostSum);
+      BalancerUtils.describeProposal(
+          selectedProposal.proposal, BalancerUtils.currentAllocation(topicAdmin, clusterInfo));
+      System.out.println("[Detail of the cost of current Proposal]");
+      BalancerUtils.printCost(selectedProposal.costs);
+
+      System.out.println("[Balance Execution Started]");
+      if (rebalancePlanExecutor != null) rebalancePlanExecutor.run(selectedProposal.proposal);
+    } else {
+      System.out.println("[No Usable Proposal Found]");
+      System.out.println("Current cost sum: " + currentCostSum);
+      System.out.println("Best proposed cost sum calculated: " + proposedCostSum);
     }
   }
 
