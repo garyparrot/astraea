@@ -109,27 +109,6 @@ public class BalancerUtils {
     };
   }
 
-  public static void printTopicPartitionReplicaCost(
-      Map<?, Map<TopicPartitionReplica, Double>> tprScores) {
-    tprScores.forEach(
-        (key, value) -> {
-          System.out.printf("[%s]%n", key.getClass().getSimpleName());
-          value.entrySet().stream()
-              .sorted(
-                  Comparator.comparing(
-                          (Map.Entry<TopicPartitionReplica, Double> x) -> x.getKey().topic())
-                      .thenComparing(
-                          (Map.Entry<TopicPartitionReplica, Double> x) -> x.getKey().partition())
-                      .thenComparing(
-                          (Map.Entry<TopicPartitionReplica, Double> x) -> x.getKey().brokerId()))
-              .forEachOrdered(
-                  entry ->
-                      System.out.printf(
-                          " TPR %s: %f%n", entry.getKey().toString(), entry.getValue()));
-          System.out.println();
-        });
-  }
-
   public static void printBrokerCost(Map<HasBrokerCost, BrokerCost> brokerCost) {
     brokerCost.forEach(
         (costFunction, cost) -> {
