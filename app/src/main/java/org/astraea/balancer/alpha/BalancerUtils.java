@@ -169,7 +169,7 @@ public class BalancerUtils {
             .collect(Collectors.toUnmodifiableSet());
     final var partitionInfo =
         topicAdmin.replicas(topics).entrySet().stream()
-            .flatMap(
+            .map(
                 entry -> {
                   var leaderReplica =
                       entry.getValue().stream().filter(Replica::leader).findFirst().orElseThrow();
@@ -178,16 +178,15 @@ public class BalancerUtils {
                       entry.getValue().stream()
                           .map(x -> nodeInfoMap.get(x.broker()))
                           .collect(Collectors.toUnmodifiableList());
-                  return entry.getValue().stream()
-                      .map(
-                          replica ->
-                              PartitionInfo.of(
-                                  entry.getKey().topic(),
-                                  entry.getKey().partition(),
-                                  leaderNode,
-                                  allNodes,
-                                  null,
-                                  null));
+                  // TODO: fix null
+                  return PartitionInfo.of(
+                          entry.getKey().topic(),
+                          entry.getKey().partition(),
+                          leaderNode,
+                          allNodes,
+                          null,
+                          null
+                          );
                 })
             .collect(Collectors.toUnmodifiableList());
 

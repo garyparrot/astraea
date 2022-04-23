@@ -113,7 +113,7 @@ public class Balancer implements Runnable {
     }
 
     // warm up the metrics, each broker must have at least a certain amount of metrics collected.
-    attemptWarmUpMetrics(500);
+    attemptWarmUpMetrics(50);
 
     // dump metrics into cost function
     final var brokerCosts =

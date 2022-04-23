@@ -59,7 +59,7 @@ public class ReplicaDiskInCost implements HasBrokerCost, HasPartitionCost {
                                     replica.id())))
             .collect(Collectors.groupingBy(TopicPartitionReplica::brokerId));
 
-    final var topicPartitionDataRate = topicPartitionDataRate(clusterInfo, Duration.ofSeconds(60));
+    final var topicPartitionDataRate = topicPartitionDataRate(clusterInfo, Duration.ofSeconds(3));
 
     final var brokerLoad =
         topicPartitionOfEachBroker.entrySet().stream()

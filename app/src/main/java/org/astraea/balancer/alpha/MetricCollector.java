@@ -23,7 +23,7 @@ import org.astraea.metrics.jmx.MBeanClient;
 /** Doing metric collector for balancer. */
 public class MetricCollector implements AutoCloseable {
 
-  private final long fetchInterval = Duration.ofSeconds(10).toMillis();
+  private final long fetchInterval = Duration.ofSeconds(1).toMillis();
   /**
    * The number of old time series to keep in data structure. note that this is not a strict upper
    * limit. The actual size might exceed. This issue is minor and fixing that might cause
