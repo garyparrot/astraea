@@ -10,9 +10,7 @@ import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Collection;
 import java.util.Comparator;
-import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -40,10 +38,7 @@ import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.CostFunction;
 import org.astraea.cost.HasBrokerCost;
 import org.astraea.cost.HasPartitionCost;
-import org.astraea.cost.NodeInfo;
 import org.astraea.cost.PartitionCost;
-import org.astraea.cost.PartitionInfo;
-import org.astraea.metrics.HasBeanObject;
 import org.astraea.topic.TopicAdmin;
 import org.astraea.utils.DataSize;
 import org.astraea.utils.DataUnit;
@@ -159,7 +154,7 @@ public class Balancer implements Runnable {
             BalancerUtils.generationWatcher(iteration, progress), 0, TimeUnit.SECONDS);
     for (int i = 0; i < iteration; i++) {
       final var proposal = rebalancePlanGenerator.generate(clusterInfo);
-      final var proposedClusterInfo = clusterInfoFromProposal(clusterInfo, proposal);
+      final var proposedClusterInfo = BalancerUtils.clusterInfoFromProposal(clusterInfo, proposal);
 
       final var proposedBrokerCosts =
           registeredCostFunction.parallelStream()
@@ -235,62 +230,6 @@ public class Balancer implements Runnable {
             "Attempts to warm up metric (%.2f%%/100.00%%)%n", warpUpProgress.get() * 100.0);
       }
     }
-  }
-
-  /** create a fake cluster info based on given proposal */
-  private ClusterInfo clusterInfoFromProposal(
-      ClusterInfo clusterInfo, RebalancePlanProposal proposal) {
-    return new ClusterInfo() {
-      @Override
-      public List<NodeInfo> nodes() {
-        return clusterInfo.nodes();
-      }
-
-      @Override
-      public List<PartitionInfo> availablePartitions(String topic) {
-        return partitions(topic).stream()
-            .filter(x -> x.leader() != null)
-            .collect(Collectors.toUnmodifiableList());
-      }
-
-      @Override
-      public Set<String> topics() {
-        return proposal
-            .rebalancePlan()
-            .map(clusterLogAllocation -> clusterLogAllocation.allocation().keySet())
-            .orElseGet(clusterInfo::topics);
-      }
-
-      @Override
-      public List<PartitionInfo> partitions(String topic) {
-        return proposal
-            .rebalancePlan()
-            .map(
-                clusterLogAllocation ->
-                    clusterLogAllocation.allocation().get(topic).entrySet().stream()
-                        .map(
-                            entry -> {
-                              var collect =
-                                  entry.getValue().stream()
-                                      .map(x -> NodeInfo.of(x, "", 0))
-                                      .collect(Collectors.toUnmodifiableList());
-                              return PartitionInfo.of(
-                                  topic, entry.getKey(), collect.get(0), collect, null, null);
-                            })
-                        .collect(Collectors.toUnmodifiableList()))
-            .orElse(clusterInfo.partitions(topic));
-      }
-
-      @Override
-      public Collection<HasBeanObject> beans(int brokerId) {
-        return clusterInfo.beans(brokerId);
-      }
-
-      @Override
-      public Map<Integer, Collection<HasBeanObject>> allBeans() {
-        return clusterInfo.allBeans();
-      }
-    };
   }
 
   /**

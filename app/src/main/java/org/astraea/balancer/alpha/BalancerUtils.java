@@ -53,6 +53,62 @@ public class BalancerUtils {
                                     y -> y.getKey().partition(), Map.Entry::getValue)))));
   }
 
+  /** create a fake cluster info based on given proposal */
+  public static ClusterInfo clusterInfoFromProposal(
+      ClusterInfo clusterInfo, RebalancePlanProposal proposal) {
+    return new ClusterInfo() {
+      @Override
+      public List<NodeInfo> nodes() {
+        return clusterInfo.nodes();
+      }
+
+      @Override
+      public List<PartitionInfo> availablePartitions(String topic) {
+        return partitions(topic).stream()
+            .filter(x -> x.leader() != null)
+            .collect(Collectors.toUnmodifiableList());
+      }
+
+      @Override
+      public Set<String> topics() {
+        return proposal
+            .rebalancePlan()
+            .map(clusterLogAllocation -> clusterLogAllocation.allocation().keySet())
+            .orElseGet(clusterInfo::topics);
+      }
+
+      @Override
+      public List<PartitionInfo> partitions(String topic) {
+        return proposal
+            .rebalancePlan()
+            .map(
+                clusterLogAllocation ->
+                    clusterLogAllocation.allocation().get(topic).entrySet().stream()
+                        .map(
+                            entry -> {
+                              var collect =
+                                  entry.getValue().stream()
+                                      .map(x -> NodeInfo.of(x, "", 0))
+                                      .collect(Collectors.toUnmodifiableList());
+                              return PartitionInfo.of(
+                                  topic, entry.getKey(), collect.get(0), collect, null, null);
+                            })
+                        .collect(Collectors.toUnmodifiableList()))
+            .orElse(clusterInfo.partitions(topic));
+      }
+
+      @Override
+      public Collection<HasBeanObject> beans(int brokerId) {
+        return clusterInfo.beans(brokerId);
+      }
+
+      @Override
+      public Map<Integer, Collection<HasBeanObject>> allBeans() {
+        return clusterInfo.allBeans();
+      }
+    };
+  }
+
   public static void printTopicPartitionReplicaCost(
       Map<?, Map<TopicPartitionReplica, Double>> tprScores) {
     tprScores.forEach(
