@@ -180,22 +180,24 @@ public final class KafkaMetrics {
 
     public static ReplicaManager of(String metricName) {
       return Arrays.stream(ReplicaManager.values())
-              .filter(metric -> metric.metricName().equalsIgnoreCase(metricName))
-              .findFirst()
-              .orElseThrow(() -> new IllegalArgumentException("No such metric: " + metricName));
+          .filter(metric -> metric.metricName().equalsIgnoreCase(metricName))
+          .findFirst()
+          .orElseThrow(() -> new IllegalArgumentException("No such metric: " + metricName));
     }
+
     public Collection<HasBeanObject> fetch(MBeanClient mBeanClient) {
       Collection<HasBeanObject> beanList = new ArrayList<>();
-              mBeanClient.queryBeans(
-                      BeanQuery.builder("kafka.server")
-                              .property("type", "ReplicaManager")
-                              .property("name", metricName)
-                              .build())
-              .forEach(
-                      beanObject -> beanList.add(HasValue.of(beanObject)));
+      mBeanClient
+          .queryBeans(
+              BeanQuery.builder("kafka.server")
+                  .property("type", "ReplicaManager")
+                  .property("name", metricName)
+                  .build())
+          .forEach(beanObject -> beanList.add(HasValue.of(beanObject)));
       return beanList;
     }
   }
+
   public enum TopicPartition {
     LodEndOffset("LodEndOffset"),
     LogStartOffset("LogStartOffset"),
