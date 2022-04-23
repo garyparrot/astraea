@@ -24,130 +24,135 @@ import org.astraea.metrics.kafka.KafkaMetrics;
 import org.astraea.topic.TopicAdmin;
 
 public class ReplicaMigrateCost implements HasPartitionCost {
-    @Override
-    public Fetcher fetcher() {
-        return client -> new java.util.ArrayList<>(KafkaMetrics.TopicPartition.Size.fetch(client));
-    }
+  @Override
+  public Fetcher fetcher() {
+    return client -> new java.util.ArrayList<>(KafkaMetrics.TopicPartition.Size.fetch(client));
+  }
 
-    @Override
-    public PartitionCost partitionCost(ClusterInfo clusterInfo) {
-        var sizeOfReplica = handleBeanObject(clusterInfo);
-        var totalUsedSizeInBroker = new HashMap<Integer, Long>();
-        TreeMap<TopicPartitionReplica, Double> replicaCost =
-                new TreeMap<>(
-                        Comparator.comparing(TopicPartitionReplica::brokerId)
-                                .thenComparing(TopicPartitionReplica::topic)
-                                .thenComparing(TopicPartitionReplica::partition));
+  @Override
+  public PartitionCost partitionCost(ClusterInfo clusterInfo) {
+    var sizeOfReplica = handleBeanObject(clusterInfo);
+    var totalUsedSizeInBroker = new HashMap<Integer, Long>();
+    TreeMap<TopicPartitionReplica, Double> replicaCost =
+        new TreeMap<>(
+            Comparator.comparing(TopicPartitionReplica::brokerId)
+                .thenComparing(TopicPartitionReplica::topic)
+                .thenComparing(TopicPartitionReplica::partition));
+    clusterInfo
+        .allBeans()
+        .keySet()
+        .forEach(
+            broker -> {
+              totalUsedSizeInBroker.put(
+                  broker,
+                  sizeOfReplica.entrySet().stream()
+                      .filter((b) -> b.getKey().brokerId() == broker)
+                      .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue))
+                      .values()
+                      .stream()
+                      .mapToLong(Long::longValue)
+                      .sum());
+            });
+    sizeOfReplica.forEach(
+        (tpr, size) -> {
+          replicaCost.put(tpr, (double) size / totalUsedSizeInBroker.get(tpr.brokerId()));
+        });
+    return new PartitionCost() {
+      @Override
+      public Map<TopicPartition, Double> value(String topic) {
+        Map<TopicPartition, Double> scores = new HashMap<>();
         clusterInfo
-                .allBeans()
-                .keySet()
-                .forEach(
-                        broker -> {
-                            totalUsedSizeInBroker.put(
-                                    broker,
-                                    sizeOfReplica.entrySet().stream()
-                                            .filter((b) -> b.getKey().brokerId() == broker)
-                                            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue))
-                                            .values()
-                                            .stream()
-                                            .mapToLong(Long::longValue)
-                                            .sum());
-                        });
-        sizeOfReplica.forEach(
-                (tpr, size) -> {
-                    replicaCost.put(tpr, (double) size / totalUsedSizeInBroker.get(tpr.brokerId()));
+            .nodes()
+            .forEach(
+                nodeInfo -> {
+                  replicaCost.entrySet().stream()
+                      .filter(
+                          (tprScore) ->
+                              tprScore.getKey().topic().equals(topic)
+                                  && clusterInfo
+                                          .partitions(topic)
+                                          .get(tprScore.getKey().partition())
+                                          .leader()
+                                      == nodeInfo)
+                      .forEach(
+                          tprScore ->
+                              scores.put(
+                                  TopicPartition.of(
+                                      tprScore.getKey().topic(), tprScore.getKey().partition()),
+                                  tprScore.getValue()));
                 });
-        return new PartitionCost() {
-            @Override
-            public Map<TopicPartition, Double> value(String topic) {
-                Map<TopicPartition, Double> scores = new HashMap<>();
-                clusterInfo
-                        .nodes()
-                        .forEach(
-                                nodeInfo -> {
-                                    replicaCost.entrySet().stream()
-                                            .filter(
-                                                    (tprScore) ->
-                                                            tprScore.getKey().topic().equals(topic)
-                                                                    && clusterInfo
-                                                                    .partitions(topic)
-                                                                    .get(tprScore.getKey().partition())
-                                                                    .leader()
-                                                                    == nodeInfo)
-                                            .forEach(tprScore -> scores.put(TopicPartition.of(tprScore.getKey().topic(), tprScore.getKey().partition())
-                                                    , tprScore.getValue()));
-                                });
-                return scores;
-            }
+        return scores;
+      }
 
-            @Override
-            public Map<TopicPartition, Double> value(int brokerId) {
-                return replicaCost.entrySet().stream()
-                        .filter((tprScore) -> tprScore.getKey().brokerId() == brokerId)
-                        .collect(
-                                Collectors.toMap(
-                                        x -> TopicPartition.of(x.getKey().topic(), x.getKey().partition()),
-                                        Map.Entry::getValue));
-            }
-        };
-    }
+      @Override
+      public Map<TopicPartition, Double> value(int brokerId) {
+        return replicaCost.entrySet().stream()
+            .filter((tprScore) -> tprScore.getKey().brokerId() == brokerId)
+            .collect(
+                Collectors.toMap(
+                    x -> TopicPartition.of(x.getKey().topic(), x.getKey().partition()),
+                    Map.Entry::getValue));
+      }
+    };
+  }
 
-    public Map<TopicPartitionReplica, Long> handleBeanObject(ClusterInfo clusterInfo) {
-        Map<TopicPartitionReplica, Long> sizeOfReplica = new HashMap<>();
-        clusterInfo
-                .allBeans()
-                .forEach(
-                        (broker, beanObjects) -> {
-                            beanObjects.forEach(
-                                    beanObject ->
-                                            sizeOfReplica.put(
-                                                    new TopicPartitionReplica(
-                                                            beanObject.beanObject().getProperties().get("topic"),
-                                                            Integer.parseInt(
-                                                                    beanObject.beanObject().getProperties().get("partition")),
-                                                            broker),
-                                                    ((HasValue) beanObject).value()));
-                        });
-        return sizeOfReplica;
-    }
+  public Map<TopicPartitionReplica, Long> handleBeanObject(ClusterInfo clusterInfo) {
+    Map<TopicPartitionReplica, Long> sizeOfReplica = new HashMap<>();
+    clusterInfo
+        .allBeans()
+        .forEach(
+            (broker, beanObjects) -> {
+              beanObjects.forEach(
+                  beanObject ->
+                      sizeOfReplica.put(
+                          new TopicPartitionReplica(
+                              beanObject.beanObject().getProperties().get("topic"),
+                              Integer.parseInt(
+                                  beanObject.beanObject().getProperties().get("partition")),
+                              broker),
+                          ((HasValue) beanObject).value()));
+            });
+    return sizeOfReplica;
+  }
 
-    public static void main(String[] args) throws InterruptedException, MalformedURLException {
-        var host = "localhost";
-        var brokerPort = 14179;
-        var admin = TopicAdmin.of(host + ":" + brokerPort);
-        var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
-        var jmxAddress = Map.of(1001, 11040, 1002, 15006, 1003, 10059);
+  public static void main(String[] args) throws InterruptedException, MalformedURLException {
+    var host = "localhost";
+    var brokerPort = 14179;
+    var admin = TopicAdmin.of(host + ":" + brokerPort);
+    var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
+    var jmxAddress = Map.of(1001, 11040, 1002, 15006, 1003, 10059);
 
-        ReplicaMigrateCost costFunction = new ReplicaMigrateCost();
-        jmxAddress.forEach(
-                (b, port) -> {
-                    var firstBeanObjects =
-                            BeanCollector.builder()
-                                    .interval(Duration.ofSeconds(4))
-                                    .build()
-                                    .register()
-                                    .host(host)
-                                    .port(port)
-                                    .fetcher(Fetcher.of(Set.of(costFunction.fetcher())))
-                                    .build()
-                                    .current();
-                    allBeans.put(
-                            b,
-                            allBeans.containsKey(b)
-                                    ? Stream.concat(allBeans.get(b).stream(), firstBeanObjects.stream())
-                                    .collect(Collectors.toList())
-                                    : firstBeanObjects);
-                });
-        var clusterInfo = ClusterInfo.of(BalancerUtils.clusterSnapShot(admin), allBeans);
-        costFunction
-                .partitionCost(clusterInfo)
-                .value(1001)
-                .forEach((broker, score) -> System.out.println(broker + ":" + score));
-        costFunction
-                .partitionCost(clusterInfo)
-                .value("test-1")
-                .forEach((tp, score) -> {
-                    System.out.println(tp.topic() + " " + tp.partition() + ":" + score);
-                });
-    }
+    ReplicaMigrateCost costFunction = new ReplicaMigrateCost();
+    jmxAddress.forEach(
+        (b, port) -> {
+          var firstBeanObjects =
+              BeanCollector.builder()
+                  .interval(Duration.ofSeconds(4))
+                  .build()
+                  .register()
+                  .host(host)
+                  .port(port)
+                  .fetcher(Fetcher.of(Set.of(costFunction.fetcher())))
+                  .build()
+                  .current();
+          allBeans.put(
+              b,
+              allBeans.containsKey(b)
+                  ? Stream.concat(allBeans.get(b).stream(), firstBeanObjects.stream())
+                      .collect(Collectors.toList())
+                  : firstBeanObjects);
+        });
+    var clusterInfo = ClusterInfo.of(BalancerUtils.clusterSnapShot(admin), allBeans);
+    costFunction
+        .partitionCost(clusterInfo)
+        .value(1001)
+        .forEach((broker, score) -> System.out.println(broker + ":" + score));
+    costFunction
+        .partitionCost(clusterInfo)
+        .value("test-1")
+        .forEach(
+            (tp, score) -> {
+              System.out.println(tp.topic() + " " + tp.partition() + ":" + score);
+            });
+  }
 }
