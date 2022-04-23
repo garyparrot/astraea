@@ -11,6 +11,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -23,7 +24,7 @@ import org.astraea.metrics.jmx.MBeanClient;
 /** Doing metric collector for balancer. */
 public class MetricCollector implements AutoCloseable {
 
-  private final long fetchInterval = Duration.ofSeconds(1).toMillis();
+  private final Duration fetchInterval;
   /**
    * The number of old time series to keep in data structure. note that this is not a strict upper
    * limit. The actual size might exceed. This issue is minor and fixing that might cause
@@ -40,6 +41,7 @@ public class MetricCollector implements AutoCloseable {
   private final ScheduledExecutorService executor;
   private final AtomicBoolean started = new AtomicBoolean();
   private final List<ScheduledFuture<?>> scheduledFutures = new LinkedList<>();
+  private final AtomicLong fetchCounter = new AtomicLong();
 
   /**
    * BalancerMetricCollector
@@ -52,12 +54,14 @@ public class MetricCollector implements AutoCloseable {
   public MetricCollector(
       Map<Integer, JMXServiceURL> jmxServiceURLMap,
       Collection<Fetcher> fetchers,
-      ScheduledExecutorService scheduledExecutorService) {
+      ScheduledExecutorService scheduledExecutorService,
+      Balancer.Argument argument) {
     this.jmxServiceURLMap = Map.copyOf(jmxServiceURLMap);
     this.aggregatedFetcher = Fetcher.of(fetchers);
     this.mBeanClientMap = new ConcurrentHashMap<>();
     this.metricTimeSeries = new ConcurrentHashMap<>();
     this.executor = scheduledExecutorService;
+    this.fetchInterval = argument.metricScrapingInterval;
   }
 
   public synchronized void start() {
@@ -86,9 +90,19 @@ public class MetricCollector implements AutoCloseable {
             .map(
                 brokerId ->
                     executor.scheduleAtFixedRate(
-                        () -> task.accept(brokerId), 0, fetchInterval, TimeUnit.MILLISECONDS))
+                        () -> task.accept(brokerId),
+                        0,
+                        fetchInterval.toMillis(),
+                        TimeUnit.MILLISECONDS))
             .collect(Collectors.toUnmodifiableList());
     scheduledFutures.addAll(futures);
+    scheduledFutures.add(
+        executor.scheduleAtFixedRate(
+            fetchCounter::incrementAndGet, 10, fetchInterval.toMillis(), TimeUnit.MILLISECONDS));
+  }
+
+  public long fetchCount() {
+    return fetchCounter.get();
   }
 
   /**

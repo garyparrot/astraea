@@ -8,6 +8,7 @@ import java.io.UncheckedIOException;
 import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
@@ -24,6 +25,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.management.remote.JMXServiceURL;
+import org.astraea.argument.DurationField;
 import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
 import org.astraea.balancer.alpha.executor.RebalancePlanExecutor;
@@ -67,7 +69,8 @@ public class Balancer implements Runnable {
             this.registeredCostFunction.stream()
                 .map(CostFunction::fetcher)
                 .collect(Collectors.toUnmodifiableList()),
-            this.scheduledExecutorService);
+            this.scheduledExecutorService,
+            argument);
     this.topicAdmin = TopicAdmin.of(argument.props());
     this.rebalancePlanGenerator = new ShufflePlanGenerator(2, 5);
     this.rebalancePlanExecutor = new StraightPlanExecutor(argument.brokers, topicAdmin);
@@ -113,7 +116,7 @@ public class Balancer implements Runnable {
     }
 
     // warm up the metrics, each broker must have at least a certain amount of metrics collected.
-    attemptWarmUpMetrics(50);
+    attemptWarmUpMetrics(argument.metricWarmUpCount);
 
     // dump metrics into cost function
     final var brokerCosts =
@@ -177,29 +180,19 @@ public class Balancer implements Runnable {
     }
   }
 
-  private void attemptWarmUpMetrics(int requiredMetrics) throws InterruptedException {
-    Supplier<Boolean> isWarmed =
-        () ->
-            metricCollector.fetchMetrics().values().stream()
-                .map(metricOfBroker -> metricOfBroker.size() >= requiredMetrics)
-                .filter(indicator -> !indicator)
-                .findAny()
-                .isEmpty();
+  private void attemptWarmUpMetrics(int requiredFetch) throws InterruptedException {
+    Supplier<Boolean> isWarmed = () -> metricCollector.fetchCount() >= requiredFetch;
     Supplier<Double> warpUpProgress =
-        () -> {
-          var brokerMetrics = metricCollector.fetchMetrics();
-          var sumOfMetrics =
-              brokerMetrics.values().stream()
-                  .mapToDouble(
-                      metricOfBroker -> (double) Math.min(requiredMetrics, metricOfBroker.size()))
-                  .sum();
-          return sumOfMetrics / (brokerMetrics.size() * requiredMetrics);
-        };
+        () -> Math.min(((double) metricCollector.fetchCount()) / requiredFetch, 1);
 
     while (!isWarmed.get()) {
       System.out.printf(
           "Attempts to warm up metric (%.2f%%/100.00%%)%n", warpUpProgress.get() * 100.0);
       TimeUnit.SECONDS.sleep(3);
+      if (isWarmed.get()) {
+        System.out.printf(
+            "Attempts to warm up metric (%.2f%%/100.00%%)%n", warpUpProgress.get() * 100.0);
+      }
     }
   }
 
@@ -321,6 +314,17 @@ public class Balancer implements Runnable {
         converter = FolderCapacityMapField.class,
         required = true)
     Map<String, Integer> totalFolderCapacity;
+
+    @Parameter(
+        names = {"--metrics-scraping-interval"},
+        description = "The time interval between metric fetching",
+        converter = DurationField.class)
+    Duration metricScrapingInterval = Duration.ofSeconds(1);
+
+    @Parameter(
+        names = {"--metric-warm-up"},
+        description = "Ensure the balance have fetched a certain amount of metrics before continue")
+    int metricWarmUpCount = 3;
 
     public static class JmxServiceUrlMappingFileField extends Field<Map<Integer, JMXServiceURL>> {
       static final Pattern serviceUrlKeyPattern =

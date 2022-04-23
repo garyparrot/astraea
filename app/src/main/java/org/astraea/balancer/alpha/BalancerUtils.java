@@ -180,13 +180,12 @@ public class BalancerUtils {
                           .collect(Collectors.toUnmodifiableList());
                   // TODO: fix null
                   return PartitionInfo.of(
-                          entry.getKey().topic(),
-                          entry.getKey().partition(),
-                          leaderNode,
-                          allNodes,
-                          null,
-                          null
-                          );
+                      entry.getKey().topic(),
+                      entry.getKey().partition(),
+                      leaderNode,
+                      allNodes,
+                      null,
+                      null);
                 })
             .collect(Collectors.toUnmodifiableList());
 
