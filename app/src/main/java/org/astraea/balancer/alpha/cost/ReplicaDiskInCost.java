@@ -76,7 +76,8 @@ public class ReplicaDiskInCost implements HasBrokerCost, HasPartitionCost {
             .map(
                 entry ->
                     Map.entry(
-                        entry.getKey(), entry.getValue() / brokerBandwidthCap.get(entry.getKey())))
+                        entry.getKey(), entry.getValue() / brokerBandwidthCap.get(entry.getKey()) / 1000 / 1000))
+                .map(entry -> Map.entry(entry.getKey(), Math.min(entry.getValue(), 1)))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
     return () -> brokerLoad;

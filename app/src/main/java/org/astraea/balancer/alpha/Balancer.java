@@ -134,7 +134,7 @@ public class Balancer implements Runnable {
         new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
 
     final AtomicInteger progress = new AtomicInteger();
-    final int iteration = 20000;
+    final int iteration = 4000;
     final var watcherTask =
         scheduledExecutorService.schedule(
             BalancerUtils.generationWatcher(iteration, progress), 0, TimeUnit.SECONDS);
