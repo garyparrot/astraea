@@ -1,6 +1,5 @@
 package org.astraea.balancer.alpha.executor;
 
-import java.util.Set;
 import org.astraea.balancer.alpha.BalancerUtils;
 import org.astraea.balancer.alpha.ClusterLogAllocation;
 import org.astraea.balancer.alpha.RebalancePlanProposal;
@@ -33,10 +32,7 @@ public class StraightPlanExecutor implements RebalancePlanExecutor {
                     if (clusterNow.allocation().get(topic).get(partition).equals(replicaList))
                       return;
                     System.out.printf("Move %s-%d to %s%n", topic, partition, replicaList);
-                    topicAdmin
-                        .migrator()
-                        .partition(topic, partition)
-                        .moveTo(Set.copyOf(replicaList));
+                    topicAdmin.migrator().partition(topic, partition).moveTo(replicaList);
                   });
             });
 
