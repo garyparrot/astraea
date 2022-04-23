@@ -196,6 +196,7 @@ public class Balancer implements Runnable {
           selectedProposal.proposal, BalancerUtils.currentAllocation(topicAdmin, clusterInfo));
       System.out.println("[Detail of the cost of current Proposal]");
       BalancerUtils.printCost(selectedProposal.costs);
+      // TODO: Print topicPartitionCosts
 
       System.out.println("[Balance Execution Started]");
       if (rebalancePlanExecutor != null) rebalancePlanExecutor.run(selectedProposal.proposal);
