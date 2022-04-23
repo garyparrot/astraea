@@ -127,6 +127,7 @@ public class Balancer implements Runnable {
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
 
     // print out current score
+    System.out.println("[Cost of Current Cluster]");
     BalancerUtils.printCost(brokerCosts);
 
     final var rankedProposal =
