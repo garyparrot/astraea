@@ -27,6 +27,7 @@ import java.util.stream.Collectors;
 import javax.management.remote.JMXServiceURL;
 import org.astraea.argument.DurationField;
 import org.astraea.argument.Field;
+import org.astraea.balancer.alpha.cost.NumberOfLeaderCost;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
 import org.astraea.balancer.alpha.executor.RebalancePlanExecutor;
 import org.astraea.balancer.alpha.executor.StraightPlanExecutor;
@@ -58,7 +59,8 @@ public class Balancer implements Runnable {
     // initialize member variables
     this.argument = argument;
     this.jmxServiceURLMap = argument.jmxServiceURLMap;
-    this.registeredCostFunction = Set.of(new ReplicaDiskInCost(argument.brokerBandwidthCap));
+    this.registeredCostFunction =
+        Set.of(new ReplicaDiskInCost(argument.brokerBandwidthCap), new NumberOfLeaderCost());
     this.scheduledExecutorService = Executors.newScheduledThreadPool(8);
 
     // initialize main component

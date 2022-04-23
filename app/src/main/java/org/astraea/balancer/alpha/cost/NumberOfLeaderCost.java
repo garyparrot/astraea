@@ -51,10 +51,10 @@ public class NumberOfLeaderCost implements HasBrokerCost {
 
   public static void main(String[] args) throws InterruptedException, MalformedURLException {
     var host = "localhost";
-    var brokerPort = 16299;
+    var brokerPort = 14179;
     var admin = TopicAdmin.of(host + ":" + brokerPort);
     var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
-    var jmxAddress = Map.of(1001, 18661, 1002, 18732, 1003, 10474);
+    var jmxAddress = Map.of(1001, 11040, 1002, 15006, 1003, 10059);
 
     NumberOfLeaderCost costFunction = new NumberOfLeaderCost();
     jmxAddress.forEach(
@@ -77,6 +77,9 @@ public class NumberOfLeaderCost implements HasBrokerCost {
                   : firstBeanObjects);
         });
     var clusterInfo = ClusterInfo.of(BalancerUtils.clusterSnapShot(admin), allBeans);
-    costFunction.brokerCost(clusterInfo);
+    costFunction
+        .brokerCost(clusterInfo)
+        .value()
+        .forEach((broker, score) -> System.out.println(broker + ":" + score));
   }
 }
