@@ -3,6 +3,7 @@ package org.astraea.balancer.alpha.cost;
 import java.net.MalformedURLException;
 import java.time.Duration;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -36,11 +37,13 @@ public class NumberOfLeaderCost implements HasBrokerCost {
             (key, value) ->
                 value.stream()
                     .filter(x -> x instanceof HasValue)
+                    .filter(x -> x.beanObject().getProperties().get("name").equals("LeaderCount"))
+                    .filter(
+                        x -> x.beanObject().getProperties().get("type").equals("ReplicaManager"))
+                    .sorted(Comparator.comparing(HasBeanObject::createdTimestamp).reversed())
                     .map(x -> (HasValue) x)
-                    .forEach(
-                        hasValue -> {
-                          leaderCount.put(key, (int) hasValue.value());
-                        }));
+                    .limit(1)
+                    .forEach(hasValue -> leaderCount.put(key, (int) hasValue.value())));
     var totalLeader = leaderCount.values().stream().mapToInt(Integer::intValue).sum();
     leaderCount.forEach(
         (broker, leaderNum) -> {

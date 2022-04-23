@@ -102,15 +102,20 @@ public class ReplicaMigrateCost implements HasPartitionCost {
         .allBeans()
         .forEach(
             (broker, beanObjects) -> {
-              beanObjects.forEach(
-                  beanObject ->
-                      sizeOfReplica.put(
-                          new TopicPartitionReplica(
-                              beanObject.beanObject().getProperties().get("topic"),
-                              Integer.parseInt(
-                                  beanObject.beanObject().getProperties().get("partition")),
-                              broker),
-                          ((HasValue) beanObject).value()));
+              beanObjects.stream()
+                  .filter(x -> x instanceof HasValue)
+                  .filter(x -> x.beanObject().getProperties().get("type").equals("Log"))
+                  .filter(x -> x.beanObject().getProperties().get("name").equals("Size"))
+                  .map(x -> (HasValue) x)
+                  .forEach(
+                      beanObject ->
+                          sizeOfReplica.put(
+                              new TopicPartitionReplica(
+                                  beanObject.beanObject().getProperties().get("topic"),
+                                  Integer.parseInt(
+                                      beanObject.beanObject().getProperties().get("partition")),
+                                  broker),
+                              ((HasValue) beanObject).value()));
             });
     return sizeOfReplica;
   }

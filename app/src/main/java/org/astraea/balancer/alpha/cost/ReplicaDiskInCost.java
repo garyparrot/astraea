@@ -26,7 +26,6 @@ import org.astraea.balancer.alpha.BalancerUtils;
 import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.HasBrokerCost;
-import org.astraea.cost.HasPartitionCost;
 import org.astraea.cost.PartitionCost;
 import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
@@ -36,7 +35,7 @@ import org.astraea.metrics.kafka.HasValue;
 import org.astraea.metrics.kafka.KafkaMetrics;
 import org.astraea.topic.TopicAdmin;
 
-public class ReplicaDiskInCost implements HasBrokerCost, HasPartitionCost {
+public class ReplicaDiskInCost implements HasBrokerCost {
   Map<Integer, Integer> brokerBandwidthCap;
 
   public ReplicaDiskInCost(Map<Integer, Integer> brokerBandwidthCap) {
@@ -153,7 +152,6 @@ public class ReplicaDiskInCost implements HasBrokerCost, HasPartitionCost {
         .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
-  @Override
   public PartitionCost partitionCost(ClusterInfo clusterInfo) {
     var replicaIn = replicaInCount(clusterInfo);
 

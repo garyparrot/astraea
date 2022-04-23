@@ -29,6 +29,7 @@ import org.astraea.argument.DurationField;
 import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.cost.NumberOfLeaderCost;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
+import org.astraea.balancer.alpha.cost.ReplicaMigrateCost;
 import org.astraea.balancer.alpha.executor.RebalancePlanExecutor;
 import org.astraea.balancer.alpha.executor.StraightPlanExecutor;
 import org.astraea.balancer.alpha.generator.RebalancePlanGenerator;
@@ -37,7 +38,9 @@ import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.CostFunction;
 import org.astraea.cost.HasBrokerCost;
+import org.astraea.cost.HasPartitionCost;
 import org.astraea.cost.NodeInfo;
+import org.astraea.cost.PartitionCost;
 import org.astraea.cost.PartitionInfo;
 import org.astraea.metrics.HasBeanObject;
 import org.astraea.topic.TopicAdmin;
@@ -60,7 +63,10 @@ public class Balancer implements Runnable {
     this.argument = argument;
     this.jmxServiceURLMap = argument.jmxServiceURLMap;
     this.registeredCostFunction =
-        Set.of(new ReplicaDiskInCost(argument.brokerBandwidthCap), new NumberOfLeaderCost());
+        Set.of(
+            new ReplicaDiskInCost(argument.brokerBandwidthCap),
+            new NumberOfLeaderCost(),
+            new ReplicaMigrateCost());
     this.scheduledExecutorService = Executors.newScheduledThreadPool(8);
 
     // initialize main component
@@ -127,10 +133,17 @@ public class Balancer implements Runnable {
             .map(costFunction -> (HasBrokerCost) costFunction)
             .map(costFunction -> Map.entry(costFunction, costFunction.brokerCost(clusterInfo)))
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+    final var topicPartitionCosts =
+        registeredCostFunction.parallelStream()
+            .filter(costFunction -> costFunction instanceof HasPartitionCost)
+            .map(costFunction -> (HasPartitionCost) costFunction)
+            .map(costFunction -> Map.entry(costFunction, costFunction.partitionCost(clusterInfo)))
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
 
     // print out current score
     System.out.println("[Cost of Current Cluster]");
     BalancerUtils.printCost(brokerCosts);
+    // TODO: Print topicPartitionCosts
 
     final var rankedProposal =
         new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
@@ -152,10 +165,20 @@ public class Balancer implements Runnable {
                   costFunction ->
                       Map.entry(costFunction, costFunction.brokerCost(proposedClusterInfo)))
               .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+      final var proposedTopicPartitionCosts =
+          registeredCostFunction.parallelStream()
+              .filter(costFunction -> costFunction instanceof HasPartitionCost)
+              .map(costFunction -> (HasPartitionCost) costFunction)
+              .map(
+                  costFunction ->
+                      Map.entry(costFunction, costFunction.partitionCost(proposedClusterInfo)))
+              .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
 
-      final var estimatedCostSum = costSum(proposedBrokerCosts);
+      final var estimatedCostSum = costSum(proposedBrokerCosts, proposedTopicPartitionCosts);
 
-      rankedProposal.add(new ScoredProposal(estimatedCostSum, proposedBrokerCosts, proposal));
+      rankedProposal.add(
+          new ScoredProposal(
+              estimatedCostSum, proposedBrokerCosts, proposedTopicPartitionCosts, proposal));
       while (rankedProposal.size() > 5) rankedProposal.pollLast();
 
       progress.incrementAndGet();
@@ -163,7 +186,7 @@ public class Balancer implements Runnable {
     watcherTask.cancel(true);
 
     final var selectedProposal = rankedProposal.first();
-    final var currentCostSum = costSum(brokerCosts);
+    final var currentCostSum = costSum(brokerCosts, topicPartitionCosts);
     final var proposedCostSum = selectedProposal.score;
     if (proposedCostSum < currentCostSum) {
       System.out.println("[New Proposal Found]");
@@ -259,7 +282,9 @@ public class Balancer implements Runnable {
    * Given a final score for this all the cost function results, the value will be a non-negative
    * real number. Basically, 0 means the most ideal state given all the cost functions.
    */
-  private double costSum(Map<HasBrokerCost, BrokerCost> costOfProposal) {
+  private double costSum(
+      Map<HasBrokerCost, BrokerCost> costOfProposal,
+      Map<HasPartitionCost, PartitionCost> costOfProposal2) {
     final BrokerCost replicaDiskInCost =
         costOfProposal.entrySet().stream()
             .filter(x -> x.getKey().getClass() == ReplicaDiskInCost.class)
@@ -448,13 +473,16 @@ public class Balancer implements Runnable {
     private final double score;
     private final RebalancePlanProposal proposal;
     private final Map<HasBrokerCost, BrokerCost> costs;
+    private final Map<HasPartitionCost, PartitionCost> costs2;
 
     public ScoredProposal(
         double estimatedCostSum,
         Map<HasBrokerCost, BrokerCost> proposedBrokerCosts,
+        Map<HasPartitionCost, PartitionCost> proposedTopicPartitionCosts,
         RebalancePlanProposal proposal) {
       this.score = estimatedCostSum;
       this.costs = proposedBrokerCosts;
+      this.costs2 = proposedTopicPartitionCosts;
       this.proposal = proposal;
     }
   }
