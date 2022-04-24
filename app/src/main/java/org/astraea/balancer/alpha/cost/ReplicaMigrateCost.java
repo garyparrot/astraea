@@ -55,7 +55,7 @@ public class ReplicaMigrateCost implements HasPartitionCost {
             });
     sizeOfReplica.forEach(
         (tpr, size) -> {
-            //TODO this score need to normalize.
+          // TODO this score need to normalize.
           replicaCost.put(tpr, (double) size);
         });
     return new PartitionCost() {

@@ -46,7 +46,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
   @Override
   public BrokerCost brokerCost(ClusterInfo clusterInfo) {
     final Map<Integer, List<TopicPartitionReplica>> topicPartitionOfEachBroker =
-            clusterInfo.topics().stream()
+        clusterInfo.topics().stream()
             .flatMap(topic -> clusterInfo.partitions(topic).stream())
             .flatMap(
                 partitionInfo ->
@@ -58,8 +58,10 @@ public class ReplicaDiskInCost implements HasBrokerCost {
                                     partitionInfo.partition(),
                                     replica.id())))
             .collect(Collectors.groupingBy(TopicPartitionReplica::brokerId));
-    final var actual = clusterInfo.nodes().stream()
-            .collect(Collectors.toUnmodifiableMap(
+    final var actual =
+        clusterInfo.nodes().stream()
+            .collect(
+                Collectors.toUnmodifiableMap(
                     NodeInfo::id,
                     node -> topicPartitionOfEachBroker.getOrDefault(node.id(), List.of())));
 
@@ -140,8 +142,9 @@ public class ReplicaDiskInCost implements HasBrokerCost {
                           var dataRate =
                               ((double) (latestSize.value() - windowSize.value()))
                                   / ((double)
-                                      (latestSize.createdTimestamp()
-                                          - windowSize.createdTimestamp())/1000);
+                                          (latestSize.createdTimestamp()
+                                              - windowSize.createdTimestamp())
+                                      / 1000);
                           return Map.entry(metrics.getKey(), dataRate);
                         })
                     .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue)))
