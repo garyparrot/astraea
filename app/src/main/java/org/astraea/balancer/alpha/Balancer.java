@@ -29,6 +29,7 @@ import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.cost.NumberOfLeaderCost;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
 import org.astraea.balancer.alpha.cost.ReplicaMigrateCost;
+import org.astraea.balancer.alpha.cost.TopicPartitionDistributionCost;
 import org.astraea.balancer.alpha.executor.RebalancePlanExecutor;
 import org.astraea.balancer.alpha.executor.StraightPlanExecutor;
 import org.astraea.balancer.alpha.generator.RebalancePlanGenerator;
@@ -64,6 +65,7 @@ public class Balancer implements Runnable {
         Set.of(
             new ReplicaDiskInCost(argument.brokerBandwidthCap),
             new NumberOfLeaderCost(),
+            new TopicPartitionDistributionCost(),
             new ReplicaMigrateCost());
     this.scheduledExecutorService = Executors.newScheduledThreadPool(8);
 
@@ -253,6 +255,12 @@ public class Balancer implements Runnable {
             .map(Map.Entry::getValue)
             .findFirst()
             .orElseThrow();
+    final BrokerCost topicPartitionDistributionCost =
+        costOfProposal.entrySet().stream()
+            .filter(x -> x.getKey().getClass() == TopicPartitionDistributionCost.class)
+            .map(Map.Entry::getValue)
+            .findFirst()
+            .orElseThrow();
     final PartitionCost replicaMigrateCost =
         costOfProposal2.entrySet().stream()
             .filter(x -> x.getKey().getClass() == ReplicaMigrateCost.class)
@@ -290,7 +298,14 @@ public class Balancer implements Runnable {
     // leaderCountCost
     final var covOfLeader = BalancerUtils.coefficientOfVariance(leaderCountCost.value().values());
 
-    return covOfDiskIn * 3 + covOfLeader * 0 + (overflow ? 999999999.0 : 0);
+    // topicPartitionDistributionCost
+    final var covOfTopicPartition =
+        BalancerUtils.coefficientOfVariance(topicPartitionDistributionCost.value().values());
+
+    return covOfDiskIn * 3
+        + covOfTopicPartition * 0
+        + covOfLeader * 0
+        + (overflow ? 999999999.0 : 0);
   }
 
   public void stop() {
