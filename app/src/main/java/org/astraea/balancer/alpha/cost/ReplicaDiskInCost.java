@@ -26,6 +26,7 @@ import org.astraea.balancer.alpha.BalancerUtils;
 import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.HasBrokerCost;
+import org.astraea.cost.NodeInfo;
 import org.astraea.cost.PartitionCost;
 import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
@@ -45,7 +46,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
   @Override
   public BrokerCost brokerCost(ClusterInfo clusterInfo) {
     final Map<Integer, List<TopicPartitionReplica>> topicPartitionOfEachBroker =
-        clusterInfo.topics().stream()
+            clusterInfo.topics().stream()
             .flatMap(topic -> clusterInfo.partitions(topic).stream())
             .flatMap(
                 partitionInfo ->
@@ -57,11 +58,15 @@ public class ReplicaDiskInCost implements HasBrokerCost {
                                     partitionInfo.partition(),
                                     replica.id())))
             .collect(Collectors.groupingBy(TopicPartitionReplica::brokerId));
+    final var actual = clusterInfo.nodes().stream()
+            .collect(Collectors.toUnmodifiableMap(
+                    NodeInfo::id,
+                    node -> topicPartitionOfEachBroker.getOrDefault(node.id(), List.of())));
 
     final var topicPartitionDataRate = topicPartitionDataRate(clusterInfo, Duration.ofSeconds(3));
 
     final var brokerLoad =
-        topicPartitionOfEachBroker.entrySet().stream()
+        actual.entrySet().stream()
             .map(
                 entry ->
                     Map.entry(
@@ -136,7 +141,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
                               ((double) (latestSize.value() - windowSize.value()))
                                   / ((double)
                                       (latestSize.createdTimestamp()
-                                          - windowSize.createdTimestamp()));
+                                          - windowSize.createdTimestamp())/1000);
                           return Map.entry(metrics.getKey(), dataRate);
                         })
                     .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue)))

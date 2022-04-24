@@ -290,7 +290,7 @@ public class Balancer implements Runnable {
     // leaderCountCost
     final var covOfLeader = BalancerUtils.coefficientOfVariance(leaderCountCost.value().values());
 
-    return covOfDiskIn * 3 + covOfLeader * 1 + (overflow ? 999999999.0 : 0);
+    return covOfDiskIn * 3 + covOfLeader * 0 + (overflow ? 999999999.0 : 0);
   }
 
   public void stop() {
@@ -347,7 +347,7 @@ public class Balancer implements Runnable {
         names = {"--affordable-migration-bandwidth"},
         description = "The bandwidth threshold for a affordable migration",
         converter = DataSize.Field.class)
-    DataSize affordableMigrationBandwidth = DataUnit.MiB.of(30);
+    DataSize affordableMigrationBandwidth = DataUnit.MiB.of(50000);
 
     public static class JmxServiceUrlMappingFileField extends Field<Map<Integer, JMXServiceURL>> {
       static final Pattern serviceUrlKeyPattern =
