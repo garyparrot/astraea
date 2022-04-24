@@ -7,13 +7,12 @@ import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.HasBrokerCost;
 import org.astraea.metrics.collector.Fetcher;
-import org.astraea.metrics.kafka.KafkaMetrics;
 
 public class TopicPartitionDistributionCost implements HasBrokerCost {
 
   @Override
   public Fetcher fetcher() {
-    return Fetcher.of(List.of(KafkaMetrics.TopicPartition.Size::fetch));
+    return Fetcher.of(List.of());
   }
 
   @Override
