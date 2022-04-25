@@ -9,7 +9,6 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
-
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.balancer.alpha.ClusterLogAllocation;
@@ -79,11 +78,19 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
             replicaIndex -> {
               var target = allReplicas.get(replicaIndex);
               var randomNode =
-                      Stream.generate(() -> nodes.get(ThreadLocalRandom.current().nextInt(nodes.size())))
-                              .filter(x -> !allReplicas.contains(new TopicPartitionReplica(target.topic(), target.partition(), x.id())))
-                              .limit(1000)
-                              .findFirst()
-                              .orElseThrow(() -> new RuntimeException("Failed to generate a valid migrate broker after 1000 attemps."));
+                  Stream.generate(
+                          () -> nodes.get(ThreadLocalRandom.current().nextInt(nodes.size())))
+                      .filter(
+                          x ->
+                              !allReplicas.contains(
+                                  new TopicPartitionReplica(
+                                      target.topic(), target.partition(), x.id())))
+                      .limit(1000)
+                      .findFirst()
+                      .orElseThrow(
+                          () ->
+                              new RuntimeException(
+                                  "Failed to generate a valid migrate broker after 1000 attemps."));
               var topicPartition = new TopicPartition(target.topic(), target.partition());
               var replacement =
                   new TopicPartitionReplica(target.topic(), target.partition(), randomNode.id());

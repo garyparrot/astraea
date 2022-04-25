@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -27,7 +28,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.management.remote.JMXServiceURL;
-
 import org.astraea.Utils;
 import org.astraea.argument.DurationField;
 import org.astraea.argument.Field;
@@ -219,10 +219,11 @@ public class Balancer implements Runnable {
       System.out.println("[Balance Execution Started]");
       if (rebalancePlanExecutor != null) {
         rebalancePlanExecutor.run(selectedProposal.proposal);
-        Utils.handleException(() -> {
-          TimeUnit.SECONDS.sleep(60);
-          return 0;
-        });
+        Utils.handleException(
+            () -> {
+              TimeUnit.SECONDS.sleep(60);
+              return 0;
+            });
       }
     } else {
       System.out.println("[No Usable Proposal Found]");
@@ -300,6 +301,7 @@ public class Balancer implements Runnable {
                             .mapToDouble(tp -> replicaMigrateCost.value(tp.topic()).get(tp))
                             .sum()))
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+    final var totalMigrationSize = brokerMigrationCost.values().stream().mapToDouble(x -> x).sum();
 
     // how many hours does it take to move all the log, for each broker, find the maximum possible
     // time
@@ -317,6 +319,7 @@ public class Balancer implements Runnable {
             .max(BigDecimal::compareTo)
             .map(BigDecimal::doubleValue)
             .orElse(0.0);
+    final var totalMovingCount = topicPartitionCopyMap.values().stream().mapToInt(List::size).sum();
 
     // replicaDiskInCost
     final var covOfDiskIn = BalancerUtils.coefficientOfVariance(replicaDiskInCost.value().values());
@@ -328,10 +331,9 @@ public class Balancer implements Runnable {
     final var covOfTopicPartition =
         BalancerUtils.coefficientOfVariance(topicPartitionDistributionCost.value().values());
 
-    final double magicNumber = (covOfDiskIn * 3 + covOfTopicPartition * 0 + covOfLeader * 0);
-    //noinspection UnnecessaryLocalVariable
-    final double magicNumber2 = magicNumber + (staticDataMigrationCost) * magicNumber;
-    return magicNumber;
+    return (covOfDiskIn * 3 + covOfTopicPartition * 0 + covOfLeader * 0)
+        + (totalMigrationSize / 1e9)
+        + (5 / ((double) totalMovingCount));
   }
 
   public void stop() {
