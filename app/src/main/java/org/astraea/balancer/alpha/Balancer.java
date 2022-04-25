@@ -6,10 +6,13 @@ import static org.astraea.balancer.alpha.BalancerUtils.diffAllocation;
 import com.beust.jcommander.Parameter;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.math.BigDecimal;
+import java.math.MathContext;
 import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.Properties;
@@ -24,11 +27,14 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.management.remote.JMXServiceURL;
+
+import org.astraea.Utils;
 import org.astraea.argument.DurationField;
 import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.cost.NumberOfLeaderCost;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
 import org.astraea.balancer.alpha.cost.ReplicaMigrateCost;
+import org.astraea.balancer.alpha.cost.ReplicaMigrationSpeedCost;
 import org.astraea.balancer.alpha.cost.TopicPartitionDistributionCost;
 import org.astraea.balancer.alpha.executor.RebalancePlanExecutor;
 import org.astraea.balancer.alpha.executor.StraightPlanExecutor;
@@ -66,7 +72,8 @@ public class Balancer implements Runnable {
             new ReplicaDiskInCost(argument.brokerBandwidthCap),
             new NumberOfLeaderCost(),
             new TopicPartitionDistributionCost(),
-            new ReplicaMigrateCost());
+            new ReplicaMigrateCost(),
+            new ReplicaMigrationSpeedCost());
     this.scheduledExecutorService = Executors.newScheduledThreadPool(8);
 
     // initialize main component
@@ -80,7 +87,7 @@ public class Balancer implements Runnable {
             this.scheduledExecutorService,
             argument);
     this.topicAdmin = TopicAdmin.of(argument.props());
-    this.rebalancePlanGenerator = new ShufflePlanGenerator(1, 2);
+    this.rebalancePlanGenerator = new ShufflePlanGenerator(5, 10);
     this.rebalancePlanExecutor = new StraightPlanExecutor(argument.brokers, topicAdmin);
 
     this.topicIgnoreList = BalancerUtils.privateTopics(this.topicAdmin);
@@ -150,7 +157,7 @@ public class Balancer implements Runnable {
         new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
 
     final AtomicInteger progress = new AtomicInteger();
-    final int iteration = 4000;
+    final int iteration = 20000;
     final var watcherTask =
         scheduledExecutorService.schedule(
             BalancerUtils.generationWatcher(iteration, progress), 0, TimeUnit.SECONDS);
@@ -210,7 +217,13 @@ public class Balancer implements Runnable {
       BalancerUtils.printPartitionCost(selectedProposal.partitionCosts, clusterInfo.nodes());
 
       System.out.println("[Balance Execution Started]");
-      if (rebalancePlanExecutor != null) rebalancePlanExecutor.run(selectedProposal.proposal);
+      if (rebalancePlanExecutor != null) {
+        rebalancePlanExecutor.run(selectedProposal.proposal);
+        Utils.handleException(() -> {
+          TimeUnit.SECONDS.sleep(60);
+          return 0;
+        });
+      }
     } else {
       System.out.println("[No Usable Proposal Found]");
       System.out.println("Current cost sum: " + currentCostSum);
@@ -287,10 +300,23 @@ public class Balancer implements Runnable {
                             .mapToDouble(tp -> replicaMigrateCost.value(tp.topic()).get(tp))
                             .sum()))
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-    final var migrationCost = brokerMigrationCost.values().stream().mapToDouble(x -> x).sum();
-    final var overflow =
-        (DataUnit.Byte.of((long) migrationCost).compareTo(argument.affordableMigrationBandwidth)
-            > 0);
+
+    // how many hours does it take to move all the log, for each broker, find the maximum possible
+    // time
+    final var dataRateOfOneBrokerForMigration =
+        argument.affordableMigrationBandwidth.dataRate(ChronoUnit.SECONDS);
+    final var staticDataMigrationCost =
+        brokerMigrationCost.values().stream()
+            .map(BigDecimal::valueOf)
+            .map(
+                x ->
+                    x.divide(
+                        dataRateOfOneBrokerForMigration.toBigDecimal(
+                            DataUnit.Byte, Duration.ofHours(1)),
+                        MathContext.DECIMAL32))
+            .max(BigDecimal::compareTo)
+            .map(BigDecimal::doubleValue)
+            .orElse(0.0);
 
     // replicaDiskInCost
     final var covOfDiskIn = BalancerUtils.coefficientOfVariance(replicaDiskInCost.value().values());
@@ -302,10 +328,10 @@ public class Balancer implements Runnable {
     final var covOfTopicPartition =
         BalancerUtils.coefficientOfVariance(topicPartitionDistributionCost.value().values());
 
-    return covOfDiskIn * 3
-        + covOfTopicPartition * 0
-        + covOfLeader * 0
-        + (overflow ? 999999999.0 : 0);
+    final double magicNumber = (covOfDiskIn * 3 + covOfTopicPartition * 0 + covOfLeader * 0);
+    //noinspection UnnecessaryLocalVariable
+    final double magicNumber2 = magicNumber + (staticDataMigrationCost) * magicNumber;
+    return magicNumber;
   }
 
   public void stop() {
@@ -356,7 +382,7 @@ public class Balancer implements Runnable {
     @Parameter(
         names = {"--metric-warm-up"},
         description = "Ensure the balance have fetched a certain amount of metrics before continue")
-    int metricWarmUpCount = 3;
+    int metricWarmUpCount = 50;
 
     @Parameter(
         names = {"--affordable-migration-bandwidth"},

@@ -98,7 +98,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
    *     doesn't have the sufficient old metric then an exception will likely be thrown.
    * @return a map contain the maximum increase rate of each topic/partition log
    */
-  public Map<TopicPartition, Double> topicPartitionDataRate(
+  public static Map<TopicPartition, Double> topicPartitionDataRate(
       ClusterInfo clusterInfo, Duration sampleWindow) {
     return clusterInfo.allBeans().entrySet().parallelStream()
         .map(
