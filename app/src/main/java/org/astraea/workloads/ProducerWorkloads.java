@@ -100,7 +100,8 @@ public final class ProducerWorkloads {
   public static ProducerWorkload<?, ?> shitShow(
       @NamedArg(name = "bootstrapServer") String bootstrapServer,
       @NamedArg(name = "topicName") String topicName,
-      @NamedArg(name = "partitionOffset") int partitionOffset,
+      @NamedArg(name = "startOffset") int startOffset,
+      @NamedArg(name = "moveStep") int moveStep,
       @NamedArg(name = "recordSize") int recordSize,
       @NamedArg(name = "chunkSize") int chunkSize,
       @NamedArg(name = "iterationWaitMs") int iterationWaitMs,
@@ -113,7 +114,7 @@ public final class ProducerWorkloads {
         Arrays.stream(proportionString.split(",")).mapToDouble(Double::parseDouble).toArray();
     final var partitionSendingList =
         IntStream.range(0, proportion.length)
-            .mapToObj(index -> Map.entry(index + partitionOffset, proportion[index]))
+            .mapToObj(index -> Map.entry(startOffset + moveStep * index, proportion[index]))
             .map(p -> Map.entry(p.getKey(), (int) (p.getValue() * recordSize / chunkSize)))
             .peek(
                 p ->
