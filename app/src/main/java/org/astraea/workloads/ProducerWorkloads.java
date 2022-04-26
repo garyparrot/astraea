@@ -120,7 +120,8 @@ public final class ProducerWorkloads {
                 p ->
                     System.out.printf(
                         "Assign %d chunks for partition %d%n", p.getValue(), p.getKey()))
-            .toArray(Map.Entry[]::new);
+            .flatMapToInt(p -> IntStream.range(0, p.getValue()).map(x -> p.getKey()))
+            .toArray();
     System.out.printf(
         "RecordSize %d, IterationWait %d, ProportionAvg %s%n",
         recordSize, iterationWaitMs, Arrays.stream(proportion).average().toString());
@@ -144,12 +145,7 @@ public final class ProducerWorkloads {
                     .parallel()
                     .forEach(
                         partition -> {
-                          int partitionId = (int) partition.getKey();
-                          int count = (int) partition.getValue();
-                          for (int i = 0; i < count; i++) {
-                            producer.send(
-                                new ProducerRecord<>(topicName, partitionId, null, value));
-                          }
+                            producer.send(new ProducerRecord<>(topicName, partition, null, value));
                         });
                 try {
                   // if we would like to make the bandwidth flow looks nicer, we can for example:
