@@ -139,6 +139,7 @@ public final class ProducerWorkloads {
         .build(
             (producer) -> {
               while (!Thread.currentThread().isInterrupted()) {
+                long start = System.nanoTime();
                 Arrays.stream(partitionSendingList)
                     .parallel()
                     .forEach(
@@ -156,7 +157,8 @@ public final class ProducerWorkloads {
                   // second
                   // This will result in the exactly same bandwidth cost but the flow will look much
                   // smoother.
-                  TimeUnit.MILLISECONDS.sleep(iterationWaitMs);
+                  long spentTimeMs = (System.nanoTime() - start) / 1000 / 1000;
+                  TimeUnit.MILLISECONDS.sleep(iterationWaitMs - spentTimeMs);
                 } catch (InterruptedException e) {
                   break;
                 }
