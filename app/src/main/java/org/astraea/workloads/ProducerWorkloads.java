@@ -8,12 +8,30 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.BytesSerializer;
 import org.apache.kafka.common.utils.Bytes;
+import org.astraea.topic.TopicAdmin;
 import org.astraea.utils.DataUnit;
 import org.astraea.workloads.annotations.NamedArg;
 
 public final class ProducerWorkloads {
 
   private ProducerWorkloads() {}
+
+  public static Runnable createTopic(
+      @NamedArg(name = "bootstrapServer") String bootstrapServer,
+      @NamedArg(name = "topicName") String topicName,
+      @NamedArg(name = "partitionCount") int partitionCount,
+      @NamedArg(name = "replicaCount") short replicaCount) {
+    return () -> {
+      try (TopicAdmin topicAdmin = TopicAdmin.of(bootstrapServer)) {
+        topicAdmin
+            .creator()
+            .topic(topicName)
+            .numberOfPartitions(partitionCount)
+            .numberOfReplicas(replicaCount)
+            .create();
+      }
+    };
+  }
 
   public static ProducerWorkload<?, ?> powImbalanceWorkload(
       @NamedArg(name = "bootstrapServer") String bootstrapServer,

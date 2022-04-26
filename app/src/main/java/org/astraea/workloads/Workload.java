@@ -27,7 +27,8 @@ public class Workload {
           .filter(
               x ->
                   (x.getReturnType() == ConsumerWorkload.class)
-                      || (x.getReturnType() == ProducerWorkload.class))
+                      || (x.getReturnType() == ProducerWorkload.class
+                          || (Runnable.class.isAssignableFrom(x.getReturnType()))))
           .collect(Collectors.groupingBy(Method::getDeclaringClass, Collectors.toList()));
 
   public static void main(String[] args) {
