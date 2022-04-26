@@ -102,12 +102,13 @@ public final class ProducerWorkloads {
       @NamedArg(name = "topicName") String topicName,
       @NamedArg(name = "partitionOffset") int partitionOffset,
       @NamedArg(name = "recordSize") int recordSize,
+      @NamedArg(name = "chunkSize") int chunkSize,
       @NamedArg(name = "iterationWaitMs") int iterationWaitMs,
       @NamedArg(name = "proportion") String proportionString) {
     // the record size is fixed to 100 bytes.
     // the total sending size is (proportion * recordSize), and all these size is going to
     // be divided into multiple small 100 bytes chunks.
-    final var value = new Bytes(new byte[100]);
+    final var value = new Bytes(new byte[chunkSize]);
     final double[] proportion =
         Arrays.stream(proportionString.split(",")).mapToDouble(Double::parseDouble).toArray();
     final var partitionSendingList =
