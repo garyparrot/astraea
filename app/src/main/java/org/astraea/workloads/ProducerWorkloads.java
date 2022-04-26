@@ -131,10 +131,12 @@ public final class ProducerWorkloads {
         .valueSerializer(BytesSerializer.class)
         .configs(Map.of(ProducerConfig.ACKS_CONFIG, "0"))
         .configs(Map.of(ProducerConfig.LINGER_MS_CONFIG, 50))
+        .configs(Map.of(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 30))
+        .configs(Map.of(ProducerConfig.BUFFER_MEMORY_CONFIG, Runtime.getRuntime().totalMemory() / 8))
         .configs(
             Map.of(
                 ProducerConfig.BATCH_SIZE_CONFIG,
-                DataUnit.MB.of(10).measurement(DataUnit.Byte).intValue()))
+                DataUnit.MB.of(200).measurement(DataUnit.Byte).intValue()))
         .build(
             (producer) -> {
               while (!Thread.currentThread().isInterrupted()) {
