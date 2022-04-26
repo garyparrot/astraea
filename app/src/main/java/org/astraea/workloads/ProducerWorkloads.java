@@ -135,7 +135,7 @@ public final class ProducerWorkloads {
         .configs(
             Map.of(
                 ProducerConfig.BATCH_SIZE_CONFIG,
-                DataUnit.MB.of(50).measurement(DataUnit.Byte).intValue()))
+                DataUnit.MB.of(25).measurement(DataUnit.Byte).intValue()))
         .build(
             (producer) -> {
               while (!Thread.currentThread().isInterrupted()) {
