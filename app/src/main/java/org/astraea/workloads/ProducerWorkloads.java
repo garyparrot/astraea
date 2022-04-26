@@ -114,7 +114,7 @@ public final class ProducerWorkloads {
     final var partitionSendingList =
         IntStream.range(0, proportion.length)
             .mapToObj(index -> Map.entry(index + partitionOffset, proportion[index]))
-            .map(p -> Map.entry(p.getKey(), (int) (p.getValue() * recordSize / 100)))
+            .map(p -> Map.entry(p.getKey(), (int) (p.getValue() * recordSize / chunkSize)))
             .peek(
                 p ->
                     System.out.printf(
