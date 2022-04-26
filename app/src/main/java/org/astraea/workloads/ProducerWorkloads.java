@@ -1,9 +1,14 @@
 package org.astraea.workloads;
 
+import java.util.Arrays;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.IntStream;
+import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.BytesSerializer;
 import org.apache.kafka.common.utils.Bytes;
+import org.astraea.utils.DataUnit;
 import org.astraea.workloads.annotations.NamedArg;
 
 public final class ProducerWorkloads {
@@ -49,28 +54,87 @@ public final class ProducerWorkloads {
             });
   }
 
-    public static ProducerWorkload<?, ?> straightWorkload(
-            @NamedArg(name = "bootstrapServer") String bootstrapServer,
-            @NamedArg(name = "topicName") String topicName,
-            @NamedArg(name = "partition") int partition,
-            @NamedArg(name = "recordSize") int recordSize,
-            @NamedArg(name = "iterationWaitMs") int iterationWaitMs) {
-        return ProducerWorkloadBuilder.builder()
-                .bootstrapServer(bootstrapServer)
-                .keySerializer(BytesSerializer.class)
-                .valueSerializer(BytesSerializer.class)
-                .build(
-                        (producer) -> {
-                            final Bytes bytes = Bytes.wrap(new byte[recordSize]);
-                            while (!Thread.currentThread().isInterrupted()) {
-                                producer.send(new ProducerRecord<>(topicName, partition, null, bytes));
-                                try {
-                                    TimeUnit.MILLISECONDS.sleep(iterationWaitMs);
-                                } catch (InterruptedException e) {
-                                    e.printStackTrace();
-                                    break;
-                                }
-                            }
-                        });
-    }
+  public static ProducerWorkload<?, ?> straightWorkload(
+      @NamedArg(name = "bootstrapServer") String bootstrapServer,
+      @NamedArg(name = "topicName") String topicName,
+      @NamedArg(name = "partition") int partition,
+      @NamedArg(name = "recordSize") int recordSize,
+      @NamedArg(name = "iterationWaitMs") int iterationWaitMs) {
+    return ProducerWorkloadBuilder.builder()
+        .bootstrapServer(bootstrapServer)
+        .keySerializer(BytesSerializer.class)
+        .valueSerializer(BytesSerializer.class)
+        .build(
+            (producer) -> {
+              final Bytes bytes = Bytes.wrap(new byte[recordSize]);
+              while (!Thread.currentThread().isInterrupted()) {
+                producer.send(new ProducerRecord<>(topicName, partition, null, bytes));
+                try {
+                  TimeUnit.MILLISECONDS.sleep(iterationWaitMs);
+                } catch (InterruptedException e) {
+                  e.printStackTrace();
+                  break;
+                }
+              }
+            });
+  }
+
+  public static ProducerWorkload<?, ?> shitShow(
+      @NamedArg(name = "bootstrapServer") String bootstrapServer,
+      @NamedArg(name = "topicName") String topicName,
+      @NamedArg(name = "partitionOffset") int partitionOffset,
+      @NamedArg(name = "recordSize") int recordSize,
+      @NamedArg(name = "iterationWaitMs") int iterationWaitMs,
+      @NamedArg(name = "proportion") String proportionString) {
+    // the record size is fixed to 100 bytes.
+    // the total sending size is (proportion * recordSize), and all these size is going to
+    // be divided into multiple small 100 bytes chunks.
+    final var value = new Bytes(new byte[100]);
+    final double[] proportion =
+        Arrays.stream(proportionString.split(",")).mapToDouble(Double::parseDouble).toArray();
+    final var partitionSendingList =
+        IntStream.range(0, proportion.length)
+            .mapToObj(index -> Map.entry(index + partitionOffset, proportion[index]))
+            .map(p -> Map.entry(p.getKey(), (int) (p.getValue() * recordSize / 100)))
+            .peek(
+                p ->
+                    System.out.printf(
+                        "Assign %d chunks for partition %d%n", p.getValue(), p.getKey()))
+            .flatMapToInt(p -> IntStream.range(0, p.getValue()).map(ig -> p.getKey()))
+            .toArray();
+    System.out.printf(
+        "RecordSize %d, IterationWait %d, ProportionAvg %s%n",
+        recordSize, iterationWaitMs, Arrays.stream(proportion).average().toString());
+
+    return ProducerWorkloadBuilder.builder()
+        .bootstrapServer(bootstrapServer)
+        .keySerializer(BytesSerializer.class)
+        .valueSerializer(BytesSerializer.class)
+        .configs(Map.of(ProducerConfig.ACKS_CONFIG, "0"))
+        .configs(Map.of(ProducerConfig.LINGER_MS_CONFIG, 50))
+        .configs(
+            Map.of(
+                ProducerConfig.BATCH_SIZE_CONFIG,
+                DataUnit.MB.of(10).measurement(DataUnit.Byte).intValue()))
+        .build(
+            (producer) -> {
+              while (!Thread.currentThread().isInterrupted()) {
+                Arrays.stream(partitionSendingList)
+                    .parallel()
+                    .forEach(
+                        partition ->
+                            producer.send(new ProducerRecord<>(topicName, partition, null, value)));
+                try {
+                  // if we would like to make the bandwidth flow looks nicer, we can for example:
+                  // We are sending 1MB proportion per second, now make it 500KB proportion per 0.5
+                  // second
+                  // This will result in the exactly same bandwidth cost but the flow will look much
+                  // smoother.
+                  TimeUnit.MILLISECONDS.sleep(iterationWaitMs);
+                } catch (InterruptedException e) {
+                  break;
+                }
+              }
+            });
+  }
 }
