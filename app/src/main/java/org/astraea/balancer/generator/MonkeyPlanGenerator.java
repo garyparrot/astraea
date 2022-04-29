@@ -1,4 +1,4 @@
-package org.astraea.balancer.alpha.generator;
+package org.astraea.balancer.generator;
 
 import java.util.List;
 import java.util.Map;

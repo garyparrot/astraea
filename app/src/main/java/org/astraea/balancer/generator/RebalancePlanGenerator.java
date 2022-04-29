@@ -1,4 +1,4 @@
-package org.astraea.balancer.alpha.generator;
+package org.astraea.balancer.generator;
 
 import org.astraea.balancer.alpha.RebalancePlanProposal;
 import org.astraea.cost.ClusterInfo;

@@ -36,10 +36,10 @@ import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
 import org.astraea.balancer.alpha.cost.ReplicaMigrateCost;
 import org.astraea.balancer.alpha.cost.ReplicaMigrationSpeedCost;
 import org.astraea.balancer.alpha.cost.TopicPartitionDistributionCost;
-import org.astraea.balancer.alpha.executor.RebalancePlanExecutor;
-import org.astraea.balancer.alpha.executor.StraightPlanExecutor;
-import org.astraea.balancer.alpha.generator.RebalancePlanGenerator;
-import org.astraea.balancer.alpha.generator.ShufflePlanGenerator;
+import org.astraea.balancer.executor.RebalancePlanExecutor;
+import org.astraea.balancer.executor.StraightPlanExecutor;
+import org.astraea.balancer.generator.RebalancePlanGenerator;
+import org.astraea.balancer.generator.ShufflePlanGenerator;
 import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.CostFunction;
@@ -87,7 +87,7 @@ public class Balancer implements Runnable {
             this.scheduledExecutorService,
             argument);
     this.topicAdmin = TopicAdmin.of(argument.props());
-    this.rebalancePlanGenerator = new ShufflePlanGenerator(5, 10);
+    this.rebalancePlanGenerator = new ShufflePlanGenerator(3, 8);
     this.rebalancePlanExecutor = new StraightPlanExecutor(argument.brokers, topicAdmin);
 
     this.topicIgnoreList = BalancerUtils.privateTopics(this.topicAdmin);
@@ -157,7 +157,7 @@ public class Balancer implements Runnable {
         new TreeSet<ScoredProposal>(Comparator.comparingDouble(x -> x.score));
 
     final AtomicInteger progress = new AtomicInteger();
-    final int iteration = 20000;
+    final int iteration = 1000;
     final var watcherTask =
         scheduledExecutorService.schedule(
             BalancerUtils.generationWatcher(iteration, progress), 0, TimeUnit.SECONDS);
@@ -331,9 +331,7 @@ public class Balancer implements Runnable {
     final var covOfTopicPartition =
         BalancerUtils.coefficientOfVariance(topicPartitionDistributionCost.value().values());
 
-    return (covOfDiskIn * 3 + covOfTopicPartition * 0 + covOfLeader * 0)
-        + (totalMigrationSize / 1e9)
-        + (5 / ((double) totalMovingCount));
+    return (covOfDiskIn * 3 + covOfTopicPartition * 0 + covOfLeader * 0);
   }
 
   public void stop() {
@@ -384,7 +382,7 @@ public class Balancer implements Runnable {
     @Parameter(
         names = {"--metric-warm-up"},
         description = "Ensure the balance have fetched a certain amount of metrics before continue")
-    int metricWarmUpCount = 50;
+    int metricWarmUpCount = 5;
 
     @Parameter(
         names = {"--affordable-migration-bandwidth"},

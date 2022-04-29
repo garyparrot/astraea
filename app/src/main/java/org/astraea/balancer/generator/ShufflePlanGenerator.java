@@ -1,4 +1,4 @@
-package org.astraea.balancer.alpha.generator;
+package org.astraea.balancer.generator;
 
 import java.util.Comparator;
 import java.util.List;
@@ -85,7 +85,7 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
                               !allReplicas.contains(
                                   new TopicPartitionReplica(
                                       target.topic(), target.partition(), x.id())))
-                      .limit(1000)
+                      .limit(5)
                       .findFirst()
                       .orElseThrow(
                           () ->

@@ -1,4 +1,4 @@
-package org.astraea.balancer.alpha.executor;
+package org.astraea.balancer.executor;
 
 import org.astraea.balancer.alpha.RebalancePlanProposal;
 
