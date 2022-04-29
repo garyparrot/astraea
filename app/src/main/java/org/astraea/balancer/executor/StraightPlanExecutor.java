@@ -1,8 +1,8 @@
 package org.astraea.balancer.executor;
 
 import org.astraea.balancer.alpha.BalancerUtils;
-import org.astraea.balancer.alpha.ClusterLogAllocation;
-import org.astraea.balancer.alpha.RebalancePlanProposal;
+import org.astraea.balancer.generator.ClusterLogAllocation;
+import org.astraea.balancer.generator.RebalancePlanProposal;
 import org.astraea.topic.ReplicaSyncingMonitor;
 import org.astraea.topic.TopicAdmin;
 

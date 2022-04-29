@@ -14,6 +14,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.astraea.Utils;
+import org.astraea.balancer.generator.ClusterLogAllocation;
+import org.astraea.balancer.generator.RebalancePlanProposal;
 import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.HasBrokerCost;

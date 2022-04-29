@@ -1,6 +1,6 @@
 package org.astraea.balancer.executor;
 
-import org.astraea.balancer.alpha.RebalancePlanProposal;
+import org.astraea.balancer.generator.RebalancePlanProposal;
 
 /**
  * This class associate with the logic of fulfill given rebalance plan. This process can take a

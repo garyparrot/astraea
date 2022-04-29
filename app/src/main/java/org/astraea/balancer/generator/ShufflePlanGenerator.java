@@ -11,8 +11,6 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.TopicPartitionReplica;
-import org.astraea.balancer.alpha.ClusterLogAllocation;
-import org.astraea.balancer.alpha.RebalancePlanProposal;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.NodeInfo;
 
@@ -29,20 +27,20 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
   }
 
   @Override
-  public RebalancePlanProposal generate(ClusterInfo clusterNow) {
-    List<NodeInfo> nodes = clusterNow.nodes();
+  public RebalancePlanProposal generate(ClusterInfo currentCluster) {
+    List<NodeInfo> nodes = currentCluster.nodes();
 
     Map<TopicPartition, NodeInfo> tpLeader =
-        clusterNow.topics().stream()
-            .flatMap(topic -> clusterNow.partitions(topic).stream())
+        currentCluster.topics().stream()
+            .flatMap(topic -> currentCluster.partitions(topic).stream())
             .map(
                 pInfo ->
                     Map.entry(new TopicPartition(pInfo.topic(), pInfo.partition()), pInfo.leader()))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
     List<TopicPartitionReplica> allReplicas =
-        clusterNow.topics().stream()
-            .map(topic -> Map.entry(topic, clusterNow.partitions(topic)))
+        currentCluster.topics().stream()
+            .map(topic -> Map.entry(topic, currentCluster.partitions(topic)))
             .flatMap(
                 entry ->
                     entry.getValue().stream()
@@ -122,7 +120,13 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
                 (partition, replicaList) ->
                     replicaList.sort(
                         Comparator.comparing(
-                            x -> x == clusterNow.partitions(topic).get(partition).leader().id()))));
+                            x ->
+                                x
+                                    == currentCluster
+                                        .partitions(topic)
+                                        .get(partition)
+                                        .leader()
+                                        .id()))));
 
     return RebalancePlanProposal.builder()
         .withRebalancePlan(new ClusterLogAllocation(collect))

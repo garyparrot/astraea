@@ -5,8 +5,6 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import org.astraea.balancer.alpha.ClusterLogAllocation;
-import org.astraea.balancer.alpha.RebalancePlanProposal;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.topic.TopicAdmin;
 
@@ -19,11 +17,11 @@ public class MonkeyPlanGenerator implements RebalancePlanGenerator {
   }
 
   @Override
-  public RebalancePlanProposal generate(ClusterInfo clusterNow) {
+  public RebalancePlanProposal generate(ClusterInfo currentCluster) {
 
     // get current topic/partition/replica state
     final var listOfBrokers = List.copyOf(topicAdmin.brokerIds());
-    final var replicas = topicAdmin.replicas(clusterNow.topics());
+    final var replicas = topicAdmin.replicas(currentCluster.topics());
 
     // monkey pick a broker for you
     final var monkeyPickingBroker =

@@ -1,4 +1,4 @@
-package org.astraea.balancer.alpha;
+package org.astraea.balancer.generator;
 
 import java.util.ArrayList;
 import java.util.List;
