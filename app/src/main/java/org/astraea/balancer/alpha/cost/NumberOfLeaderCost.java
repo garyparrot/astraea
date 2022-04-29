@@ -27,6 +27,10 @@ public class NumberOfLeaderCost implements HasBrokerCost {
         new java.util.ArrayList<>(KafkaMetrics.ReplicaManager.LeaderCount.fetch(client));
   }
 
+  /**
+   * @param clusterInfo cluster information
+   * @return a BrokerCost contain all ratio of leaders that exist on all brokers
+   */
   @Override
   public BrokerCost brokerCost(ClusterInfo clusterInfo) {
     Map<Integer, Integer> leaderCount = new HashMap<>();

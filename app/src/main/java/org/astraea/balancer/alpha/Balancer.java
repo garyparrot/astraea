@@ -33,8 +33,8 @@ import org.astraea.argument.DurationField;
 import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.cost.NumberOfLeaderCost;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
-import org.astraea.balancer.alpha.cost.ReplicaMigrateCost;
 import org.astraea.balancer.alpha.cost.ReplicaMigrationSpeedCost;
+import org.astraea.balancer.alpha.cost.ReplicaSizeCost;
 import org.astraea.balancer.alpha.cost.TopicPartitionDistributionCost;
 import org.astraea.balancer.executor.RebalancePlanExecutor;
 import org.astraea.balancer.executor.StraightPlanExecutor;
@@ -72,7 +72,7 @@ public class Balancer implements Runnable {
             new ReplicaDiskInCost(argument.brokerBandwidthCap),
             new NumberOfLeaderCost(),
             new TopicPartitionDistributionCost(),
-            new ReplicaMigrateCost(),
+            new ReplicaSizeCost(argument.totalBrokerCapacity),
             new ReplicaMigrationSpeedCost());
     this.scheduledExecutorService = Executors.newScheduledThreadPool(8);
 
@@ -277,7 +277,7 @@ public class Balancer implements Runnable {
             .orElseThrow();
     final PartitionCost replicaMigrateCost =
         costOfProposal2.entrySet().stream()
-            .filter(x -> x.getKey().getClass() == ReplicaMigrateCost.class)
+            .filter(x -> x.getKey().getClass() == ReplicaSizeCost.class)
             .map(Map.Entry::getValue)
             .findFirst()
             .orElseThrow();
@@ -361,17 +361,17 @@ public class Balancer implements Runnable {
         names = {"--broker.bandwidthCap.file"},
         description =
             "Path to a java properties file that contains all the bandwidth upper limit(MB/s) and their corresponding broker.id",
-        converter = brokerBandwidthCapMapField.class,
+        converter = BrokerBandwidthCapMapField.class,
         required = true)
     Map<Integer, Integer> brokerBandwidthCap;
 
     @Parameter(
-        names = {"--folder.capacity.file"},
+        names = {"--broker.capacity.file"},
         description =
             "Path to a java properties file that contains all the total hard disk space(MB) and their corresponding log path",
-        converter = FolderCapacityMapField.class,
+        converter = BrokerBandwidthCapMapField.class,
         required = true)
-    Map<String, Integer> totalFolderCapacity;
+    Map<Integer, Integer> totalBrokerCapacity;
 
     @Parameter(
         names = {"--metrics-scraping-interval"},
@@ -441,7 +441,7 @@ public class Balancer implements Runnable {
       }
     }
 
-    static class brokerBandwidthCapMapField extends Field<Map<Integer, Integer>> {
+    static class BrokerBandwidthCapMapField extends Field<Map<Integer, Integer>> {
       static final Pattern serviceUrlKeyPattern =
           Pattern.compile("broker\\.(?<brokerId>[1-9][0-9]{0,9})");
 
@@ -474,7 +474,7 @@ public class Balancer implements Runnable {
         }
         return properties.entrySet().stream()
             .map(entry -> Map.entry((String) entry.getKey(), (String) entry.getValue()))
-            .map(brokerBandwidthCapMapField::transformEntry)
+            .map(BrokerBandwidthCapMapField::transformEntry)
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
       }
     }

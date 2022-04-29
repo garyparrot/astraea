@@ -1,18 +1,29 @@
 package org.astraea.balancer.alpha.cost;
 
+import com.beust.jcommander.Parameter;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.MalformedURLException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.kafka.common.TopicPartitionReplica;
+import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.BalancerUtils;
+import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
+import org.astraea.cost.HasBrokerCost;
 import org.astraea.cost.HasPartitionCost;
 import org.astraea.cost.PartitionCost;
 import org.astraea.cost.TopicPartition;
@@ -23,41 +34,62 @@ import org.astraea.metrics.kafka.HasValue;
 import org.astraea.metrics.kafka.KafkaMetrics;
 import org.astraea.topic.TopicAdmin;
 
-public class ReplicaMigrateCost implements HasPartitionCost {
+public class ReplicaSizeCost implements HasBrokerCost, HasPartitionCost {
+  Map<Integer, Integer> totalBrokerCapacity;
+
+  public ReplicaSizeCost(Map<Integer, Integer> totalBrokerCapacity) {
+    this.totalBrokerCapacity = totalBrokerCapacity;
+  }
+
   @Override
   public Fetcher fetcher() {
     return client -> new java.util.ArrayList<>(KafkaMetrics.TopicPartition.Size.fetch(client));
   }
 
+  /**
+   * @param clusterInfo the clusterInfo that offers the metrics related to topic/partition size
+   * @return a BrokerCost contains the ratio of the used space to the free space of each broker
+   */
+  @Override
+  public BrokerCost brokerCost(ClusterInfo clusterInfo) {
+    var sizeOfReplica = getReplicaSize(clusterInfo);
+    var totalReplicaSizeInBroker = new HashMap<Integer, Long>();
+    var brokerSizeScore = new HashMap<Integer, Double>();
+    clusterInfo
+        .nodes()
+        .forEach(
+            nodeInfo ->
+                totalReplicaSizeInBroker.put(
+                    nodeInfo.id(),
+                    sizeOfReplica.entrySet().stream()
+                        .filter(tpr -> tpr.getKey().brokerId() == nodeInfo.id())
+                        .mapToLong(Map.Entry::getValue)
+                        .sum()));
+    totalReplicaSizeInBroker.forEach(
+        (broker, score) -> {
+          brokerSizeScore.put(
+              broker, Double.valueOf(score) / totalBrokerCapacity.get(broker) / 1048576);
+        });
+    return () -> brokerSizeScore;
+  }
+
+  /**
+   * @param clusterInfo the clusterInfo that offers the metrics related to topic/partition size
+   * @return a PartitionCost contain ratio of space used by replicas in all brokers
+   */
   @Override
   public PartitionCost partitionCost(ClusterInfo clusterInfo) {
-    var sizeOfReplica = handleBeanObject(clusterInfo);
-    var totalUsedSizeInBroker = new HashMap<Integer, Long>();
+    var sizeOfReplica = getReplicaSize(clusterInfo);
     TreeMap<TopicPartitionReplica, Double> replicaCost =
         new TreeMap<>(
             Comparator.comparing(TopicPartitionReplica::topic)
                 .thenComparing(TopicPartitionReplica::partition)
                 .thenComparing(TopicPartitionReplica::brokerId));
-    clusterInfo
-        .allBeans()
-        .keySet()
-        .forEach(
-            broker -> {
-              totalUsedSizeInBroker.put(
-                  broker,
-                  sizeOfReplica.entrySet().stream()
-                      .filter((b) -> b.getKey().brokerId() == broker)
-                      .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue))
-                      .values()
-                      .stream()
-                      .mapToLong(Long::longValue)
-                      .sum());
-            });
+
     sizeOfReplica.forEach(
-        (tpr, size) -> {
-          // TODO this score need to normalize.
-          replicaCost.put(tpr, (double) size);
-        });
+        (tpr, size) ->
+            replicaCost.put(
+                tpr, (double) size / totalBrokerCapacity.get(tpr.brokerId()) / 1048576));
     return new PartitionCost() {
 
       @Override
@@ -83,30 +115,6 @@ public class ReplicaMigrateCost implements HasPartitionCost {
                   return Map.entry(tp, score);
                 })
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-
-        /*
-        clusterInfo
-            .nodes()
-            .forEach(
-                nodeInfo -> {
-                  replicaCost.entrySet().stream()
-                      .filter(
-                          (tprScore) ->
-                              tprScore.getKey().topic().equals(topic)
-                                  && clusterInfo
-                                          .partitions(topic)
-                                          .get(tprScore.getKey().partition())
-                                          .leader()
-                                      == nodeInfo)
-                      .forEach(
-                          tprScore ->
-                              scores.put(
-                                  TopicPartition.of(
-                                      tprScore.getKey().topic(), tprScore.getKey().partition()),
-                                  tprScore.getValue()));
-                });
-        return scores;
-           */
       }
 
       @Override
@@ -124,7 +132,11 @@ public class ReplicaMigrateCost implements HasPartitionCost {
     };
   }
 
-  public Map<TopicPartitionReplica, Long> handleBeanObject(ClusterInfo clusterInfo) {
+  /**
+   * @param clusterInfo the clusterInfo that offers the metrics related to topic/partition size
+   * @return a map contain the replica log size of each topic/partition
+   */
+  public Map<TopicPartitionReplica, Long> getReplicaSize(ClusterInfo clusterInfo) {
     Map<TopicPartitionReplica, Long> sizeOfReplica = new HashMap<>();
     clusterInfo
         .allBeans()
@@ -149,13 +161,13 @@ public class ReplicaMigrateCost implements HasPartitionCost {
   }
 
   public static void main(String[] args) throws InterruptedException, MalformedURLException {
+    final var argument = org.astraea.argument.Argument.parse(new ReplicaSizeCost.Argument(), args);
     var host = "localhost";
-    var brokerPort = 14179;
+    var brokerPort = 19670;
     var admin = TopicAdmin.of(host + ":" + brokerPort);
     var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
-    var jmxAddress = Map.of(1001, 11040, 1002, 15006, 1003, 10059);
-
-    ReplicaMigrateCost costFunction = new ReplicaMigrateCost();
+    var jmxAddress = Map.of(1001, 11790, 1002, 10818, 1003, 10929);
+    ReplicaSizeCost costFunction = new ReplicaSizeCost(argument.totalBrokerCapacity);
     jmxAddress.forEach(
         (b, port) -> {
           var firstBeanObjects =
@@ -177,9 +189,16 @@ public class ReplicaMigrateCost implements HasPartitionCost {
         });
     var clusterInfo = ClusterInfo.of(BalancerUtils.clusterSnapShot(admin), allBeans);
     costFunction
+        .brokerCost(clusterInfo)
+        .value()
+        .forEach((broker, score) -> System.out.println((broker) + ":" + score));
+    System.out.println("");
+    costFunction
         .partitionCost(clusterInfo)
         .value(1001)
-        .forEach((broker, score) -> System.out.println(broker + ":" + score));
+        .forEach(
+            (tp, score) -> System.out.println(tp.topic() + "-" + tp.partition() + ":" + score));
+    System.out.println("");
     costFunction
         .partitionCost(clusterInfo)
         .value("test-1")
@@ -187,5 +206,53 @@ public class ReplicaMigrateCost implements HasPartitionCost {
             (tp, score) -> {
               System.out.println(tp.topic() + " " + tp.partition() + ": " + score);
             });
+  }
+
+  static class Argument extends org.astraea.argument.Argument {
+    @Parameter(
+        names = {"--broker.capacity.file"},
+        description =
+            "Path to a java properties file that contains all the total hard disk space(MB) and their corresponding log path",
+        converter = BrokerBandwidthCapMapField.class,
+        required = true)
+    Map<Integer, Integer> totalBrokerCapacity;
+  }
+
+  static class BrokerBandwidthCapMapField extends Field<Map<Integer, Integer>> {
+    static final Pattern serviceUrlKeyPattern =
+        Pattern.compile("broker\\.(?<brokerId>[1-9][0-9]{0,9})");
+
+    static Map.Entry<Integer, Integer> transformEntry(Map.Entry<String, String> entry) {
+      final Matcher matcher = serviceUrlKeyPattern.matcher(entry.getKey());
+      if (matcher.matches()) {
+        try {
+          int brokerId = Integer.parseInt(matcher.group("brokerId"));
+          return Map.entry(brokerId, Integer.parseInt(entry.getValue()));
+        } catch (NumberFormatException e) {
+          throw new IllegalArgumentException("Bad integer format for " + entry.getKey(), e);
+        }
+      } else {
+        throw new IllegalArgumentException(
+            "Bad key format for "
+                + entry.getKey()
+                + " no match for the following format :"
+                + serviceUrlKeyPattern.pattern());
+      }
+    }
+
+    @Override
+    public Map<Integer, Integer> convert(String value) {
+      final Properties properties = new Properties();
+
+      try (var reader = Files.newBufferedReader(Path.of(value))) {
+        properties.load(reader);
+      } catch (IOException e) {
+        throw new UncheckedIOException(e);
+      }
+      return properties.entrySet().stream()
+          .map(entry -> Map.entry((String) entry.getKey(), (String) entry.getValue()))
+          .map(BrokerBandwidthCapMapField::transformEntry)
+          .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
   }
 }

@@ -228,36 +228,35 @@ public class ReplicaDiskInCost implements HasBrokerCost {
     clusterInfo
         .allBeans()
         .forEach(
-            ((broker, beanObjects) -> {
-              clusterInfo
-                  .topics()
-                  .forEach(
-                      topic -> {
-                        clusterInfo
-                            .partitions(topic)
-                            .forEach(
-                                partitionInfo -> {
-                                  tpBeanObjects.put(
-                                      new TopicPartitionReplica(
-                                          partitionInfo.topic(), partitionInfo.partition(), broker),
-                                      beanObjects.stream()
-                                          .filter(
-                                              beanObject ->
-                                                  beanObject
-                                                          .beanObject()
-                                                          .getProperties()
-                                                          .get("topic")
-                                                          .equals(partitionInfo.topic())
-                                                      && Integer.parseInt(
-                                                              beanObject
-                                                                  .beanObject()
-                                                                  .getProperties()
-                                                                  .get("partition"))
-                                                          == (partitionInfo.partition()))
-                                          .collect(Collectors.toList()));
-                                });
-                      });
-            }));
+            ((broker, beanObjects) ->
+                clusterInfo
+                    .topics()
+                    .forEach(
+                        topic ->
+                            clusterInfo
+                                .partitions(topic)
+                                .forEach(
+                                    partitionInfo ->
+                                        tpBeanObjects.put(
+                                            new TopicPartitionReplica(
+                                                partitionInfo.topic(),
+                                                partitionInfo.partition(),
+                                                broker),
+                                            beanObjects.stream()
+                                                .filter(
+                                                    beanObject ->
+                                                        beanObject
+                                                                .beanObject()
+                                                                .getProperties()
+                                                                .get("topic")
+                                                                .equals(partitionInfo.topic())
+                                                            && Integer.parseInt(
+                                                                    beanObject
+                                                                        .beanObject()
+                                                                        .getProperties()
+                                                                        .get("partition"))
+                                                                == (partitionInfo.partition()))
+                                                .collect(Collectors.toList()))))));
     Map<TopicPartitionReplica, Double> replicaIn = new HashMap<>();
     tpBeanObjects.forEach(
         (tpr, beanObjects) -> {
