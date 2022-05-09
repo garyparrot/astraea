@@ -48,15 +48,10 @@ public class ReplicaDiskInCost implements HasBrokerCost {
     final Map<Integer, List<TopicPartitionReplica>> topicPartitionOfEachBroker =
         clusterInfo.topics().stream()
             .flatMap(topic -> clusterInfo.partitions(topic).stream())
-            .flatMap(
-                partitionInfo ->
-                    partitionInfo.replicas().stream()
-                        .map(
-                            replica ->
-                                new TopicPartitionReplica(
-                                    partitionInfo.topic(),
-                                    partitionInfo.partition(),
-                                    replica.id())))
+            .map(
+                replicaInfo ->
+                    new TopicPartitionReplica(
+                        replicaInfo.topic(), replicaInfo.partition(), replicaInfo.nodeInfo().id()))
             .collect(Collectors.groupingBy(TopicPartitionReplica::brokerId));
     final var actual =
         clusterInfo.nodes().stream()

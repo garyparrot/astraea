@@ -20,7 +20,7 @@ import org.astraea.cost.HasBrokerCost;
 import org.astraea.cost.HasPartitionCost;
 import org.astraea.cost.NodeInfo;
 import org.astraea.cost.PartitionCost;
-import org.astraea.cost.PartitionInfo;
+import org.astraea.cost.ReplicaInfo;
 import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
 import org.astraea.topic.Replica;
@@ -55,6 +55,10 @@ public class BalancerUtils {
   /** create a fake cluster info based on given proposal */
   public static ClusterInfo clusterInfoFromProposal(
       ClusterInfo clusterInfo, RebalancePlanProposal proposal) {
+
+    // TODO: validate if the proposal is suitable for given clusterInfo, for example: every topic in
+    // the proposal exists in the clusterInfo
+
     return new ClusterInfo() {
       @Override
       public List<NodeInfo> nodes() {
@@ -62,38 +66,64 @@ public class BalancerUtils {
       }
 
       @Override
-      public List<PartitionInfo> availablePartitions(String topic) {
+      public List<ReplicaInfo> availablePartitionLeaders(String topic) {
         return partitions(topic).stream()
-            .filter(x -> x.leader() != null)
+            .filter(ReplicaInfo::isLeader)
+            .collect(Collectors.toUnmodifiableList());
+      }
+
+      @Override
+      public List<ReplicaInfo> availablePartitions(String topic) {
+        return partitions(topic).stream()
+            .filter(x -> !x.isOfflineReplica())
             .collect(Collectors.toUnmodifiableList());
       }
 
       @Override
       public Set<String> topics() {
-        return proposal
-            .rebalancePlan()
-            .map(clusterLogAllocation -> clusterLogAllocation.allocation().keySet())
-            .orElseGet(clusterInfo::topics);
+        return clusterInfo.topics();
       }
 
       @Override
-      public List<PartitionInfo> partitions(String topic) {
+      public List<ReplicaInfo> partitions(String topic) {
+        final var nodes =
+            nodes().stream().collect(Collectors.toUnmodifiableMap(NodeInfo::id, x -> x));
+
         return proposal
             .rebalancePlan()
             .map(
-                clusterLogAllocation ->
-                    clusterLogAllocation.allocation().get(topic).entrySet().stream()
-                        .map(
-                            entry -> {
-                              var collect =
-                                  entry.getValue().stream()
-                                      .map(x -> NodeInfo.of(x, "", 0))
-                                      .collect(Collectors.toUnmodifiableList());
-                              return PartitionInfo.of(
-                                  topic, entry.getKey(), collect.get(0), collect, null, null);
-                            })
-                        .collect(Collectors.toUnmodifiableList()))
-            .orElse(clusterInfo.partitions(topic));
+                allocation -> {
+                  // TODO: Extend the ClusterLogAllocation structure to support log directory info
+                  return allocation.allocation().entrySet().stream()
+                      .flatMap(
+                          (entry) -> {
+                            final var topicName = entry.getKey();
+                            final var logAllocation = entry.getValue();
+
+                            return logAllocation.entrySet().stream()
+                                .flatMap(
+                                    (logEntry) -> {
+                                      final var partition = logEntry.getKey();
+                                      final var replicaSet = logEntry.getValue();
+
+                                      // TODO: the synced & offline flag doesn't make sense in a
+                                      // fake ClusterInfo.
+                                      // TODO: make data folder into the return result
+                                      return IntStream.range(0, replicaSet.size())
+                                          .mapToObj(
+                                              index ->
+                                                  ReplicaInfo.of(
+                                                      topicName,
+                                                      partition,
+                                                      nodes.get(replicaSet.get(index)),
+                                                      index == 0,
+                                                      false,
+                                                      false));
+                                    });
+                          })
+                      .collect(Collectors.toUnmodifiableList());
+                })
+            .orElse(List.of());
       }
 
       @Override
@@ -264,27 +294,27 @@ public class BalancerUtils {
         topicAdmin.topicNames().stream()
             .filter(topic -> !topicToIgnore.contains(topic))
             .collect(Collectors.toUnmodifiableSet());
-    final var partitionInfo =
-        topicAdmin.replicas(topics).entrySet().stream()
-            .map(
+    final var partitions =
+        Utils.handleException(() -> topicAdmin.replicas(topics)).entrySet().stream()
+            .flatMap(
                 entry -> {
-                  var leaderReplica =
-                      entry.getValue().stream().filter(Replica::leader).findFirst().orElseThrow();
-                  var leaderNode = nodeInfoMap.get(leaderReplica.broker());
-                  var allNodes =
-                      entry.getValue().stream()
-                          .map(x -> nodeInfoMap.get(x.broker()))
-                          .collect(Collectors.toUnmodifiableList());
-                  // TODO: fix null
-                  return PartitionInfo.of(
-                      entry.getKey().topic(),
-                      entry.getKey().partition(),
-                      leaderNode,
-                      allNodes,
-                      null,
-                      null);
+                  final var topicPartition = entry.getKey();
+                  final var replicas = entry.getValue();
+
+                  return replicas.stream()
+                      .map(
+                          replica ->
+                              ReplicaInfo.of(
+                                  topicPartition.topic(),
+                                  topicPartition.partition(),
+                                  nodeInfoMap.get(replica.broker()),
+                                  replica.leader(),
+                                  replica.inSync(),
+                                  // TODO: fix the isOfflineReplica flag once the #308 is merged
+                                  false,
+                                  replica.path()));
                 })
-            .collect(Collectors.toUnmodifiableList());
+            .collect(Collectors.groupingBy(ReplicaInfo::topic));
 
     return new ClusterInfo() {
       @Override
@@ -293,9 +323,16 @@ public class BalancerUtils {
       }
 
       @Override
-      public List<PartitionInfo> availablePartitions(String topic) {
-        return partitions(topic).stream()
-            .filter(x -> x.leader() != null)
+      public List<ReplicaInfo> availablePartitionLeaders(String topic) {
+        return partitions.get(topic).stream()
+            .filter(ReplicaInfo::isLeader)
+            .collect(Collectors.toUnmodifiableList());
+      }
+
+      @Override
+      public List<ReplicaInfo> availablePartitions(String topic) {
+        return partitions.get(topic).stream()
+            .filter((ReplicaInfo x) -> !x.isOfflineReplica())
             .collect(Collectors.toUnmodifiableList());
       }
 
@@ -305,20 +342,19 @@ public class BalancerUtils {
       }
 
       @Override
-      public List<PartitionInfo> partitions(String topic) {
-        return partitionInfo.stream()
-            .filter(x -> x.topic().equals(topic))
-            .collect(Collectors.toUnmodifiableList());
+      public List<ReplicaInfo> partitions(String topic) {
+        return partitions.get(topic);
       }
 
       @Override
       public Collection<HasBeanObject> beans(int brokerId) {
-        return allBeans().get(brokerId);
+        return List.of();
       }
 
       @Override
       public Map<Integer, Collection<HasBeanObject>> allBeans() {
-        return Map.of();
+        return nodeInfo.stream()
+            .collect(Collectors.toUnmodifiableMap(NodeInfo::id, ignore -> List.of()));
       }
     };
   }

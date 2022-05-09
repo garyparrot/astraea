@@ -1,20 +1,9 @@
 package org.astraea.balancer.generator;
 
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeSet;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
-import java.util.stream.Stream;
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.TopicPartitionReplica;
-import org.astraea.balancer.alpha.ClusterLogAllocation;
 import org.astraea.balancer.alpha.RebalancePlanProposal;
 import org.astraea.cost.ClusterInfo;
-import org.astraea.cost.NodeInfo;
 
 public class ShufflePlanGenerator implements RebalancePlanGenerator {
 
@@ -30,7 +19,9 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
 
   @Override
   public RebalancePlanProposal generate(ClusterInfo clusterNow) {
-    List<NodeInfo> nodes = clusterNow.nodes();
+    // TODO: rewrite this later
+    return RebalancePlanProposal.builder().noRebalancePlan().build();
+    /* List<NodeInfo> nodes = clusterNow.nodes();
 
     Map<TopicPartition, NodeInfo> tpLeader =
         clusterNow.topics().stream()
@@ -135,7 +126,7 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
                             "move topic %10s partition %6d, from %6d to %6d.",
                             x.topic, x.partition, x.sourceBrokerId, x.destinationBrokerId))
                 .collect(Collectors.toUnmodifiableList()))
-        .build();
+        .build(); */
   }
 
   private static class Movement {

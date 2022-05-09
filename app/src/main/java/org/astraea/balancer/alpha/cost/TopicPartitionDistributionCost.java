@@ -35,7 +35,7 @@ public class TopicPartitionDistributionCost implements HasBrokerCost {
                                   Map.Entry::getKey,
                                   x ->
                                       x.getValue().stream()
-                                          .filter(pInfo -> pInfo.replicas().contains(node))
+                                          .filter(pInfo -> pInfo.nodeInfo().id() == node.id())
                                           .count()));
 
                   return Map.entry(node.id(), partitionOnThisNode);
