@@ -32,8 +32,8 @@ public interface RebalancePlanProposal {
       return this;
     }
 
-    public Build withRebalancePlan(ClusterLogAllocation plan) {
-      this.rebalancePlan = Objects.requireNonNull(plan);
+    public Build withRebalancePlan(ClusterLogAllocation clusterLogAllocation) {
+      this.rebalancePlan = Objects.requireNonNull(clusterLogAllocation);
       return this;
     }
 

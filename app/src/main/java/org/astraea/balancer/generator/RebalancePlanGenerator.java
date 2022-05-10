@@ -1,8 +1,10 @@
 package org.astraea.balancer.generator;
 
+import java.util.stream.Stream;
 import org.astraea.balancer.alpha.RebalancePlanProposal;
 import org.astraea.cost.ClusterInfo;
 
+/** */
 public interface RebalancePlanGenerator {
 
   /**
@@ -10,8 +12,8 @@ public interface RebalancePlanGenerator {
    * same plan for the same input argument. There can be some randomization that takes part in this
    * process.
    *
-   * @param clusterNow the cluster state
-   * @return a rebalance plan
+   * @param clusterInfo the cluster state
+   * @return a {@link Stream} generating rebalance plan regarding given {@link ClusterInfo}
    */
-  RebalancePlanProposal generate(ClusterInfo clusterNow);
+  Stream<RebalancePlanProposal> generate(ClusterInfo clusterInfo);
 }

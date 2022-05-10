@@ -1,7 +1,9 @@
 package org.astraea.balancer.executor;
 
+import java.util.stream.Collectors;
 import org.astraea.balancer.alpha.BalancerUtils;
 import org.astraea.balancer.alpha.ClusterLogAllocation;
+import org.astraea.balancer.alpha.LogPlacement;
 import org.astraea.balancer.alpha.RebalancePlanProposal;
 import org.astraea.topic.ReplicaSyncingMonitor;
 import org.astraea.topic.TopicAdmin;
@@ -20,21 +22,28 @@ public class StraightPlanExecutor implements RebalancePlanExecutor {
   public void run(RebalancePlanProposal proposal) {
     if (proposal.rebalancePlan().isEmpty()) return;
     final ClusterLogAllocation clusterNow =
-        BalancerUtils.currentAllocation(topicAdmin, BalancerUtils.clusterSnapShot(topicAdmin));
+        BalancerUtils.currentAllocation(BalancerUtils.clusterSnapShot(topicAdmin));
     final ClusterLogAllocation clusterLogAllocation = proposal.rebalancePlan().get();
 
-    clusterLogAllocation
-        .allocation()
-        .forEach(
-            (topic, partitionReplica) -> {
-              partitionReplica.forEach(
-                  (partition, replicaList) -> {
-                    if (clusterNow.allocation().get(topic).get(partition).equals(replicaList))
-                      return;
-                    System.out.printf("Move %s-%d to %s%n", topic, partition, replicaList);
-                    topicAdmin.migrator().partition(topic, partition).moveTo(replicaList);
-                  });
-            });
+    clusterLogAllocation.forEach(
+        (topicPartition, logPlacements) -> {
+          // TODO: Add support for data folder migration
+          final var a =
+              clusterNow.get(topicPartition).stream()
+                  .map(LogPlacement::broker)
+                  .collect(Collectors.toUnmodifiableList());
+          final var b =
+              logPlacements.stream()
+                  .map(LogPlacement::broker)
+                  .collect(Collectors.toUnmodifiableList());
+          if (a.equals(b)) return;
+          System.out.printf(
+              "Move %s-%d to %s%n", topicPartition.topic(), topicPartition.partition(), b);
+          topicAdmin
+              .migrator()
+              .partition(topicPartition.topic(), topicPartition.partition())
+              .moveTo(b);
+        });
 
     // wait until everything is ok
     System.out.println("Launch Replica Syncing Monitor");

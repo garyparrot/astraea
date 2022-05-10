@@ -2,6 +2,7 @@ package org.astraea.balancer.generator;
 
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 import org.astraea.balancer.alpha.RebalancePlanProposal;
 import org.astraea.cost.ClusterInfo;
 
@@ -18,9 +19,13 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
   }
 
   @Override
-  public RebalancePlanProposal generate(ClusterInfo clusterNow) {
-    // TODO: rewrite this later
-    return RebalancePlanProposal.builder().noRebalancePlan().build();
+  public Stream<RebalancePlanProposal> generate(ClusterInfo clusterInfo) {
+    return Stream.generate(
+        () -> {
+          final var nodes = clusterInfo.nodes();
+          // TODO: rewrite this later
+          return RebalancePlanProposal.builder().noRebalancePlan().build();
+        });
     /* List<NodeInfo> nodes = clusterNow.nodes();
 
     Map<TopicPartition, NodeInfo> tpLeader =
