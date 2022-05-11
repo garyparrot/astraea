@@ -27,33 +27,6 @@ import org.astraea.topic.TopicAdmin;
 
 public class BalancerUtils {
 
-  public static ClusterLogAllocation currentAllocation(ClusterInfo clusterInfo) {
-    final var allocation =
-        clusterInfo.topics().stream()
-            .map(clusterInfo::partitions)
-            .flatMap(Collection::stream)
-            .collect(
-                Collectors.groupingBy(
-                    replica -> TopicPartition.of(replica.topic(), replica.partition())))
-            .entrySet()
-            .stream()
-            .map(
-                (entry) -> {
-                  final var topicPartition = entry.getKey();
-                  final var logPlacements =
-                      entry.getValue().stream()
-                          .sorted(Comparator.comparingInt(replica -> replica.isLeader() ? 0 : 1))
-                          .map(
-                              replica ->
-                                  LogPlacement.of(
-                                      replica.nodeInfo().id(), replica.dataFolder().orElse(null)))
-                          .collect(Collectors.toUnmodifiableList());
-                  return Map.entry(topicPartition, logPlacements);
-                })
-            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-    return ClusterLogAllocation.of(allocation);
-  }
-
   /** create a fake cluster info based on given proposal */
   public static ClusterInfo clusterInfoFromProposal(
       ClusterInfo clusterInfo, RebalancePlanProposal proposal) {
@@ -96,7 +69,7 @@ public class BalancerUtils {
             .map(
                 allocation -> {
                   // TODO: Extend the ClusterLogAllocation structure to support log directory info
-                  return allocation.entrySet().stream()
+                  return allocation.allocation().entrySet().stream()
                       .flatMap(
                           (entry) -> {
                             final var topicPartition = entry.getKey();
@@ -174,45 +147,47 @@ public class BalancerUtils {
       System.out.printf("[New Rebalance Plan Generated %s]%n", LocalDateTime.now());
 
       final var balanceAllocation = proposal.rebalancePlan().orElseThrow();
-      if (balanceAllocation.size() > 0) {
-        balanceAllocation.forEach(
-            (topicPartition, logPlacements) -> {
-              System.out.printf(" \"%s\":%n", topicPartition);
-              // TODO: add support to show difference in data directory
-              final var originalState = currentAllocation.get(topicPartition);
-              final var finalState = balanceAllocation.get(topicPartition);
-              final var noChange =
-                  originalState.stream()
-                      .filter(
-                          srcLog ->
-                              finalState.stream()
-                                  .anyMatch(finLog -> srcLog.broker() == finLog.broker()))
-                      .sorted()
-                      .collect(Collectors.toUnmodifiableList());
-              final var toDelete =
-                  originalState.stream()
-                      .filter(
-                          srcLog ->
-                              finalState.stream()
-                                  .noneMatch(finLog -> srcLog.broker() == finLog.broker()))
-                      .sorted()
-                      .collect(Collectors.toUnmodifiableList());
-              final var toReplicate =
-                  finalState.stream()
-                      .filter(
-                          finLog ->
-                              originalState.stream()
-                                  .noneMatch(srcLog -> srcLog.broker() == finLog.broker()))
-                      .sorted()
-                      .collect(Collectors.toUnmodifiableList());
+      if (balanceAllocation.allocation().size() > 0) {
+        balanceAllocation
+            .allocation()
+            .forEach(
+                (topicPartition, logPlacements) -> {
+                  System.out.printf(" \"%s\":%n", topicPartition);
+                  // TODO: add support to show difference in data directory
+                  final var originalState = currentAllocation.allocation().get(topicPartition);
+                  final var finalState = balanceAllocation.allocation().get(topicPartition);
+                  final var noChange =
+                      originalState.stream()
+                          .filter(
+                              srcLog ->
+                                  finalState.stream()
+                                      .anyMatch(finLog -> srcLog.broker() == finLog.broker()))
+                          .sorted()
+                          .collect(Collectors.toUnmodifiableList());
+                  final var toDelete =
+                      originalState.stream()
+                          .filter(
+                              srcLog ->
+                                  finalState.stream()
+                                      .noneMatch(finLog -> srcLog.broker() == finLog.broker()))
+                          .sorted()
+                          .collect(Collectors.toUnmodifiableList());
+                  final var toReplicate =
+                      finalState.stream()
+                          .filter(
+                              finLog ->
+                                  originalState.stream()
+                                      .noneMatch(srcLog -> srcLog.broker() == finLog.broker()))
+                          .sorted()
+                          .collect(Collectors.toUnmodifiableList());
 
-              boolean noChangeAtAll = toDelete.size() == 0 && toReplicate.size() == 0;
-              if (!noChangeAtAll) {
-                System.out.println("       no change: " + noChange);
-                System.out.println("       to delete: " + toDelete);
-                System.out.println("       to replicate: " + toReplicate);
-              }
-            });
+                  boolean noChangeAtAll = toDelete.size() == 0 && toReplicate.size() == 0;
+                  if (!noChangeAtAll) {
+                    System.out.println("       no change: " + noChange);
+                    System.out.println("       to delete: " + toDelete);
+                    System.out.println("       to replicate: " + toReplicate);
+                  }
+                });
       } else {
         System.out.println(" No topic in the cluster.");
       }
@@ -228,39 +203,34 @@ public class BalancerUtils {
     System.out.println("[Warnings]");
     proposal.warnings().forEach(warning -> System.out.printf(" * %s%n", warning));
     System.out.println((proposal.warnings().size() == 0 ? " No Warning.\n" : "\n"));
-
-    IntStream.range(0, proposal.exceptions().size())
-        .forEachOrdered(
-            index -> {
-              System.out.printf("[Exception %d/%d]%n", index + 1, proposal.exceptions().size());
-              proposal.exceptions().get(index).printStackTrace();
-            });
     System.out.println();
   }
 
   public static Map<TopicPartition, List<LogPlacement>> diffAllocation(
       ClusterLogAllocation proposal, ClusterLogAllocation currentAllocation) {
     final var balanceAllocation = proposal;
-    if (balanceAllocation.size() > 0) {
+    if (balanceAllocation.allocation().size() > 0) {
       final var diff = new HashMap<TopicPartition, List<LogPlacement>>();
-      balanceAllocation.forEach(
-          (topicPartition, logPlacements) -> {
-            System.out.printf(" \"%s\":%n", topicPartition);
-            // TODO: add support to show difference in data directory
-            final var originalState = currentAllocation.get(topicPartition);
-            final var finalState = balanceAllocation.get(topicPartition);
+      balanceAllocation
+          .allocation()
+          .forEach(
+              (topicPartition, logPlacements) -> {
+                System.out.printf(" \"%s\":%n", topicPartition);
+                // TODO: add support to show difference in data directory
+                final var originalState = currentAllocation.allocation().get(topicPartition);
+                final var finalState = balanceAllocation.allocation().get(topicPartition);
 
-            final var toReplicate =
-                finalState.stream()
-                    .filter(
-                        finLog ->
-                            originalState.stream()
-                                .noneMatch(srcLog -> srcLog.broker() == finLog.broker()))
-                    .sorted()
-                    .collect(Collectors.toUnmodifiableList());
+                final var toReplicate =
+                    finalState.stream()
+                        .filter(
+                            finLog ->
+                                originalState.stream()
+                                    .noneMatch(srcLog -> srcLog.broker() == finLog.broker()))
+                        .sorted()
+                        .collect(Collectors.toUnmodifiableList());
 
-            diff.put(topicPartition, toReplicate);
-          });
+                diff.put(topicPartition, toReplicate);
+              });
       return diff;
     } else {
       return Map.of();
@@ -287,6 +257,9 @@ public class BalancerUtils {
         Utils.handleException(() -> topicAdmin.replicas(topics)).entrySet().stream()
             .flatMap(
                 entry -> {
+                  // TODO: there is a bug in here. topicAdmin.replicas doesn't return the full
+                  // information of each replica if there are some offline here. might be fix in
+                  // #308?
                   final var topicPartition = entry.getKey();
                   final var replicas = entry.getValue();
 

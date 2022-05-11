@@ -123,7 +123,7 @@ public class Balancer implements Runnable {
     final var clusterInfo =
         ClusterInfo.of(
             clusterSnapShot(topicAdmin, topicIgnoreList), metricCollector.fetchMetrics());
-    final var currentAllocation = BalancerUtils.currentAllocation(clusterInfo);
+    final var currentAllocation = ClusterLogAllocation.of(clusterInfo);
 
     // friendly info
     if (clusterInfo.topics().isEmpty()) {
@@ -212,7 +212,7 @@ public class Balancer implements Runnable {
       System.out.println("Current cost sum: " + currentCostSum);
       System.out.println("Proposed cost sum: " + proposedCostSum);
       BalancerUtils.describeProposal(
-          selectedProposal.proposal, BalancerUtils.currentAllocation(clusterInfo));
+          selectedProposal.proposal, ClusterLogAllocation.of(clusterInfo));
       System.out.println("[Detail of the cost of current Proposal]");
       BalancerUtils.printBrokerCost(selectedProposal.brokerCosts);
       BalancerUtils.printPartitionCost(selectedProposal.partitionCosts, clusterInfo.nodes());

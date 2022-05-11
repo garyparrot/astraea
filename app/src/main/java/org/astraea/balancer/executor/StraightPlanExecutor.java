@@ -22,28 +22,30 @@ public class StraightPlanExecutor implements RebalancePlanExecutor {
   public void run(RebalancePlanProposal proposal) {
     if (proposal.rebalancePlan().isEmpty()) return;
     final ClusterLogAllocation clusterNow =
-        BalancerUtils.currentAllocation(BalancerUtils.clusterSnapShot(topicAdmin));
+        ClusterLogAllocation.of(BalancerUtils.clusterSnapShot(topicAdmin));
     final ClusterLogAllocation clusterLogAllocation = proposal.rebalancePlan().get();
 
-    clusterLogAllocation.forEach(
-        (topicPartition, logPlacements) -> {
-          // TODO: Add support for data folder migration
-          final var a =
-              clusterNow.get(topicPartition).stream()
-                  .map(LogPlacement::broker)
-                  .collect(Collectors.toUnmodifiableList());
-          final var b =
-              logPlacements.stream()
-                  .map(LogPlacement::broker)
-                  .collect(Collectors.toUnmodifiableList());
-          if (a.equals(b)) return;
-          System.out.printf(
-              "Move %s-%d to %s%n", topicPartition.topic(), topicPartition.partition(), b);
-          topicAdmin
-              .migrator()
-              .partition(topicPartition.topic(), topicPartition.partition())
-              .moveTo(b);
-        });
+    clusterLogAllocation
+        .allocation()
+        .forEach(
+            (topicPartition, logPlacements) -> {
+              // TODO: Add support for data folder migration
+              final var a =
+                  clusterNow.allocation().get(topicPartition).stream()
+                      .map(LogPlacement::broker)
+                      .collect(Collectors.toUnmodifiableList());
+              final var b =
+                  logPlacements.stream()
+                      .map(LogPlacement::broker)
+                      .collect(Collectors.toUnmodifiableList());
+              if (a.equals(b)) return;
+              System.out.printf(
+                  "Move %s-%d to %s%n", topicPartition.topic(), topicPartition.partition(), b);
+              topicAdmin
+                  .migrator()
+                  .partition(topicPartition.topic(), topicPartition.partition())
+                  .moveTo(b);
+            });
 
     // wait until everything is ok
     System.out.println("Launch Replica Syncing Monitor");

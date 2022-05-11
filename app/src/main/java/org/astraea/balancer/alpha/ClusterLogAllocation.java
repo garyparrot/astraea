@@ -1,82 +1,61 @@
 package org.astraea.balancer.alpha;
 
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.stream.Collectors;
+import org.astraea.cost.ClusterInfo;
+import org.astraea.cost.ReplicaInfo;
 import org.astraea.cost.TopicPartition;
 
-public class ClusterLogAllocation implements Map<TopicPartition, List<LogPlacement>> {
-
-  // TODO: add a method to calculate the difference between two ClusterLogAllocation
+public class ClusterLogAllocation {
 
   private final Map<TopicPartition, List<LogPlacement>> allocation;
 
   private ClusterLogAllocation(Map<TopicPartition, List<LogPlacement>> allocation) {
-    this.allocation = allocation;
+    this.allocation = Map.copyOf(allocation);
   }
 
   public static ClusterLogAllocation of(Map<TopicPartition, List<LogPlacement>> allocation) {
     return new ClusterLogAllocation(allocation);
   }
 
-  @Override
-  public int size() {
-    return allocation.size();
+  public Map<TopicPartition, List<LogPlacement>> allocation() {
+    return allocation;
   }
 
-  @Override
-  public boolean isEmpty() {
-    return allocation.isEmpty();
-  }
+  // TODO: add a method to calculate the difference between two ClusterLogAllocation
+  public static ClusterLogAllocation of(ClusterInfo clusterInfo) {
+    final var allocation =
+        clusterInfo.topics().stream()
+            .map(clusterInfo::partitions)
+            .flatMap(Collection::stream)
+            .collect(
+                Collectors.groupingBy(
+                    replica -> TopicPartition.of(replica.topic(), replica.partition())))
+            .entrySet()
+            .stream()
+            .map(
+                (entry) -> {
+                  // validate if the given log placements are valid
+                  if (entry.getValue().stream().filter(ReplicaInfo::isLeader).count() != 1)
+                    throw new IllegalArgumentException(
+                        "The " + entry.getKey() + " leader count mismatch 1.");
 
-  @Override
-  public boolean containsKey(Object o) {
-    return allocation.containsKey(o);
-  }
+                  final var topicPartition = entry.getKey();
+                  final var logPlacements =
+                      entry.getValue().stream()
+                          .sorted(Comparator.comparingInt(replica -> replica.isLeader() ? 0 : 1))
+                          .map(
+                              replica ->
+                                  LogPlacement.of(
+                                      replica.nodeInfo().id(), replica.dataFolder().orElse(null)))
+                          .collect(Collectors.toUnmodifiableList());
 
-  @Override
-  public boolean containsValue(Object o) {
-    return allocation.containsValue(o);
-  }
-
-  @Override
-  public List<LogPlacement> get(Object o) {
-    return allocation.get(o);
-  }
-
-  @Override
-  public List<LogPlacement> put(TopicPartition topicPartition, List<LogPlacement> logPlacements) {
-    return allocation.put(topicPartition, logPlacements);
-  }
-
-  @Override
-  public List<LogPlacement> remove(Object o) {
-    return allocation.remove(o);
-  }
-
-  @Override
-  public void putAll(Map<? extends TopicPartition, ? extends List<LogPlacement>> map) {
-    allocation.putAll(map);
-  }
-
-  @Override
-  public void clear() {
-    allocation.clear();
-  }
-
-  @Override
-  public Set<TopicPartition> keySet() {
-    return allocation.keySet();
-  }
-
-  @Override
-  public Collection<List<LogPlacement>> values() {
-    return allocation.values();
-  }
-
-  @Override
-  public Set<Entry<TopicPartition, List<LogPlacement>>> entrySet() {
-    return allocation.entrySet();
+                  return Map.entry(topicPartition, logPlacements);
+                })
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+    return ClusterLogAllocation.of(allocation);
   }
 }
