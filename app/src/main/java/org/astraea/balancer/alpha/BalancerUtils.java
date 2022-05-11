@@ -41,6 +41,11 @@ public class BalancerUtils {
       }
 
       @Override
+      public Set<String> dataDirectories(int brokerId) {
+        return clusterInfo.dataDirectories(brokerId);
+      }
+
+      @Override
       public List<ReplicaInfo> availablePartitionLeaders(String topic) {
         return partitions(topic).stream()
             .filter(ReplicaInfo::isLeader)
@@ -277,11 +282,19 @@ public class BalancerUtils {
                                   replica.path()));
                 })
             .collect(Collectors.groupingBy(ReplicaInfo::topic));
+    final var dataDirectories =
+        topicAdmin.brokerFolders(
+            nodeInfo.stream().map(NodeInfo::id).collect(Collectors.toUnmodifiableList()));
 
     return new ClusterInfo() {
       @Override
       public List<NodeInfo> nodes() {
         return nodeInfo;
+      }
+
+      @Override
+      public Set<String> dataDirectories(int brokerId) {
+        return dataDirectories.get(brokerId);
       }
 
       @Override

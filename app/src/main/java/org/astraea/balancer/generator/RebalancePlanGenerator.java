@@ -13,7 +13,7 @@ public interface RebalancePlanGenerator {
    * process.
    *
    * @param clusterInfo the cluster state
-   * @return a {@link Stream} generating rebalance plan regarding given {@link ClusterInfo}
+   * @return a {@link Stream} generating rebalance plan regarding the given {@link ClusterInfo}
    */
   Stream<RebalancePlanProposal> generate(ClusterInfo clusterInfo);
 }
