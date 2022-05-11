@@ -1,6 +1,5 @@
 package org.astraea.balancer.generator;
 
-import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -36,14 +35,13 @@ class ShufflePlanGeneratorTest {
             IntStream.range(0, partition)
                 .mapToObj(
                     (ignore) -> {
-                      byte[] topicSuffix = new byte[6];
-                      random.nextBytes(topicSuffix);
-                      return "fake-topic-"
-                          + Base64.getEncoder()
-                              .encodeToString(topicSuffix)
-                              .replace("+", "_")
-                              .replace("/", ".")
-                              .replace("=", "-");
+                      final var suffix =
+                          IntStream.range(0, 5)
+                              .map(i -> random.nextInt(26))
+                              .map(i -> 'a' + i)
+                              .mapToObj(i -> String.valueOf((char) i))
+                              .collect(Collectors.joining());
+                      return "fake-topic-" + suffix;
                     })
                 .collect(Collectors.toUnmodifiableSet()));
   }
@@ -144,7 +142,7 @@ class ShufflePlanGeneratorTest {
   @RepeatedTest(10)
   void testMovement() {
     final var fakeClusterInfo =
-        fakeClusterInfo(10, 3, 10, 1, (ignore) -> Set.of("breaking-news", "chess", "animal"));
+        fakeClusterInfo(100, 3, 10, 1, (ignore) -> Set.of("breaking-news", "chess", "animal"));
     final var shuffleCount = 1;
     final var shuffleSourceTopicPartition = TopicPartition.of("breaking-news", 0);
     final var shuffleSourceLogs =
@@ -177,10 +175,5 @@ class ShufflePlanGeneratorTest {
     Assertions.assertNotEquals(
         shuffleSourceLogs,
         proposal.rebalancePlan().orElseThrow().allocation().get(shuffleSourceTopicPartition));
-  }
-
-  @Test
-  void test() {
-    System.out.println(fakeClusterInfo(10, 3, 3, 3).topics());
   }
 }
