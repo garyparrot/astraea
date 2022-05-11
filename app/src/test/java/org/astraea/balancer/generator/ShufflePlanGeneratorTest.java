@@ -9,13 +9,16 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import org.astraea.balancer.alpha.ClusterLogAllocation;
 import org.astraea.balancer.alpha.LogPlacement;
+import org.astraea.balancer.alpha.RebalancePlanProposal;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.NodeInfo;
 import org.astraea.cost.ReplicaInfo;
 import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 
 class ShufflePlanGeneratorTest {
@@ -55,6 +58,11 @@ class ShufflePlanGeneratorTest {
         IntStream.range(0, nodeCount)
             .mapToObj(nodeId -> NodeInfo.of(nodeId, "host" + nodeId, 9092))
             .collect(Collectors.toUnmodifiableList());
+    final var dataDirCount = 3;
+    final var dataDirectories =
+        IntStream.range(0, dataDirCount)
+            .mapToObj(i -> "/tmp/data-directory-" + i)
+            .collect(Collectors.toUnmodifiableList());
     final var topics = topicNameGenerator.apply(topicCount);
     final var replicas =
         topics.stream()
@@ -67,7 +75,13 @@ class ShufflePlanGeneratorTest {
                         .mapToObj(
                             r ->
                                 ReplicaInfo.of(
-                                    tp.topic(), tp.partition(), nodes.get(r), r == 0, true, false)))
+                                    tp.topic(),
+                                    tp.partition(),
+                                    nodes.get(r),
+                                    r == 0,
+                                    true,
+                                    false,
+                                    dataDirectories.get(tp.partition() % dataDirectories.size()))))
             .collect(Collectors.groupingBy(ReplicaInfo::topic));
 
     return new ClusterInfo() {
@@ -77,9 +91,8 @@ class ShufflePlanGeneratorTest {
       }
 
       @Override
-      public Set<String> dataDirectories(int brokerId) {
-        // TODO: fix this
-        return Set.of();
+      public List<String> dataDirectories(int brokerId) {
+        return dataDirectories;
       }
 
       @Override
@@ -119,7 +132,7 @@ class ShufflePlanGeneratorTest {
   @Test
   void testRun() {
     final var shufflePlanGenerator = new ShufflePlanGenerator(5, 10);
-    final var fakeCluster = fakeClusterInfo(5, 10, 10, 3);
+    final var fakeCluster = fakeClusterInfo(100, 10, 10, 3);
     final var stream = shufflePlanGenerator.generate(fakeCluster);
     final var iterator = stream.iterator();
 
@@ -128,19 +141,22 @@ class ShufflePlanGeneratorTest {
     Assertions.assertDoesNotThrow(() -> System.out.println(iterator.next()));
   }
 
-  @Test
+  @RepeatedTest(10)
   void testMovement() {
     final var fakeClusterInfo =
         fakeClusterInfo(10, 3, 10, 1, (ignore) -> Set.of("breaking-news", "chess", "animal"));
     final var shuffleCount = 1;
     final var shuffleSourceTopicPartition = TopicPartition.of("breaking-news", 0);
-    final var shuffleSourceLog = LogPlacement.of(0);
-    final var shuffleDestinationBroker = 9;
+    final var shuffleSourceLogs =
+        ClusterLogAllocation.of(fakeClusterInfo).allocation().get(shuffleSourceTopicPartition);
     final var shufflePlanGenerator =
         new ShufflePlanGenerator(() -> shuffleCount) {
           @Override
           int sourceTopicPartitionSelector(List<TopicPartition> migrationCandidates) {
-            return super.sourceTopicPartitionSelector(migrationCandidates);
+            return IntStream.range(0, migrationCandidates.size())
+                .filter(i -> migrationCandidates.get(i).equals(shuffleSourceTopicPartition))
+                .findFirst()
+                .orElseThrow();
           }
 
           @Override
@@ -153,6 +169,14 @@ class ShufflePlanGeneratorTest {
             return super.migrationSelector(movementCandidates);
           }
         };
+
+    RebalancePlanProposal proposal =
+        shufflePlanGenerator.generate(fakeClusterInfo).iterator().next();
+    System.out.println(proposal);
+
+    Assertions.assertNotEquals(
+        shuffleSourceLogs,
+        proposal.rebalancePlan().orElseThrow().allocation().get(shuffleSourceTopicPartition));
   }
 
   @Test

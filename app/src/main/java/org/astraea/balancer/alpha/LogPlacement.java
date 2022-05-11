@@ -26,6 +26,15 @@ public interface LogPlacement {
       }
 
       @Override
+      public boolean equals(Object obj) {
+        if (obj instanceof LogPlacement) {
+          final var that = (LogPlacement) obj;
+          return this.broker() == that.broker() && this.logDirectory().equals(that.logDirectory());
+        }
+        return false;
+      }
+
+      @Override
       public String toString() {
         return "LogPlacement{broker=" + broker() + " logDir=" + logDirectory() + "}";
       }

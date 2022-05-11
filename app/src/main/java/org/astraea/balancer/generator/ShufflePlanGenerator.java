@@ -82,7 +82,7 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
     // So there are 101 possible migrations. But these "two ways" of migration have different
     // probability to occur. We can expect a large number of replica set changes occur but only a
     // few for the data directory migration. This will make the ShufflePlanGenerator hard to address
-    // specific kind of balance issue due to it rarely propose them.
+    // specific kind of balance issue due to <strong>it rarely propose them</strong>.
     final var migrationTypeList =
         IntStream.range(0, movementCandidates.size())
             .mapToObj(i -> Map.entry(movementCandidates.get(i).getClass(), i))
@@ -99,7 +99,8 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
   }
 
   @Override
-  public Stream<RebalancePlanProposal> generate(ClusterInfo clusterInfo) {
+  public Stream<RebalancePlanProposal> generate(
+      ClusterInfo clusterInfo, ClusterLogAllocation baseAllocation) {
     return Stream.generate(
         () -> {
           final var rebalancePlanBuilder = RebalancePlanProposal.builder();
@@ -121,8 +122,7 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
                 .build();
 
           final var shuffleCount = numberOfShuffle.get();
-          final var currentAllocation =
-              new HashMap<>(ClusterLogAllocation.of(clusterInfo).allocation());
+          final var currentAllocation = new HashMap<>(baseAllocation.allocation());
           final var pickingList =
               currentAllocation.keySet().stream().collect(Collectors.toUnmodifiableList());
 
@@ -171,7 +171,7 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
                           .collect(Collectors.toUnmodifiableList()));
                   rebalancePlanBuilder.addInfo(
                       String.format(
-                          "Change the log identity of topic %s partition %d replica %d, from %s to %s",
+                          "Change the log identity of topic %s partition %d replica at broker %d, from %s to %s",
                           sourceTopicPartition.topic(),
                           sourceTopicPartition.partition(),
                           sourceLogPlacement.broker(),
@@ -191,7 +191,7 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
                           .collect(Collectors.toUnmodifiableList()));
                   rebalancePlanBuilder.addInfo(
                       String.format(
-                          "Change the data directory of topic %s partition %d replica %d, from %s to %s",
+                          "Change the data directory of topic %s partition %d replica at broker %d, from %s to %s",
                           sourceTopicPartition.topic(),
                           sourceTopicPartition.partition(),
                           sourceLogPlacement.broker(),
@@ -204,7 +204,7 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
             // [Valid movement 1] add all brokers and remove all broker in current replica set
             brokerIds.stream()
                 .filter(
-                    broker -> sourceLogPlacements.stream().anyMatch(log -> log.broker() == broker))
+                    broker -> sourceLogPlacements.stream().noneMatch(log -> log.broker() == broker))
                 .map(targetBroker -> (Runnable) () -> replicaSetMigration.accept(targetBroker))
                 .map(Movement::replicaSetMovement)
                 .forEach(validMigrationCandidates::add);
@@ -239,7 +239,9 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
             validMigrationCandidates.get(selectedMigrationIndex).run();
           }
 
-          return rebalancePlanBuilder.build();
+          return rebalancePlanBuilder
+              .withRebalancePlan(ClusterLogAllocation.of(currentAllocation))
+              .build();
         });
   }
 
@@ -255,8 +257,6 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
   }
 
   interface ReplicaSetMovement extends Movement {}
-
-  interface LeaderFollowerMovement extends Movement {}
 
   interface DataDirectoryMovement extends Movement {}
 }

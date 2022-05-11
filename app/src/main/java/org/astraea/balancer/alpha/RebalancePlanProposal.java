@@ -75,9 +75,13 @@ public interface RebalancePlanProposal {
           sb.append("[RebalancePlanProposal]").append(System.lineSeparator());
 
           sb.append("  Info:").append(System.lineSeparator());
-          info.forEach(infoString -> sb.append(String.format("    * %s%n", infoString)));
-          sb.append("  Warning:").append(System.lineSeparator());
-          warnings.forEach(warningString -> sb.append(String.format("    * %s%n", warningString)));
+          if (info.isEmpty()) sb.append(String.format("    no information%n"));
+          else info.forEach(infoString -> sb.append(String.format("    * %s%n", infoString)));
+          if (!warnings.isEmpty()) {
+            sb.append("  Warning:").append(System.lineSeparator());
+            warnings.forEach(
+                warningString -> sb.append(String.format("    * %s%n", warningString)));
+          }
 
           return sb.toString();
         }

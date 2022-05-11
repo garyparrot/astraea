@@ -41,7 +41,7 @@ public class BalancerUtils {
       }
 
       @Override
-      public Set<String> dataDirectories(int brokerId) {
+      public List<String> dataDirectories(int brokerId) {
         return clusterInfo.dataDirectories(brokerId);
       }
 
@@ -283,8 +283,13 @@ public class BalancerUtils {
                 })
             .collect(Collectors.groupingBy(ReplicaInfo::topic));
     final var dataDirectories =
-        topicAdmin.brokerFolders(
-            nodeInfo.stream().map(NodeInfo::id).collect(Collectors.toUnmodifiableList()));
+        topicAdmin
+            .brokerFolders(
+                nodeInfo.stream().map(NodeInfo::id).collect(Collectors.toUnmodifiableList()))
+            .entrySet()
+            .stream()
+            .collect(
+                Collectors.toUnmodifiableMap(Map.Entry::getKey, x -> List.copyOf(x.getValue())));
 
     return new ClusterInfo() {
       @Override
@@ -293,7 +298,7 @@ public class BalancerUtils {
       }
 
       @Override
-      public Set<String> dataDirectories(int brokerId) {
+      public List<String> dataDirectories(int brokerId) {
         return dataDirectories.get(brokerId);
       }
 
