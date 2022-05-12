@@ -58,7 +58,7 @@ class ClusterLogAllocationTest {
   }
 
   @Test
-  void letReplicaBecomeFollower() {
+  void letLeaderBecomeFollower() {
     final var fakeClusterInfo =
         ClusterInfoProvider.fakeClusterInfo(3, 1, 1, 2, (i) -> Set.of("topic"));
     final var clusterLogAllocation = ClusterLogAllocation.ofMutable(fakeClusterInfo);
