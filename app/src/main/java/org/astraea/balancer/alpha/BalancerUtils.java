@@ -14,6 +14,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.astraea.Utils;
+import org.astraea.balancer.ClusterLogAllocation;
+import org.astraea.balancer.LogPlacement;
+import org.astraea.balancer.RebalancePlanProposal;
 import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.HasBrokerCost;
@@ -23,34 +26,9 @@ import org.astraea.cost.PartitionCost;
 import org.astraea.cost.ReplicaInfo;
 import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
-import org.astraea.topic.Replica;
 import org.astraea.topic.TopicAdmin;
 
 public class BalancerUtils {
-
-  public static ClusterLogAllocation currentAllocation(
-      TopicAdmin topicAdmin, ClusterInfo clusterInfo) {
-    return new ClusterLogAllocation(
-        topicAdmin.replicas(clusterInfo.topics()).entrySet().stream()
-            .map(
-                entry ->
-                    Map.entry(
-                        entry.getKey(),
-                        entry.getValue().stream()
-                            .map(Replica::broker)
-                            .collect(Collectors.toUnmodifiableList())))
-            .collect(Collectors.groupingBy(entry -> entry.getKey().topic()))
-            .entrySet()
-            .stream()
-            .collect(
-                Collectors.toUnmodifiableMap(
-                    Map.Entry::getKey,
-                    x ->
-                        x.getValue().stream()
-                            .collect(
-                                Collectors.toUnmodifiableMap(
-                                    y -> y.getKey().partition(), Map.Entry::getValue)))));
-  }
 
   /** create a fake cluster info based on given proposal */
   public static ClusterInfo clusterInfoFromProposal(
@@ -63,6 +41,11 @@ public class BalancerUtils {
       @Override
       public List<NodeInfo> nodes() {
         return clusterInfo.nodes();
+      }
+
+      @Override
+      public List<String> dataDirectories(int brokerId) {
+        return clusterInfo.dataDirectories(brokerId);
       }
 
       @Override
@@ -97,29 +80,19 @@ public class BalancerUtils {
                   return allocation.allocation().entrySet().stream()
                       .flatMap(
                           (entry) -> {
-                            final var topicName = entry.getKey();
+                            final var topicPartition = entry.getKey();
                             final var logAllocation = entry.getValue();
 
-                            return logAllocation.entrySet().stream()
-                                .flatMap(
-                                    (logEntry) -> {
-                                      final var partition = logEntry.getKey();
-                                      final var replicaSet = logEntry.getValue();
-
-                                      // TODO: the synced & offline flag doesn't make sense in a
-                                      // fake ClusterInfo.
-                                      // TODO: make data folder into the return result
-                                      return IntStream.range(0, replicaSet.size())
-                                          .mapToObj(
-                                              index ->
-                                                  ReplicaInfo.of(
-                                                      topicName,
-                                                      partition,
-                                                      nodes.get(replicaSet.get(index)),
-                                                      index == 0,
-                                                      false,
-                                                      false));
-                                    });
+                            return IntStream.range(0, logAllocation.size())
+                                .mapToObj(
+                                    index ->
+                                        ReplicaInfo.of(
+                                            topicPartition.topic(),
+                                            topicPartition.partition(),
+                                            nodes.get(logAllocation.get(index).broker()),
+                                            index == 0,
+                                            false,
+                                            false));
                           })
                       .collect(Collectors.toUnmodifiableList());
                 })
@@ -186,39 +159,42 @@ public class BalancerUtils {
         balanceAllocation
             .allocation()
             .forEach(
-                (topic, partitionMap) -> {
-                  System.out.printf(" Topic \"%s\":%n", topic);
-                  partitionMap.forEach(
-                      (partitionId, replicaAllocation) -> {
-                        final var originalState =
-                            currentAllocation.allocation().get(topic).get(partitionId);
-                        final var finalState =
-                            balanceAllocation.allocation().get(topic).get(partitionId);
+                (topicPartition, logPlacements) -> {
+                  System.out.printf(" \"%s\":%n", topicPartition);
+                  // TODO: add support to show difference in data directory
+                  final var originalState = currentAllocation.allocation().get(topicPartition);
+                  final var finalState = balanceAllocation.allocation().get(topicPartition);
+                  final var noChange =
+                      originalState.stream()
+                          .filter(
+                              srcLog ->
+                                  finalState.stream()
+                                      .anyMatch(finLog -> srcLog.broker() == finLog.broker()))
+                          .sorted()
+                          .collect(Collectors.toUnmodifiableList());
+                  final var toDelete =
+                      originalState.stream()
+                          .filter(
+                              srcLog ->
+                                  finalState.stream()
+                                      .noneMatch(finLog -> srcLog.broker() == finLog.broker()))
+                          .sorted()
+                          .collect(Collectors.toUnmodifiableList());
+                  final var toReplicate =
+                      finalState.stream()
+                          .filter(
+                              finLog ->
+                                  originalState.stream()
+                                      .noneMatch(srcLog -> srcLog.broker() == finLog.broker()))
+                          .sorted()
+                          .collect(Collectors.toUnmodifiableList());
 
-                        final var noChange =
-                            originalState.stream()
-                                .filter(finalState::contains)
-                                .sorted()
-                                .collect(Collectors.toUnmodifiableList());
-                        final var toDelete =
-                            originalState.stream()
-                                .filter(id -> !finalState.contains(id))
-                                .sorted()
-                                .collect(Collectors.toUnmodifiableList());
-                        final var toReplicate =
-                            finalState.stream()
-                                .filter(id -> !originalState.contains(id))
-                                .sorted()
-                                .collect(Collectors.toUnmodifiableList());
-
-                        boolean noChangeAtAll = toDelete.size() == 0 && toReplicate.size() == 0;
-                        if (!noChangeAtAll) {
-                          System.out.printf("   Partition #%d%n", partitionId);
-                          System.out.println("       no change: " + noChange);
-                          System.out.println("       to delete: " + toDelete);
-                          System.out.println("       to replicate: " + toReplicate);
-                        }
-                      });
+                  boolean noChangeAtAll = toDelete.size() == 0 && toReplicate.size() == 0;
+                  if (!noChangeAtAll) {
+                    System.out.println("       no change: " + noChange);
+                    System.out.println("       to delete: " + toDelete);
+                    System.out.println("       to replicate: " + toReplicate);
+                  }
                 });
       } else {
         System.out.println(" No topic in the cluster.");
@@ -235,43 +211,34 @@ public class BalancerUtils {
     System.out.println("[Warnings]");
     proposal.warnings().forEach(warning -> System.out.printf(" * %s%n", warning));
     System.out.println((proposal.warnings().size() == 0 ? " No Warning.\n" : "\n"));
-
-    IntStream.range(0, proposal.exceptions().size())
-        .forEachOrdered(
-            index -> {
-              System.out.printf("[Exception %d/%d]%n", index + 1, proposal.exceptions().size());
-              proposal.exceptions().get(index).printStackTrace();
-            });
     System.out.println();
   }
 
-  public static Map<TopicPartition, List<Integer>> diffAllocation(
+  public static Map<TopicPartition, List<LogPlacement>> diffAllocation(
       ClusterLogAllocation proposal, ClusterLogAllocation currentAllocation) {
     final var balanceAllocation = proposal;
     if (balanceAllocation.allocation().size() > 0) {
-      final var diff = new HashMap<TopicPartition, List<Integer>>();
-
+      final var diff = new HashMap<TopicPartition, List<LogPlacement>>();
       balanceAllocation
           .allocation()
           .forEach(
-              (topic, partitionMap) -> {
-                partitionMap.forEach(
-                    (partitionId, replicaAllocation) -> {
-                      final var originalState =
-                          currentAllocation.allocation().get(topic).get(partitionId);
-                      final var finalState =
-                          balanceAllocation.allocation().get(topic).get(partitionId);
+              (topicPartition, logPlacements) -> {
+                System.out.printf(" \"%s\":%n", topicPartition);
+                // TODO: add support to show difference in data directory
+                final var originalState = currentAllocation.allocation().get(topicPartition);
+                final var finalState = balanceAllocation.allocation().get(topicPartition);
 
-                      final var toReplicate =
-                          finalState.stream()
-                              .filter(id -> !originalState.contains(id))
-                              .sorted()
-                              .collect(Collectors.toUnmodifiableList());
+                final var toReplicate =
+                    finalState.stream()
+                        .filter(
+                            finLog ->
+                                originalState.stream()
+                                    .noneMatch(srcLog -> srcLog.broker() == finLog.broker()))
+                        .sorted()
+                        .collect(Collectors.toUnmodifiableList());
 
-                      diff.put(TopicPartition.of(topic, partitionId), toReplicate);
-                    });
+                diff.put(topicPartition, toReplicate);
               });
-
       return diff;
     } else {
       return Map.of();
@@ -298,6 +265,9 @@ public class BalancerUtils {
         Utils.handleException(() -> topicAdmin.replicas(topics)).entrySet().stream()
             .flatMap(
                 entry -> {
+                  // TODO: there is a bug in here. topicAdmin.replicas doesn't return the full
+                  // information of each replica if there are some offline here. might be fix in
+                  // #308?
                   final var topicPartition = entry.getKey();
                   final var replicas = entry.getValue();
 
@@ -315,11 +285,24 @@ public class BalancerUtils {
                                   replica.path()));
                 })
             .collect(Collectors.groupingBy(ReplicaInfo::topic));
+    final var dataDirectories =
+        topicAdmin
+            .brokerFolders(
+                nodeInfo.stream().map(NodeInfo::id).collect(Collectors.toUnmodifiableList()))
+            .entrySet()
+            .stream()
+            .collect(
+                Collectors.toUnmodifiableMap(Map.Entry::getKey, x -> List.copyOf(x.getValue())));
 
     return new ClusterInfo() {
       @Override
       public List<NodeInfo> nodes() {
         return nodeInfo;
+      }
+
+      @Override
+      public List<String> dataDirectories(int brokerId) {
+        return dataDirectories.get(brokerId);
       }
 
       @Override

@@ -1,4 +1,4 @@
-package org.astraea.balancer.alpha;
+package org.astraea.balancer;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -15,8 +15,6 @@ public interface RebalancePlanProposal {
 
   List<String> warnings();
 
-  List<Exception> exceptions();
-
   static Build builder() {
     return new Build();
   }
@@ -32,23 +30,18 @@ public interface RebalancePlanProposal {
       return this;
     }
 
-    public Build withRebalancePlan(ClusterLogAllocation plan) {
-      this.rebalancePlan = Objects.requireNonNull(plan);
+    public Build withRebalancePlan(ClusterLogAllocation clusterLogAllocation) {
+      this.rebalancePlan = Objects.requireNonNull(clusterLogAllocation);
       return this;
     }
 
-    public Build addWarning(List<String> warning) {
-      this.warnings.addAll(warning);
+    public Build addWarning(String warning) {
+      this.warnings.add(warning);
       return this;
     }
 
-    public Build addInfo(List<String> info) {
-      this.info.addAll(info);
-      return this;
-    }
-
-    public Build addExceptions(List<Exception> exceptions) {
-      this.exceptions.addAll(exceptions);
+    public Build addInfo(String info) {
+      this.info.add(info);
       return this;
     }
 
@@ -76,8 +69,21 @@ public interface RebalancePlanProposal {
         }
 
         @Override
-        public List<Exception> exceptions() {
-          return List.copyOf(exceptions);
+        public String toString() {
+          StringBuilder sb = new StringBuilder();
+
+          sb.append("[RebalancePlanProposal]").append(System.lineSeparator());
+
+          sb.append("  Info:").append(System.lineSeparator());
+          if (info.isEmpty()) sb.append(String.format("    no information%n"));
+          else info.forEach(infoString -> sb.append(String.format("    * %s%n", infoString)));
+          if (!warnings.isEmpty()) {
+            sb.append("  Warning:").append(System.lineSeparator());
+            warnings.forEach(
+                warningString -> sb.append(String.format("    * %s%n", warningString)));
+          }
+
+          return sb.toString();
         }
       };
     }

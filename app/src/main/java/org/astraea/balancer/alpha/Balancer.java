@@ -31,6 +31,8 @@ import javax.management.remote.JMXServiceURL;
 import org.astraea.Utils;
 import org.astraea.argument.DurationField;
 import org.astraea.argument.Field;
+import org.astraea.balancer.ClusterLogAllocation;
+import org.astraea.balancer.RebalancePlanProposal;
 import org.astraea.balancer.alpha.cost.NumberOfLeaderCost;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
 import org.astraea.balancer.alpha.cost.ReplicaMigrationSpeedCost;
@@ -123,7 +125,7 @@ public class Balancer implements Runnable {
     final var clusterInfo =
         ClusterInfo.of(
             clusterSnapShot(topicAdmin, topicIgnoreList), metricCollector.fetchMetrics());
-    final var currentAllocation = BalancerUtils.currentAllocation(topicAdmin, clusterInfo);
+    final var currentAllocation = ClusterLogAllocation.of(clusterInfo);
 
     // friendly info
     if (clusterInfo.topics().isEmpty()) {
@@ -161,8 +163,9 @@ public class Balancer implements Runnable {
     final var watcherTask =
         scheduledExecutorService.schedule(
             BalancerUtils.generationWatcher(iteration, progress), 0, TimeUnit.SECONDS);
+    final var proposalStream = rebalancePlanGenerator.generate(clusterInfo).iterator();
     for (int i = 0; i < iteration; i++) {
-      final var proposal = rebalancePlanGenerator.generate(clusterInfo);
+      final var proposal = proposalStream.next();
       final var proposedClusterInfo = BalancerUtils.clusterInfoFromProposal(clusterInfo, proposal);
 
       final var proposedBrokerCosts =
@@ -211,7 +214,7 @@ public class Balancer implements Runnable {
       System.out.println("Current cost sum: " + currentCostSum);
       System.out.println("Proposed cost sum: " + proposedCostSum);
       BalancerUtils.describeProposal(
-          selectedProposal.proposal, BalancerUtils.currentAllocation(topicAdmin, clusterInfo));
+          selectedProposal.proposal, ClusterLogAllocation.of(clusterInfo));
       System.out.println("[Detail of the cost of current Proposal]");
       BalancerUtils.printBrokerCost(selectedProposal.brokerCosts);
       BalancerUtils.printPartitionCost(selectedProposal.partitionCosts, clusterInfo.nodes());
@@ -284,9 +287,11 @@ public class Balancer implements Runnable {
 
     // replicaMigrationCost
     final var topicPartitionCopyMap = diffAllocation(proposedCluster, originalCluster);
+    // TODO: this cost doesn't consider data folder?
     final Map<Integer, Double> brokerMigrationCost =
         topicPartitionCopyMap.entrySet().stream()
-            .flatMap(entry -> entry.getValue().stream().map(x -> Map.entry(x, entry.getKey())))
+            .flatMap(
+                entry -> entry.getValue().stream().map(x -> Map.entry(x.broker(), entry.getKey())))
             .collect(
                 Collectors.groupingBy(
                     Map.Entry::getKey,
