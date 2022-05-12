@@ -1,7 +1,6 @@
 package org.astraea.balancer.generator;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
@@ -10,9 +9,9 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
-import org.astraea.balancer.alpha.ClusterLogAllocation;
-import org.astraea.balancer.alpha.LogPlacement;
-import org.astraea.balancer.alpha.RebalancePlanProposal;
+import org.astraea.balancer.ClusterLogAllocation;
+import org.astraea.balancer.LogPlacement;
+import org.astraea.balancer.RebalancePlanProposal;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.NodeInfo;
 import org.astraea.cost.TopicPartition;
@@ -121,32 +120,34 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
                 .noRebalancePlan()
                 .build();
 
+          if (clusterInfo.topics().size() == 0)
+            return rebalancePlanBuilder
+                .addWarning("No non-ignored topic to working on.")
+                .noRebalancePlan()
+                .build();
+
           final var shuffleCount = numberOfShuffle.get();
-          final var currentAllocation = new HashMap<>(baseAllocation.allocation());
+          final var currentAllocation = ClusterLogAllocation.ofMutable(baseAllocation.allocation());
           final var pickingList =
-              currentAllocation.keySet().stream().collect(Collectors.toUnmodifiableList());
+              currentAllocation.allocation().keySet().stream()
+                  .collect(Collectors.toUnmodifiableList());
 
           rebalancePlanBuilder.addInfo(
               "Make " + shuffleCount + (shuffleCount > 0 ? " shuffles." : " shuffle."));
           for (int i = 0; i < shuffleCount; i++) {
             final var sourceTopicPartitionIndex = sourceTopicPartitionSelector(pickingList);
             final var sourceTopicPartition = pickingList.get(sourceTopicPartitionIndex);
-            final var sourceLogPlacements = currentAllocation.get(sourceTopicPartition);
+            final var sourceLogPlacements =
+                currentAllocation.allocation().get(sourceTopicPartition);
             final var sourceLogPlacementIndex = sourceLogPlacementSelector(sourceLogPlacements);
             final var sourceLogPlacement = sourceLogPlacements.get(sourceLogPlacementIndex);
             final var sourceIsLeader = sourceLogPlacementIndex == 0;
+            final var sourceBroker = sourceLogPlacement.broker();
 
             Consumer<Integer> replicaSetMigration =
                 (targetBroker) -> {
-                  currentAllocation.put(
-                      sourceTopicPartition,
-                      sourceLogPlacements.stream()
-                          .map(
-                              logPlacement ->
-                                  logPlacement == sourceLogPlacement
-                                      ? LogPlacement.of(targetBroker)
-                                      : logPlacement)
-                          .collect(Collectors.toUnmodifiableList()));
+                  currentAllocation.migrateReplica(
+                      sourceTopicPartition, sourceBroker, targetBroker);
                   rebalancePlanBuilder.addInfo(
                       String.format(
                           "Change replica set of topic %s partition %d, from %d to %d.",
@@ -157,18 +158,12 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
                 };
             Consumer<LogPlacement> leaderFollowerMigration =
                 (targetBroker) -> {
-                  currentAllocation.put(
-                      sourceTopicPartition,
-                      sourceLogPlacements.stream()
-                          .map(
-                              log -> {
-                                if (log.broker() == sourceLogPlacement.broker())
-                                  return targetBroker;
-                                else if (log.broker() == targetBroker.broker())
-                                  return sourceLogPlacement;
-                                else return log;
-                              })
-                          .collect(Collectors.toUnmodifiableList()));
+                  if (sourceIsLeader)
+                    currentAllocation.letLeaderBecomeFollower(
+                        sourceTopicPartition, targetBroker.broker());
+                  else
+                    currentAllocation.letReplicaBecomeLeader(
+                        sourceTopicPartition, targetBroker.broker());
                   rebalancePlanBuilder.addInfo(
                       String.format(
                           "Change the log identity of topic %s partition %d replica at broker %d, from %s to %s",
@@ -180,15 +175,8 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
                 };
             Consumer<String> dataDirectoryMigration =
                 (dataDirectory) -> {
-                  currentAllocation.put(
-                      sourceTopicPartition,
-                      sourceLogPlacements.stream()
-                          .map(
-                              log ->
-                                  log != sourceLogPlacement
-                                      ? log
-                                      : LogPlacement.of(sourceLogPlacement.broker(), dataDirectory))
-                          .collect(Collectors.toUnmodifiableList()));
+                  currentAllocation.changeDataDirectory(
+                      sourceTopicPartition, sourceBroker, dataDirectory);
                   rebalancePlanBuilder.addInfo(
                       String.format(
                           "Change the data directory of topic %s partition %d replica at broker %d, from %s to %s",
@@ -240,7 +228,7 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
           }
 
           return rebalancePlanBuilder
-              .withRebalancePlan(ClusterLogAllocation.of(currentAllocation))
+              .withRebalancePlan(ClusterLogAllocation.of(currentAllocation.allocation()))
               .build();
         });
   }

@@ -1,4 +1,4 @@
-package org.astraea.balancer.alpha;
+package org.astraea.balancer;
 
 import java.util.Optional;
 

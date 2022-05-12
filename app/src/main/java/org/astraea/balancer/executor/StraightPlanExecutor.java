@@ -1,10 +1,10 @@
 package org.astraea.balancer.executor;
 
 import java.util.stream.Collectors;
+import org.astraea.balancer.ClusterLogAllocation;
+import org.astraea.balancer.LogPlacement;
+import org.astraea.balancer.RebalancePlanProposal;
 import org.astraea.balancer.alpha.BalancerUtils;
-import org.astraea.balancer.alpha.ClusterLogAllocation;
-import org.astraea.balancer.alpha.LogPlacement;
-import org.astraea.balancer.alpha.RebalancePlanProposal;
 import org.astraea.topic.ReplicaSyncingMonitor;
 import org.astraea.topic.TopicAdmin;
 

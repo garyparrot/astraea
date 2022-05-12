@@ -31,6 +31,8 @@ import javax.management.remote.JMXServiceURL;
 import org.astraea.Utils;
 import org.astraea.argument.DurationField;
 import org.astraea.argument.Field;
+import org.astraea.balancer.ClusterLogAllocation;
+import org.astraea.balancer.RebalancePlanProposal;
 import org.astraea.balancer.alpha.cost.NumberOfLeaderCost;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
 import org.astraea.balancer.alpha.cost.ReplicaMigrationSpeedCost;
