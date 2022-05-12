@@ -11,6 +11,27 @@ import org.junit.jupiter.api.Test;
 class ClusterLogAllocationTest {
 
   @Test
+  void creation() {
+    // empty replica set
+    var badAllocation0 = Map.of(TopicPartition.of("topic", 0), List.<LogPlacement>of());
+    Assertions.assertThrows(
+        IllegalArgumentException.class, () -> ClusterLogAllocation.of(badAllocation0));
+
+    // partial topic/partition
+    var badAllocation1 = Map.of(TopicPartition.of("topic", 999), List.of(LogPlacement.of(1001)));
+    Assertions.assertThrows(
+        IllegalArgumentException.class, () -> ClusterLogAllocation.of(badAllocation1));
+
+    // duplicate replica
+    var badAllocation2 =
+        Map.of(
+            TopicPartition.of("topic", 0),
+            List.of(LogPlacement.of(1001), LogPlacement.of(1001), LogPlacement.of(1001)));
+    Assertions.assertThrows(
+        IllegalArgumentException.class, () -> ClusterLogAllocation.of(badAllocation2));
+  }
+
+  @Test
   void of() {
     final ClusterLogAllocation immutable = ClusterLogAllocation.of(Map.of());
     final TopicPartition topicPartition = TopicPartition.of("topic", 0);
@@ -40,6 +61,7 @@ class ClusterLogAllocationTest {
 
     Assertions.assertEquals(
         1, clusterLogAllocation.allocation().get(sourceTopicPartition).get(0).broker());
+    Assertions.assertDoesNotThrow(() -> ClusterLogAllocation.of(clusterLogAllocation.allocation()));
   }
 
   @Test
@@ -55,6 +77,7 @@ class ClusterLogAllocationTest {
         1, clusterLogAllocation.allocation().get(sourceTopicPartition).get(0).broker());
     Assertions.assertEquals(
         0, clusterLogAllocation.allocation().get(sourceTopicPartition).get(1).broker());
+    Assertions.assertDoesNotThrow(() -> ClusterLogAllocation.of(clusterLogAllocation.allocation()));
   }
 
   @Test
@@ -70,6 +93,7 @@ class ClusterLogAllocationTest {
         1, clusterLogAllocation.allocation().get(sourceTopicPartition).get(0).broker());
     Assertions.assertEquals(
         0, clusterLogAllocation.allocation().get(sourceTopicPartition).get(1).broker());
+    Assertions.assertDoesNotThrow(() -> ClusterLogAllocation.of(clusterLogAllocation.allocation()));
   }
 
   @Test
@@ -89,8 +113,6 @@ class ClusterLogAllocationTest {
             .get(0)
             .logDirectory()
             .orElseThrow());
+    Assertions.assertDoesNotThrow(() -> ClusterLogAllocation.of(clusterLogAllocation.allocation()));
   }
-
-  @Test
-  void testOf() {}
 }

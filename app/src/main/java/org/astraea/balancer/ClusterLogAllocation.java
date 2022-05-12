@@ -15,6 +15,28 @@ public class ClusterLogAllocation {
   private final Map<TopicPartition, List<LogPlacement>> allocation;
 
   private ClusterLogAllocation(Map<TopicPartition, List<LogPlacement>> allocation) {
+    allocation.keySet().stream()
+        .collect(Collectors.groupingBy(TopicPartition::topic))
+        .forEach(
+            (topic, tp) -> {
+              int maxPartitionId =
+                  tp.stream().mapToInt(TopicPartition::partition).max().orElseThrow();
+              if ((maxPartitionId + 1) != tp.size())
+                throw new IllegalArgumentException(
+                    "The partition size of " + topic + " is illegal");
+            });
+    allocation.forEach(
+        (tp, logs) -> {
+          long uniqueBrokers = logs.stream().map(LogPlacement::broker).distinct().count();
+          if (uniqueBrokers != logs.size() || logs.size() == 0)
+            throw new IllegalArgumentException(
+                "The topic "
+                    + tp.topic()
+                    + " partition "
+                    + tp.partition()
+                    + " has illegal replica set "
+                    + logs);
+        });
     this.allocation = allocation;
   }
 

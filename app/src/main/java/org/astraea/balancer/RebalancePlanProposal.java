@@ -23,7 +23,6 @@ public interface RebalancePlanProposal {
     ClusterLogAllocation rebalancePlan = null;
     List<String> info = new ArrayList<>();
     List<String> warnings = new ArrayList<>();
-    List<Exception> exceptions = new ArrayList<>();
 
     public Build noRebalancePlan() {
       this.rebalancePlan = null;
