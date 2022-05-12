@@ -88,9 +88,9 @@ public class Balancer implements Runnable {
                 .collect(Collectors.toUnmodifiableList()),
             this.scheduledExecutorService,
             argument);
-    this.topicAdmin = TopicAdmin.of(argument.props());
+    this.topicAdmin = TopicAdmin.of(argument.configs());
     this.rebalancePlanGenerator = new ShufflePlanGenerator(3, 8);
-    this.rebalancePlanExecutor = new StraightPlanExecutor(argument.brokers, topicAdmin);
+    this.rebalancePlanExecutor = new StraightPlanExecutor(argument.bootstrapServers(), topicAdmin);
 
     this.topicIgnoreList = BalancerUtils.privateTopics(this.topicAdmin);
   }

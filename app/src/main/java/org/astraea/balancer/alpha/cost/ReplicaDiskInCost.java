@@ -283,7 +283,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
   public static void main(String[] args) throws InterruptedException, MalformedURLException {
     final var argument =
         org.astraea.argument.Argument.parse(new ReplicaDiskInCost.Argument(), args);
-    var admin = TopicAdmin.of(argument.brokers);
+    var admin = TopicAdmin.of(argument.bootstrapServers());
     var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
     var jmxAddress = Map.of(1001, 15629, 1002, 10585, 1003, 12485);
     // set broker bandwidth upper limit to 10 MB/s;
@@ -297,7 +297,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
                     .interval(Duration.ofSeconds(4))
                     .build()
                     .register()
-                    .host(argument.brokers.split(":")[0])
+                    .host(argument.bootstrapServers().split(":")[0])
                     .port(port)
                     .fetcher(Fetcher.of(Set.of(costFunction.fetcher())))
                     .build()
