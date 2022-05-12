@@ -68,6 +68,7 @@ public class ClusterLogAllocation {
     else return ClusterLogAllocation.ofMutable(allocation);
   }
 
+  /** let specific broker leave the replica set and let another broker join the replica set. */
   public void migrateReplica(TopicPartition topicPartition, int broker, int destinationBroker) {
     final List<LogPlacement> sourceLogPlacements = this.allocation().get(topicPartition);
     if (sourceLogPlacements == null)
@@ -87,6 +88,7 @@ public class ClusterLogAllocation {
     this.allocation().put(topicPartition, finalLogPlacements);
   }
 
+  /** let specific follower log become the leader log of this topic/partition. */
   public void letReplicaBecomeLeader(TopicPartition topicPartition, int broker) {
     final List<LogPlacement> sourceLogPlacements = this.allocation().get(topicPartition);
     if (sourceLogPlacements == null)
@@ -115,6 +117,10 @@ public class ClusterLogAllocation {
     this.allocation().put(topicPartition, finalLogPlacements);
   }
 
+  /**
+   * let specific follower log become the leader log of this topic/partition, the original leader
+   * will be replaced by the given replica.
+   */
   public void letLeaderBecomeFollower(TopicPartition topicPartition, int replaceBy) {
     final List<LogPlacement> sourceLogPlacements = this.allocation().get(topicPartition);
     if (sourceLogPlacements == null)
@@ -143,6 +149,7 @@ public class ClusterLogAllocation {
     this.allocation().put(topicPartition, finalLogPlacements);
   }
 
+  /** change the data directory of specific log */
   public void changeDataDirectory(TopicPartition topicPartition, int broker, String path) {
     final List<LogPlacement> sourceLogPlacements = this.allocation().get(topicPartition);
     if (sourceLogPlacements == null)
