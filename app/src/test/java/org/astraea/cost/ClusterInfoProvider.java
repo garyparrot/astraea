@@ -8,6 +8,7 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import org.astraea.admin.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
 
 public class ClusterInfoProvider {
@@ -51,13 +52,15 @@ public class ClusterInfoProvider {
     final var dataDirectories =
         IntStream.range(0, dataDirCount)
             .mapToObj(i -> "/tmp/data-directory-" + i)
-            .collect(Collectors.toUnmodifiableList());
+            .collect(Collectors.toUnmodifiableSet());
+    final var dataDirectoryList = List.copyOf(dataDirectories);
     final var topics = topicNameGenerator.apply(topicCount);
     final var replicas =
         topics.stream()
             .flatMap(
                 topic ->
-                    IntStream.range(0, partitionCount).mapToObj(p -> TopicPartition.of(topic, p)))
+                    IntStream.range(0, partitionCount)
+                        .mapToObj(p -> TopicPartition.of(topic, Integer.toString(p))))
             .flatMap(
                 tp ->
                     IntStream.range(0, replicaCount)
@@ -70,7 +73,8 @@ public class ClusterInfoProvider {
                                     r == 0,
                                     true,
                                     false,
-                                    dataDirectories.get(tp.partition() % dataDirectories.size()))))
+                                    dataDirectoryList.get(
+                                        tp.partition() % dataDirectories.size()))))
             .collect(Collectors.groupingBy(ReplicaInfo::topic));
 
     return new ClusterInfo() {
@@ -80,7 +84,7 @@ public class ClusterInfoProvider {
       }
 
       @Override
-      public List<String> dataDirectories(int brokerId) {
+      public Set<String> dataDirectories(int brokerId) {
         return dataDirectories;
       }
 

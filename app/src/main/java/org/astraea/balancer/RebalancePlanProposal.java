@@ -1,13 +1,13 @@
 package org.astraea.balancer;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import org.astraea.balancer.log.ClusterLogAllocation;
 
 public interface RebalancePlanProposal {
-
-  boolean isPlanGenerated();
 
   Optional<ClusterLogAllocation> rebalancePlan();
 
@@ -20,51 +20,72 @@ public interface RebalancePlanProposal {
   }
 
   class Build {
-    ClusterLogAllocation rebalancePlan = null;
-    List<String> info = new ArrayList<>();
-    List<String> warnings = new ArrayList<>();
+    ClusterLogAllocation allocation = null;
+    List<String> info = Collections.synchronizedList(new ArrayList<>());
+    List<String> warnings = Collections.synchronizedList(new ArrayList<>());
 
-    public Build noRebalancePlan() {
-      this.rebalancePlan = null;
+    // guard by this
+    private boolean built = false;
+
+    public synchronized Build noRebalancePlan() {
+      ensureNotBuiltYet();
+      this.allocation = null;
       return this;
     }
 
-    public Build withRebalancePlan(ClusterLogAllocation clusterLogAllocation) {
-      this.rebalancePlan = Objects.requireNonNull(clusterLogAllocation);
+    public synchronized Build withRebalancePlan(ClusterLogAllocation clusterLogAllocation) {
+      ensureNotBuiltYet();
+      this.allocation = Objects.requireNonNull(clusterLogAllocation);
       return this;
     }
 
-    public Build addWarning(String warning) {
+    public synchronized Build addWarning(String warning) {
+      ensureNotBuiltYet();
       this.warnings.add(warning);
       return this;
     }
 
-    public Build addInfo(String info) {
+    public synchronized Build addInfo(String info) {
+      ensureNotBuiltYet();
       this.info.add(info);
       return this;
     }
 
-    public RebalancePlanProposal build() {
+    private synchronized void ensureNotBuiltYet() {
+      if (built) throw new IllegalStateException("This builder already built.");
+    }
+
+    public synchronized RebalancePlanProposal build() {
+      final var allocationRef = allocation;
+      final var infoRef = info;
+      final var warningRef = warnings;
+
+      ensureNotBuiltYet();
+
+      built = true;
+      allocation = null;
+      info = null;
+      warnings = null;
+
       return new RebalancePlanProposal() {
 
         @Override
-        public boolean isPlanGenerated() {
-          return rebalancePlan().isPresent();
-        }
-
-        @Override
         public Optional<ClusterLogAllocation> rebalancePlan() {
-          return Optional.ofNullable(rebalancePlan);
+          return Optional.ofNullable(allocationRef);
         }
 
         @Override
         public List<String> info() {
-          return List.copyOf(info);
+          // use Collections.unmodifiableList instead of List.copyOf to avoid excessive memory
+          // footprint
+          return Collections.unmodifiableList(infoRef);
         }
 
         @Override
         public List<String> warnings() {
-          return List.copyOf(warnings);
+          // use Collections.unmodifiableList instead of List.copyOf to avoid excessive memory
+          // footprint
+          return Collections.unmodifiableList(warningRef);
         }
 
         @Override
@@ -74,12 +95,12 @@ public interface RebalancePlanProposal {
           sb.append("[RebalancePlanProposal]").append(System.lineSeparator());
 
           sb.append("  Info:").append(System.lineSeparator());
-          if (info.isEmpty()) sb.append(String.format("    no information%n"));
-          else info.forEach(infoString -> sb.append(String.format("    * %s%n", infoString)));
-          if (!warnings.isEmpty()) {
+          if (info().isEmpty()) sb.append(String.format("    no information%n"));
+          else info().forEach(infoString -> sb.append(String.format("    * %s%n", infoString)));
+          if (!warnings().isEmpty()) {
             sb.append("  Warning:").append(System.lineSeparator());
-            warnings.forEach(
-                warningString -> sb.append(String.format("    * %s%n", warningString)));
+            warnings()
+                .forEach(warningString -> sb.append(String.format("    * %s%n", warningString)));
           }
 
           return sb.toString();

@@ -9,12 +9,13 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
-import org.astraea.balancer.ClusterLogAllocation;
-import org.astraea.balancer.LogPlacement;
+import org.astraea.admin.TopicPartition;
 import org.astraea.balancer.RebalancePlanProposal;
+import org.astraea.balancer.log.ClusterLogAllocation;
+import org.astraea.balancer.log.LayeredClusterLogAllocation;
+import org.astraea.balancer.log.LogPlacement;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.NodeInfo;
-import org.astraea.cost.TopicPartition;
 
 /**
  * The {@link ShufflePlanGenerator} proposes a new log placement based on the current log placement,
@@ -46,29 +47,15 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
     this.numberOfShuffle = numberOfShuffle;
   }
 
-  /**
-   * Select the index of one topic partition from the given pool of candidates, as the shuffle
-   * source. The default operation is random, the method is visible and overridable for testing
-   * purpose.
-   */
-  int sourceTopicPartitionSelector(List<TopicPartition> migrationCandidates) {
+  private int sourceTopicPartitionSelector(List<TopicPartition> migrationCandidates) {
     return ThreadLocalRandom.current().nextInt(0, migrationCandidates.size());
   }
 
-  /**
-   * Select the index of one source log from the given pool of candidates, as the shuffle source.
-   * The default operation is random, the method is visible and overridable for testing purpose.
-   */
-  int sourceLogPlacementSelector(List<LogPlacement> migrationCandidates) {
+  private int sourceLogPlacementSelector(List<LogPlacement> migrationCandidates) {
     return ThreadLocalRandom.current().nextInt(0, migrationCandidates.size());
   }
 
-  /**
-   * Select the index of one movement operation from the given pool of candidates, as the shuffle
-   * operation we will execute. The default operation is random, the method is visible and
-   * overridable for testing purpose.
-   */
-  int migrationSelector(List<Movement> movementCandidates) {
+  private int migrationSelector(List<Movement> movementCandidates) {
     // There are two kinds of Movement, each operating on different kind of candidate.
     // * The Movement#replicaSetMovement selecting target by the broker ID
     // * The Movement#dataDirectoryMovement selecting target by the data dir on the specific broker
@@ -127,18 +114,16 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
                 .build();
 
           final var shuffleCount = numberOfShuffle.get();
-          final var currentAllocation = ClusterLogAllocation.ofMutable(baseAllocation.allocation());
+          final var newAllocation = LayeredClusterLogAllocation.of(baseAllocation);
           final var pickingList =
-              currentAllocation.allocation().keySet().stream()
-                  .collect(Collectors.toUnmodifiableList());
+              newAllocation.topicPartitionStream().collect(Collectors.toUnmodifiableList());
 
           rebalancePlanBuilder.addInfo(
               "Make " + shuffleCount + (shuffleCount > 0 ? " shuffles." : " shuffle."));
           for (int i = 0; i < shuffleCount; i++) {
             final var sourceTopicPartitionIndex = sourceTopicPartitionSelector(pickingList);
             final var sourceTopicPartition = pickingList.get(sourceTopicPartitionIndex);
-            final var sourceLogPlacements =
-                currentAllocation.allocation().get(sourceTopicPartition);
+            final var sourceLogPlacements = newAllocation.logPlacements(sourceTopicPartition);
             final var sourceLogPlacementIndex = sourceLogPlacementSelector(sourceLogPlacements);
             final var sourceLogPlacement = sourceLogPlacements.get(sourceLogPlacementIndex);
             final var sourceIsLeader = sourceLogPlacementIndex == 0;
@@ -146,8 +131,7 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
 
             Consumer<Integer> replicaSetMigration =
                 (targetBroker) -> {
-                  currentAllocation.migrateReplica(
-                      sourceTopicPartition, sourceBroker, targetBroker);
+                  newAllocation.migrateReplica(sourceTopicPartition, sourceBroker, targetBroker);
                   rebalancePlanBuilder.addInfo(
                       String.format(
                           "Change replica set of topic %s partition %d, from %d to %d.",
@@ -157,13 +141,9 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
                           targetBroker));
                 };
             Consumer<LogPlacement> leaderFollowerMigration =
-                (targetBroker) -> {
-                  if (sourceIsLeader)
-                    currentAllocation.letLeaderBecomeFollower(
-                        sourceTopicPartition, targetBroker.broker());
-                  else
-                    currentAllocation.letReplicaBecomeLeader(
-                        sourceTopicPartition, targetBroker.broker());
+                (newLeaderReplicaCandidate) -> {
+                  newAllocation.letReplicaBecomeLeader(
+                      sourceTopicPartition, newLeaderReplicaCandidate.broker());
                   rebalancePlanBuilder.addInfo(
                       String.format(
                           "Change the log identity of topic %s partition %d replica at broker %d, from %s to %s",
@@ -175,7 +155,7 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
                 };
             Consumer<String> dataDirectoryMigration =
                 (dataDirectory) -> {
-                  currentAllocation.changeDataDirectory(
+                  newAllocation.changeDataDirectory(
                       sourceTopicPartition, sourceBroker, dataDirectory);
                   rebalancePlanBuilder.addInfo(
                       String.format(
@@ -203,16 +183,15 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
                 sourceLogPlacements.stream()
                     .skip(1)
                     .map(
-                        targetBroker ->
-                            (Runnable) () -> leaderFollowerMigration.accept(targetBroker))
+                        followerReplica ->
+                            (Runnable) () -> leaderFollowerMigration.accept(followerReplica))
                     .map(Movement::replicaSetMovement)
                     .forEach(validMigrationCandidates::add);
               } else {
                 // follower can migrate its identity to leader.
-                final var leaderLogBroker = sourceLogPlacements.get(0);
                 validMigrationCandidates.add(
                     Movement.replicaSetMovement(
-                        () -> leaderFollowerMigration.accept(leaderLogBroker)));
+                        () -> leaderFollowerMigration.accept(sourceLogPlacement)));
               }
             }
             // [Valid movement 3] change the data directory of selected replica
@@ -227,9 +206,7 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
             validMigrationCandidates.get(selectedMigrationIndex).run();
           }
 
-          return rebalancePlanBuilder
-              .withRebalancePlan(ClusterLogAllocation.of(currentAllocation.allocation()))
-              .build();
+          return rebalancePlanBuilder.withRebalancePlan(newAllocation).build();
         });
   }
 
