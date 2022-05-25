@@ -3,10 +3,10 @@ package org.astraea.balancer.alpha.cost;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import org.astraea.admin.TopicPartition;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.HasPartitionCost;
 import org.astraea.cost.PartitionCost;
-import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.collector.Fetcher;
 import org.astraea.metrics.kafka.KafkaMetrics;
 

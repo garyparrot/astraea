@@ -21,6 +21,8 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.kafka.common.TopicPartitionReplica;
+import org.astraea.admin.Admin;
+import org.astraea.admin.TopicPartition;
 import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.BalancerUtils;
 import org.astraea.cost.BrokerCost;
@@ -28,13 +30,11 @@ import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.HasBrokerCost;
 import org.astraea.cost.NodeInfo;
 import org.astraea.cost.PartitionCost;
-import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
 import org.astraea.metrics.collector.BeanCollector;
 import org.astraea.metrics.collector.Fetcher;
 import org.astraea.metrics.kafka.HasValue;
 import org.astraea.metrics.kafka.KafkaMetrics;
-import org.astraea.topic.TopicAdmin;
 
 public class ReplicaDiskInCost implements HasBrokerCost {
   Map<Integer, Integer> brokerBandwidthCap;
@@ -72,7 +72,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
                             .mapToDouble(
                                 x ->
                                     topicPartitionDataRate.get(
-                                        TopicPartition.of(x.topic(), x.partition())))
+                                        new TopicPartition(x.topic(), x.partition())))
                             .sum()))
             .map(
                 entry ->
@@ -108,8 +108,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
                             bean ->
                                 TopicPartition.of(
                                     bean.beanObject().getProperties().get("topic"),
-                                    Integer.parseInt(
-                                        bean.beanObject().getProperties().get("partition")))))
+                                    bean.beanObject().getProperties().get("partition"))))
                     .entrySet()
                     .parallelStream()
                     .map(
@@ -176,7 +175,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
             .filter(x -> x.getKey().topic().equals(topic))
             .collect(
                 Collectors.groupingBy(
-                    x -> TopicPartition.of(x.getKey().topic(), x.getKey().partition())))
+                    x -> new TopicPartition(x.getKey().topic(), x.getKey().partition())))
             .entrySet()
             .stream()
             .map(
@@ -196,7 +195,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
             .filter(x -> x.getKey().brokerId() == brokerId)
             .collect(
                 Collectors.groupingBy(
-                    x -> TopicPartition.of(x.getKey().topic(), x.getKey().partition())))
+                    x -> new TopicPartition(x.getKey().topic(), x.getKey().partition())))
             .entrySet()
             .stream()
             .map(
@@ -283,7 +282,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
   public static void main(String[] args) throws InterruptedException, MalformedURLException {
     final var argument =
         org.astraea.argument.Argument.parse(new ReplicaDiskInCost.Argument(), args);
-    var admin = TopicAdmin.of(argument.bootstrapServers());
+    var admin = Admin.of(argument.bootstrapServers());
     var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
     var jmxAddress = Map.of(1001, 15629, 1002, 10585, 1003, 12485);
     // set broker bandwidth upper limit to 10 MB/s;

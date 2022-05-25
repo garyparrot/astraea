@@ -19,6 +19,8 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.kafka.common.TopicPartitionReplica;
+import org.astraea.admin.Admin;
+import org.astraea.admin.TopicPartition;
 import org.astraea.argument.Field;
 import org.astraea.balancer.alpha.BalancerUtils;
 import org.astraea.cost.BrokerCost;
@@ -26,13 +28,11 @@ import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.HasBrokerCost;
 import org.astraea.cost.HasPartitionCost;
 import org.astraea.cost.PartitionCost;
-import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
 import org.astraea.metrics.collector.BeanCollector;
 import org.astraea.metrics.collector.Fetcher;
 import org.astraea.metrics.kafka.HasValue;
 import org.astraea.metrics.kafka.KafkaMetrics;
-import org.astraea.topic.TopicAdmin;
 
 public class ReplicaSizeCost implements HasBrokerCost, HasPartitionCost {
   Map<Integer, Integer> totalBrokerCapacity;
@@ -97,7 +97,8 @@ public class ReplicaSizeCost implements HasBrokerCost, HasPartitionCost {
         return clusterInfo.partitions(topic).stream()
             .map(
                 partitionInfo ->
-                    TopicPartition.of(partitionInfo.topic(), partitionInfo.partition()))
+                    TopicPartition.of(
+                        partitionInfo.topic(), Integer.toString(partitionInfo.partition())))
             .map(
                 tp -> {
                   final var score =
@@ -126,7 +127,9 @@ public class ReplicaSizeCost implements HasBrokerCost, HasPartitionCost {
             .filter((tprScore) -> tprScore.getKey().brokerId() == brokerId)
             .collect(
                 Collectors.toMap(
-                    x -> TopicPartition.of(x.getKey().topic(), x.getKey().partition()),
+                    x ->
+                        TopicPartition.of(
+                            x.getKey().topic(), Integer.toString(x.getKey().partition())),
                     Map.Entry::getValue));
       }
     };
@@ -164,7 +167,7 @@ public class ReplicaSizeCost implements HasBrokerCost, HasPartitionCost {
     final var argument = org.astraea.argument.Argument.parse(new ReplicaSizeCost.Argument(), args);
     var host = "localhost";
     var brokerPort = 19670;
-    var admin = TopicAdmin.of(host + ":" + brokerPort);
+    var admin = Admin.of(host + ":" + brokerPort);
     var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
     var jmxAddress = Map.of(1001, 11790, 1002, 10818, 1003, 10929);
     ReplicaSizeCost costFunction = new ReplicaSizeCost(argument.totalBrokerCapacity);

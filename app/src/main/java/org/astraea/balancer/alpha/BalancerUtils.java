@@ -14,9 +14,11 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.astraea.Utils;
-import org.astraea.balancer.ClusterLogAllocation;
-import org.astraea.balancer.LogPlacement;
+import org.astraea.admin.Admin;
+import org.astraea.admin.TopicPartition;
 import org.astraea.balancer.RebalancePlanProposal;
+import org.astraea.balancer.log.ClusterLogAllocation;
+import org.astraea.balancer.log.LogPlacement;
 import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.HasBrokerCost;
@@ -24,9 +26,7 @@ import org.astraea.cost.HasPartitionCost;
 import org.astraea.cost.NodeInfo;
 import org.astraea.cost.PartitionCost;
 import org.astraea.cost.ReplicaInfo;
-import org.astraea.cost.TopicPartition;
 import org.astraea.metrics.HasBeanObject;
-import org.astraea.topic.TopicAdmin;
 
 public class BalancerUtils {
 
@@ -44,7 +44,7 @@ public class BalancerUtils {
       }
 
       @Override
-      public List<String> dataDirectories(int brokerId) {
+      public Set<String> dataDirectories(int brokerId) {
         return clusterInfo.dataDirectories(brokerId);
       }
 
@@ -77,11 +77,11 @@ public class BalancerUtils {
             .map(
                 allocation -> {
                   // TODO: Extend the ClusterLogAllocation structure to support log directory info
-                  return allocation.allocation().entrySet().stream()
+                  return allocation
+                      .topicPartitionStream()
                       .flatMap(
-                          (entry) -> {
-                            final var topicPartition = entry.getKey();
-                            final var logAllocation = entry.getValue();
+                          topicPartition -> {
+                            final var logAllocation = allocation.logPlacements(topicPartition);
 
                             return IntStream.range(0, logAllocation.size())
                                 .mapToObj(
@@ -151,19 +151,19 @@ public class BalancerUtils {
 
   public static void describeProposal(
       RebalancePlanProposal proposal, ClusterLogAllocation currentAllocation) {
-    if (proposal.isPlanGenerated()) {
+    if (proposal.rebalancePlan().isPresent()) {
       System.out.printf("[New Rebalance Plan Generated %s]%n", LocalDateTime.now());
 
       final var balanceAllocation = proposal.rebalancePlan().orElseThrow();
-      if (balanceAllocation.allocation().size() > 0) {
+      if (balanceAllocation.topicPartitionStream().findAny().isPresent()) {
         balanceAllocation
-            .allocation()
+            .topicPartitionStream()
             .forEach(
-                (topicPartition, logPlacements) -> {
+                (topicPartition) -> {
                   System.out.printf(" \"%s\":%n", topicPartition);
                   // TODO: add support to show difference in data directory
-                  final var originalState = currentAllocation.allocation().get(topicPartition);
-                  final var finalState = balanceAllocation.allocation().get(topicPartition);
+                  final var originalState = currentAllocation.logPlacements(topicPartition);
+                  final var finalState = balanceAllocation.logPlacements(topicPartition);
                   final var noChange =
                       originalState.stream()
                           .filter(
@@ -217,16 +217,16 @@ public class BalancerUtils {
   public static Map<TopicPartition, List<LogPlacement>> diffAllocation(
       ClusterLogAllocation proposal, ClusterLogAllocation currentAllocation) {
     final var balanceAllocation = proposal;
-    if (balanceAllocation.allocation().size() > 0) {
+    if (balanceAllocation.topicPartitionStream().findAny().isPresent()) {
       final var diff = new HashMap<TopicPartition, List<LogPlacement>>();
       balanceAllocation
-          .allocation()
+          .topicPartitionStream()
           .forEach(
-              (topicPartition, logPlacements) -> {
+              (topicPartition) -> {
                 System.out.printf(" \"%s\":%n", topicPartition);
                 // TODO: add support to show difference in data directory
-                final var originalState = currentAllocation.allocation().get(topicPartition);
-                final var finalState = balanceAllocation.allocation().get(topicPartition);
+                final var originalState = currentAllocation.logPlacements(topicPartition);
+                final var finalState = balanceAllocation.logPlacements(topicPartition);
 
                 final var toReplicate =
                     finalState.stream()
@@ -245,15 +245,14 @@ public class BalancerUtils {
     }
   }
 
-  public static ClusterInfo clusterSnapShot(TopicAdmin topicAdmin) {
+  public static ClusterInfo clusterSnapShot(Admin topicAdmin) {
     return clusterSnapShot(topicAdmin, Set.of());
   }
 
-  public static ClusterInfo clusterSnapShot(TopicAdmin topicAdmin, Set<String> topicToIgnore) {
+  public static ClusterInfo clusterSnapShot(Admin topicAdmin, Set<String> topicToIgnore) {
     final var nodeInfo =
-        Utils.handleException(() -> topicAdmin.adminClient().describeCluster().nodes().get())
-            .stream()
-            .map(NodeInfo::of)
+        topicAdmin.brokerIds().stream()
+            .map(id -> NodeInfo.of(id, "fix me", 66666))
             .collect(Collectors.toUnmodifiableList());
     final var nodeInfoMap =
         nodeInfo.stream().collect(Collectors.toUnmodifiableMap(NodeInfo::id, Function.identity()));
@@ -288,11 +287,11 @@ public class BalancerUtils {
     final var dataDirectories =
         topicAdmin
             .brokerFolders(
-                nodeInfo.stream().map(NodeInfo::id).collect(Collectors.toUnmodifiableList()))
+                nodeInfo.stream().map(NodeInfo::id).collect(Collectors.toUnmodifiableSet()))
             .entrySet()
             .stream()
             .collect(
-                Collectors.toUnmodifiableMap(Map.Entry::getKey, x -> List.copyOf(x.getValue())));
+                Collectors.toUnmodifiableMap(Map.Entry::getKey, x -> Set.copyOf(x.getValue())));
 
     return new ClusterInfo() {
       @Override
@@ -301,7 +300,7 @@ public class BalancerUtils {
       }
 
       @Override
-      public List<String> dataDirectories(int brokerId) {
+      public Set<String> dataDirectories(int brokerId) {
         return dataDirectories.get(brokerId);
       }
 
@@ -376,9 +375,10 @@ public class BalancerUtils {
     return (average != 0) ? (deviation / average) : 0;
   }
 
-  public static Set<String> privateTopics(TopicAdmin topicAdmin) {
+  public static Set<String> privateTopics(Admin topicAdmin) {
     final Set<String> topic = new HashSet<>(topicAdmin.topicNames());
-    topic.removeAll(topicAdmin.publicTopicNames());
-    return topic;
+    throw new UnsupportedOperationException("Implement this");
+    // topic.removeAll(topicAdmin.publicTopicNames());
+    // return topic;
   }
 }

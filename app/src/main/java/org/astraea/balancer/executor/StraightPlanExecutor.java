@@ -1,19 +1,20 @@
 package org.astraea.balancer.executor;
 
 import java.util.stream.Collectors;
-import org.astraea.balancer.ClusterLogAllocation;
-import org.astraea.balancer.LogPlacement;
+import org.astraea.admin.Admin;
+import org.astraea.admin.ReplicaSyncingMonitor;
 import org.astraea.balancer.RebalancePlanProposal;
 import org.astraea.balancer.alpha.BalancerUtils;
-import org.astraea.topic.ReplicaSyncingMonitor;
-import org.astraea.topic.TopicAdmin;
+import org.astraea.balancer.log.ClusterLogAllocation;
+import org.astraea.balancer.log.LayeredClusterLogAllocation;
+import org.astraea.balancer.log.LogPlacement;
 
 /** Execute every possible migration immediately. */
 public class StraightPlanExecutor implements RebalancePlanExecutor {
   private final String bootstrapServer;
-  private final TopicAdmin topicAdmin;
+  private final Admin topicAdmin;
 
-  public StraightPlanExecutor(String bootstrapServer, TopicAdmin topicAdmin) {
+  public StraightPlanExecutor(String bootstrapServer, Admin topicAdmin) {
     this.bootstrapServer = bootstrapServer;
     this.topicAdmin = topicAdmin;
   }
@@ -22,16 +23,18 @@ public class StraightPlanExecutor implements RebalancePlanExecutor {
   public void run(RebalancePlanProposal proposal) {
     if (proposal.rebalancePlan().isEmpty()) return;
     final ClusterLogAllocation clusterNow =
-        ClusterLogAllocation.of(BalancerUtils.clusterSnapShot(topicAdmin));
-    final ClusterLogAllocation clusterLogAllocation = proposal.rebalancePlan().get();
+        LayeredClusterLogAllocation.of(BalancerUtils.clusterSnapShot(topicAdmin));
+    final org.astraea.balancer.log.ClusterLogAllocation clusterLogAllocation =
+        proposal.rebalancePlan().get();
 
     clusterLogAllocation
-        .allocation()
+        .topicPartitionStream()
         .forEach(
-            (topicPartition, logPlacements) -> {
+            (topicPartition) -> {
               // TODO: Add support for data folder migration
+              final var logPlacements = clusterLogAllocation.logPlacements(topicPartition);
               final var a =
-                  clusterNow.allocation().get(topicPartition).stream()
+                  clusterNow.logPlacements(topicPartition).stream()
                       .map(LogPlacement::broker)
                       .collect(Collectors.toUnmodifiableList());
               final var b =

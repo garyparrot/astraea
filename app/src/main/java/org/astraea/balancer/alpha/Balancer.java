@@ -29,9 +29,9 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.management.remote.JMXServiceURL;
 import org.astraea.Utils;
+import org.astraea.admin.Admin;
 import org.astraea.argument.DurationField;
 import org.astraea.argument.Field;
-import org.astraea.balancer.ClusterLogAllocation;
 import org.astraea.balancer.RebalancePlanProposal;
 import org.astraea.balancer.alpha.cost.NumberOfLeaderCost;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
@@ -42,13 +42,14 @@ import org.astraea.balancer.executor.RebalancePlanExecutor;
 import org.astraea.balancer.executor.StraightPlanExecutor;
 import org.astraea.balancer.generator.RebalancePlanGenerator;
 import org.astraea.balancer.generator.ShufflePlanGenerator;
+import org.astraea.balancer.log.ClusterLogAllocation;
+import org.astraea.balancer.log.LayeredClusterLogAllocation;
 import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.CostFunction;
 import org.astraea.cost.HasBrokerCost;
 import org.astraea.cost.HasPartitionCost;
 import org.astraea.cost.PartitionCost;
-import org.astraea.topic.TopicAdmin;
 import org.astraea.utils.DataSize;
 import org.astraea.utils.DataUnit;
 
@@ -61,7 +62,7 @@ public class Balancer implements Runnable {
   private final Set<CostFunction> registeredCostFunction;
   private final ScheduledExecutorService scheduledExecutorService;
   private final RebalancePlanGenerator rebalancePlanGenerator;
-  private final TopicAdmin topicAdmin;
+  private final Admin topicAdmin;
   private final RebalancePlanExecutor rebalancePlanExecutor;
   private final Set<String> topicIgnoreList;
 
@@ -88,7 +89,7 @@ public class Balancer implements Runnable {
                 .collect(Collectors.toUnmodifiableList()),
             this.scheduledExecutorService,
             argument);
-    this.topicAdmin = TopicAdmin.of(argument.configs());
+    this.topicAdmin = Admin.of(argument.configs());
     this.rebalancePlanGenerator = new ShufflePlanGenerator(3, 8);
     this.rebalancePlanExecutor = new StraightPlanExecutor(argument.bootstrapServers(), topicAdmin);
 
@@ -125,7 +126,7 @@ public class Balancer implements Runnable {
     final var clusterInfo =
         ClusterInfo.of(
             clusterSnapShot(topicAdmin, topicIgnoreList), metricCollector.fetchMetrics());
-    final var currentAllocation = ClusterLogAllocation.of(clusterInfo);
+    final var currentAllocation = LayeredClusterLogAllocation.of(clusterInfo);
 
     // friendly info
     if (clusterInfo.topics().isEmpty()) {
@@ -214,7 +215,7 @@ public class Balancer implements Runnable {
       System.out.println("Current cost sum: " + currentCostSum);
       System.out.println("Proposed cost sum: " + proposedCostSum);
       BalancerUtils.describeProposal(
-          selectedProposal.proposal, ClusterLogAllocation.of(clusterInfo));
+          selectedProposal.proposal, LayeredClusterLogAllocation.of(clusterInfo));
       System.out.println("[Detail of the cost of current Proposal]");
       BalancerUtils.printBrokerCost(selectedProposal.brokerCosts);
       BalancerUtils.printPartitionCost(selectedProposal.partitionCosts, clusterInfo.nodes());

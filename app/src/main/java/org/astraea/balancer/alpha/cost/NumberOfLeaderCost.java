@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.astraea.admin.Admin;
 import org.astraea.balancer.alpha.BalancerUtils;
 import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
@@ -18,7 +19,6 @@ import org.astraea.metrics.collector.BeanCollector;
 import org.astraea.metrics.collector.Fetcher;
 import org.astraea.metrics.kafka.HasValue;
 import org.astraea.metrics.kafka.KafkaMetrics;
-import org.astraea.topic.TopicAdmin;
 
 public class NumberOfLeaderCost implements HasBrokerCost {
   @Override
@@ -59,7 +59,7 @@ public class NumberOfLeaderCost implements HasBrokerCost {
   public static void main(String[] args) throws InterruptedException, MalformedURLException {
     var host = "localhost";
     var brokerPort = 14179;
-    var admin = TopicAdmin.of(host + ":" + brokerPort);
+    var admin = Admin.of(host + ":" + brokerPort);
     var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
     var jmxAddress = Map.of(1001, 11040, 1002, 15006, 1003, 10059);
 
