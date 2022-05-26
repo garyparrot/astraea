@@ -222,7 +222,8 @@ public class Balancer implements Runnable {
 
       System.out.println("[Balance Execution Started]");
       if (rebalancePlanExecutor != null) {
-        rebalancePlanExecutor.run(selectedProposal.proposal);
+        // TODO: fix this
+        rebalancePlanExecutor.run(null);
         Utils.handleException(
             () -> {
               TimeUnit.SECONDS.sleep(60);

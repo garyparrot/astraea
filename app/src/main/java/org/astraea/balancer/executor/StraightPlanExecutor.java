@@ -20,38 +20,8 @@ public class StraightPlanExecutor implements RebalancePlanExecutor {
   }
 
   @Override
-  public void run(RebalancePlanProposal proposal) {
-    if (proposal.rebalancePlan().isEmpty()) return;
-    final ClusterLogAllocation clusterNow =
-        LayeredClusterLogAllocation.of(BalancerUtils.clusterSnapShot(topicAdmin));
-    final org.astraea.balancer.log.ClusterLogAllocation clusterLogAllocation =
-        proposal.rebalancePlan().get();
+  public RebalanceExecutionResult run(RebalanceExecutionContext context) {
 
-    clusterLogAllocation
-        .topicPartitionStream()
-        .forEach(
-            (topicPartition) -> {
-              // TODO: Add support for data folder migration
-              final var logPlacements = clusterLogAllocation.logPlacements(topicPartition);
-              final var a =
-                  clusterNow.logPlacements(topicPartition).stream()
-                      .map(LogPlacement::broker)
-                      .collect(Collectors.toUnmodifiableList());
-              final var b =
-                  logPlacements.stream()
-                      .map(LogPlacement::broker)
-                      .collect(Collectors.toUnmodifiableList());
-              if (a.equals(b)) return;
-              System.out.printf(
-                  "Move %s-%d to %s%n", topicPartition.topic(), topicPartition.partition(), b);
-              topicAdmin
-                  .migrator()
-                  .partition(topicPartition.topic(), topicPartition.partition())
-                  .moveTo(b);
-            });
-
-    // wait until everything is ok
-    System.out.println("Launch Replica Syncing Monitor");
-    ReplicaSyncingMonitor.main(new String[] {"--bootstrap.servers", bootstrapServer});
+    return RebalanceExecutionResult.done();
   }
 }
