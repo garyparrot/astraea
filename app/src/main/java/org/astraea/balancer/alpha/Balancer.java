@@ -91,7 +91,7 @@ public class Balancer implements Runnable {
             argument);
     this.topicAdmin = Admin.of(argument.configs());
     this.rebalancePlanGenerator = new ShufflePlanGenerator(3, 8);
-    this.rebalancePlanExecutor = new StraightPlanExecutor(argument.bootstrapServers(), topicAdmin);
+    this.rebalancePlanExecutor = new StraightPlanExecutor();
 
     this.topicIgnoreList = BalancerUtils.privateTopics(this.topicAdmin);
   }

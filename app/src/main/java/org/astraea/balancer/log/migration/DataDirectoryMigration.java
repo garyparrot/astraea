@@ -2,28 +2,31 @@ package org.astraea.balancer.log.migration;
 
 import org.astraea.admin.TopicPartition;
 
-public class DataDirectoryMigration implements LogMigration {
+/** Let specific replica log migrate to specific data directory on the same broker. */
+@Deprecated
+public class DataDirectoryMigration implements Migration {
 
-    private final TopicPartition topicPartition;
-    private final int sourceReplica;
-    private final String dataDirectory;
+  private final TopicPartition topicPartition;
+  private final int sourceReplica;
+  private final String dataDirectory;
 
-    public DataDirectoryMigration(TopicPartition topicPartition, int sourceReplica, String dataDirectory) {
-        this.topicPartition = topicPartition;
-        this.sourceReplica = sourceReplica;
-        this.dataDirectory = dataDirectory;
-    }
+  public DataDirectoryMigration(
+      TopicPartition topicPartition, int sourceReplica, String dataDirectory) {
+    this.topicPartition = topicPartition;
+    this.sourceReplica = sourceReplica;
+    this.dataDirectory = dataDirectory;
+  }
 
-    @Override
-    public TopicPartition topicPartition() {
-        return topicPartition;
-    }
+  @Override
+  public TopicPartition topicPartition() {
+    return topicPartition;
+  }
 
-    public int sourceReplica() {
-        return sourceReplica;
-    }
+  public int sourceReplica() {
+    return sourceReplica;
+  }
 
-    public String dataDirectory() {
-        return dataDirectory;
-    }
+  public String dataDirectory() {
+    return dataDirectory;
+  }
 }

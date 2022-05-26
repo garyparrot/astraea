@@ -1,29 +1,34 @@
 package org.astraea.balancer.log.migration;
 
+import java.util.List;
 import org.astraea.admin.TopicPartition;
-import org.astraea.utils.DataSize;
 
-public class MoveReplicaMigration implements LogMigration {
-    private final TopicPartition topicPartition;
-    private final int sourceReplica;
-    private final int destinationBroker;
+/** Let specific replica log leave the replica list and make another one join */
+@Deprecated
+public class MoveReplicaMigration implements Migration {
+  private final TopicPartition topicPartition;
 
-    public MoveReplicaMigration(TopicPartition topicPartition, int sourceReplica, int destinationBroker) {
-        this.topicPartition = topicPartition;
-        this.sourceReplica = sourceReplica;
-        this.destinationBroker = destinationBroker;
-    }
+  private final List<Integer> replicaToJoin;
 
-    @Override
-    public TopicPartition topicPartition() {
-        return topicPartition;
-    }
+  private final List<Integer> replicaToLeave;
 
-    public int sourceReplica() {
-        return sourceReplica;
-    }
+  public MoveReplicaMigration(
+      TopicPartition topicPartition, List<Integer> replicaToJoin, List<Integer> replicaToLeave) {
+    this.topicPartition = topicPartition;
+    this.replicaToJoin = replicaToJoin;
+    this.replicaToLeave = replicaToLeave;
+  }
 
-    public int destinationBroker() {
-        return destinationBroker;
-    }
+  @Override
+  public TopicPartition topicPartition() {
+    return topicPartition;
+  }
+
+  public List<Integer> replicaToJoin() {
+    return replicaToJoin;
+  }
+
+  public List<Integer> replicaToLeave() {
+    return replicaToLeave;
+  }
 }

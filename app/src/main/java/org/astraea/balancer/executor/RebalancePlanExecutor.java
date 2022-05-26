@@ -1,7 +1,5 @@
 package org.astraea.balancer.executor;
 
-import org.astraea.balancer.RebalancePlanProposal;
-
 /**
  * This class associate with the logic of fulfill given rebalance plan. This process can take a
  * period of time. Once the {@link RebalancePlanExecutor#run(RebalanceExecutionContext)} finished
@@ -10,5 +8,4 @@ import org.astraea.balancer.RebalancePlanProposal;
 public interface RebalancePlanExecutor {
 
   RebalanceExecutionResult run(RebalanceExecutionContext executionContext);
-
 }
