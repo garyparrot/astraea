@@ -95,6 +95,7 @@ public interface RebalanceAdmin {
                                         LogPlacement::broker,
                                         x -> x.logDirectory().orElseThrow()))))
             .start();
+        // TODO: do leader election
 
         // TODO: made this method return a watch to watch over the migration progress.
       }

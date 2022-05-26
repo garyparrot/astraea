@@ -14,9 +14,6 @@ public interface RebalanceExecutionContext {
   /** The expected log allocation after the rebalance execution */
   ClusterLogAllocation expectedAllocation();
 
-  /** Ensure the first available replica log in the replica list be the leader. */
-  boolean doLeadershipMigration();
-
   /** Retrieve specific configuration of Balancer */
   String balancerConfig(String configName);
 
