@@ -4,6 +4,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.astraea.admin.Admin;
@@ -18,13 +19,10 @@ import org.astraea.metrics.HasBeanObject;
  */
 public interface RebalanceAdmin {
 
-  // The initial reason I wrote this is just because IntelliJ is complaining about I didn't use the
-  // try-with-resource syntax on the Admin I am not supposed to close :p
-
   static RebalanceAdmin of(
-      Admin admin,
-      Supplier<Map<Integer, Collection<HasBeanObject>>> metricSource,
-      Set<String> topicToIgnore) {
+          Admin admin,
+          Supplier<Map<Integer, Collection<HasBeanObject>>> metricSource,
+          Predicate<String> topicFilter) {
     return new RebalanceAdmin() {
 
       private List<LogPlacement> fetchCurrentPlacement(TopicPartition topicPartition) {
@@ -102,7 +100,7 @@ public interface RebalanceAdmin {
 
       @Override
       public ClusterInfo clusterInfo() {
-        return ClusterInfo.of(ClusterInfo.of(admin, topicToIgnore), metricSource.get());
+        return ClusterInfo.of(ClusterInfo.of(admin, topicFilter), metricSource.get());
       }
 
       @Override

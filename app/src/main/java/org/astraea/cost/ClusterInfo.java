@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.astraea.Utils;
 import org.astraea.admin.Admin;
@@ -71,18 +72,17 @@ public interface ClusterInfo {
     };
   }
 
-  static ClusterInfo of(Admin admin, Set<String> topicToIgnore) {
-    // TODO: fix below
-    final var nodeInfo =
-        admin.brokerIds().stream()
-            .map(id -> NodeInfo.of(id, "fix me", 66666))
-            .collect(Collectors.toUnmodifiableList());
+  static ClusterInfo of(Admin admin) {
+    return of(admin, (ignore) -> true);
+  }
+
+  static ClusterInfo of(Admin admin, Predicate<String> topicPattern) {
+    final var nodeInfo = admin.nodes().stream().collect(Collectors.toUnmodifiableList());
     final var nodeInfoMap =
         nodeInfo.stream().collect(Collectors.toUnmodifiableMap(NodeInfo::id, Function.identity()));
     final var topics =
-        admin.topicNames().stream()
-            .filter(topic -> !topicToIgnore.contains(topic))
-            .collect(Collectors.toUnmodifiableSet());
+        admin.topicNames().stream().filter(topicPattern).collect(Collectors.toUnmodifiableSet());
+
     final var partitions =
         Utils.handleException(() -> admin.replicas(topics)).entrySet().stream()
             .flatMap(
@@ -99,7 +99,10 @@ public interface ClusterInfo {
                               ReplicaInfo.of(
                                   topicPartition.topic(),
                                   topicPartition.partition(),
-                                  nodeInfoMap.get(replica.broker()),
+                                  nodeInfo.stream()
+                                      .filter(x -> x.id() == replica.broker())
+                                      .findFirst()
+                                      .orElseThrow(),
                                   replica.leader(),
                                   replica.inSync(),
                                   // TODO: fix the isOfflineReplica flag once the #308 is merged
