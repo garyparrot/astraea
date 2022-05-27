@@ -11,11 +11,13 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import org.apache.kafka.common.config.TopicConfig;
-import org.astraea.Utils;
+import org.astraea.common.Utils;
 import org.astraea.consumer.Consumer;
 import org.astraea.consumer.Deserializer;
+import org.astraea.cost.NodeInfo;
 import org.astraea.producer.Producer;
 import org.astraea.producer.Serializer;
 import org.astraea.service.RequireBrokerCluster;
@@ -519,6 +521,48 @@ public class AdminTest extends RequireBrokerCluster {
       admin.quotaCreator().clientId("my-id").produceRate(999).create();
       TimeUnit.SECONDS.sleep(2);
       Assertions.assertEquals(2, admin.quotas(Quota.Target.CLIENT_ID, "my-id").size());
+    }
+  }
+
+  @Test
+  void testNodes() {
+    try (var admin = Admin.of(bootstrapServers())) {
+      final Set<NodeInfo> nodes = admin.nodes();
+      Assertions.assertEquals(
+          brokerIds(), nodes.stream().map(NodeInfo::id).collect(Collectors.toUnmodifiableSet()));
+    }
+  }
+
+  @Test
+  void testClusterInfo() throws InterruptedException {
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      String topic0 = "testClusterInfoFromAdmin_" + Utils.randomString(8);
+      String topic1 = "testClusterInfoFromAdmin_" + Utils.randomString(8);
+      String topic2 = "testClusterInfoFromAdmin_" + Utils.randomString(8);
+      int partitionCount = 10;
+      short replicaCount = 2;
+
+      Stream.of(topic0, topic1, topic2)
+          .forEach(
+              topicName ->
+                  admin
+                      .creator()
+                      .topic(topicName)
+                      .numberOfPartitions(partitionCount)
+                      .numberOfReplicas(replicaCount)
+                      .create());
+      TimeUnit.SECONDS.sleep(2);
+
+      final var clusterInfo = admin.clusterInfo(Set.of(topic0, topic1, topic2));
+
+      Assertions.assertEquals(brokerIds().size(), clusterInfo.nodes().size());
+      Assertions.assertEquals(Set.of(topic0, topic1, topic2), clusterInfo.topics());
+      Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.replicas(topic0).size());
+      Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.replicas(topic1).size());
+      Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.replicas(topic2).size());
+      brokerIds()
+          .forEach(
+              id -> Assertions.assertEquals(logFolders().get(id), clusterInfo.dataDirectories(id)));
     }
   }
 }

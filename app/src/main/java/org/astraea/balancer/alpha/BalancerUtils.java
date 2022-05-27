@@ -250,7 +250,10 @@ public class BalancerUtils {
 
   @Deprecated
   public static ClusterInfo clusterSnapShot(Admin admin, Set<String> topicToIgnore) {
-    return ClusterInfo.of(admin, (name) -> !topicToIgnore.contains(name));
+    return admin.clusterInfo(
+        admin.topicNames().stream()
+            .filter(name -> !topicToIgnore.contains(name))
+            .collect(Collectors.toUnmodifiableSet()));
   }
 
   public static Runnable generationWatcher(int totalIteration, AtomicInteger finishedIteration) {

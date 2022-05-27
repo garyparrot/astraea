@@ -28,7 +28,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.management.remote.JMXServiceURL;
-import org.astraea.Utils;
 import org.astraea.admin.Admin;
 import org.astraea.argument.DurationField;
 import org.astraea.argument.Field;
@@ -44,14 +43,15 @@ import org.astraea.balancer.generator.RebalancePlanGenerator;
 import org.astraea.balancer.generator.ShufflePlanGenerator;
 import org.astraea.balancer.log.ClusterLogAllocation;
 import org.astraea.balancer.log.LayeredClusterLogAllocation;
+import org.astraea.common.DataSize;
+import org.astraea.common.DataUnit;
+import org.astraea.common.Utils;
 import org.astraea.cost.BrokerCost;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.CostFunction;
 import org.astraea.cost.HasBrokerCost;
 import org.astraea.cost.HasPartitionCost;
 import org.astraea.cost.PartitionCost;
-import org.astraea.utils.DataSize;
-import org.astraea.utils.DataUnit;
 
 public class Balancer implements Runnable {
 
@@ -224,7 +224,7 @@ public class Balancer implements Runnable {
       if (rebalancePlanExecutor != null) {
         // TODO: fix this
         rebalancePlanExecutor.run(null);
-        Utils.handleException(
+        Utils.packException(
             () -> {
               TimeUnit.SECONDS.sleep(60);
               return 0;

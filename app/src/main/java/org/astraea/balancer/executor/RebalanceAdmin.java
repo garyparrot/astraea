@@ -100,7 +100,10 @@ public interface RebalanceAdmin {
 
       @Override
       public ClusterInfo clusterInfo() {
-        return ClusterInfo.of(ClusterInfo.of(admin, topicFilter), metricSource.get());
+        return admin.clusterInfo(
+            admin.topicNames().stream()
+                .filter(topicFilter)
+                .collect(Collectors.toUnmodifiableSet()));
       }
 
       @Override
