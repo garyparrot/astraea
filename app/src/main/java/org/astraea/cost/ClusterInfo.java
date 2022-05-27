@@ -128,14 +128,14 @@ public interface ClusterInfo {
       }
 
       @Override
-      public List<ReplicaInfo> availablePartitionLeaders(String topic) {
+      public List<ReplicaInfo> availableReplicaLeaders(String topic) {
         return partitions.get(topic).stream()
             .filter(ReplicaInfo::isLeader)
             .collect(Collectors.toUnmodifiableList());
       }
 
       @Override
-      public List<ReplicaInfo> availablePartitions(String topic) {
+      public List<ReplicaInfo> availableReplicas(String topic) {
         return partitions.get(topic).stream()
             .filter((ReplicaInfo x) -> !x.isOfflineReplica())
             .collect(Collectors.toUnmodifiableList());
@@ -147,7 +147,7 @@ public interface ClusterInfo {
       }
 
       @Override
-      public List<ReplicaInfo> partitions(String topic) {
+      public List<ReplicaInfo> replicas(String topic) {
         return partitions.get(topic);
       }
 

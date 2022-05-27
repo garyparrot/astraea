@@ -19,7 +19,7 @@ public class TopicPartitionDistributionCost implements HasBrokerCost {
   public BrokerCost brokerCost(ClusterInfo clusterInfo) {
     final Map<String, Integer> partitionCount =
         clusterInfo.topics().stream()
-            .collect(Collectors.toUnmodifiableMap(x -> x, x -> clusterInfo.partitions(x).size()));
+            .collect(Collectors.toUnmodifiableMap(x -> x, x -> clusterInfo.replicas(x).size()));
 
     final Map<Integer, Map<String, Long>> topicPartitionCountOnEachBroker =
         clusterInfo.nodes().stream()
@@ -29,7 +29,7 @@ public class TopicPartitionDistributionCost implements HasBrokerCost {
 
                   final Map<String, Long> partitionOnThisNode =
                       clusterInfo.topics().stream()
-                          .map(topic -> Map.entry(topic, clusterInfo.partitions(topic)))
+                          .map(topic -> Map.entry(topic, clusterInfo.replicas(topic)))
                           .collect(
                               Collectors.toUnmodifiableMap(
                                   Map.Entry::getKey,

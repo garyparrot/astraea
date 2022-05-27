@@ -47,15 +47,15 @@ public class BalancerUtils {
       }
 
       @Override
-      public List<ReplicaInfo> availablePartitionLeaders(String topic) {
-        return partitions(topic).stream()
+      public List<ReplicaInfo> availableReplicaLeaders(String topic) {
+        return replicas(topic).stream()
             .filter(ReplicaInfo::isLeader)
             .collect(Collectors.toUnmodifiableList());
       }
 
       @Override
-      public List<ReplicaInfo> availablePartitions(String topic) {
-        return partitions(topic).stream()
+      public List<ReplicaInfo> availableReplicas(String topic) {
+        return replicas(topic).stream()
             .filter(x -> !x.isOfflineReplica())
             .collect(Collectors.toUnmodifiableList());
       }
@@ -66,7 +66,7 @@ public class BalancerUtils {
       }
 
       @Override
-      public List<ReplicaInfo> partitions(String topic) {
+      public List<ReplicaInfo> replicas(String topic) {
         final var nodes =
             nodes().stream().collect(Collectors.toUnmodifiableMap(NodeInfo::id, x -> x));
 

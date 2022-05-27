@@ -47,7 +47,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
   public BrokerCost brokerCost(ClusterInfo clusterInfo) {
     final Map<Integer, List<TopicPartitionReplica>> topicPartitionOfEachBroker =
         clusterInfo.topics().stream()
-            .flatMap(topic -> clusterInfo.partitions(topic).stream())
+            .flatMap(topic -> clusterInfo.replicas(topic).stream())
             .map(
                 replicaInfo ->
                     new TopicPartitionReplica(
@@ -228,7 +228,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
                     .forEach(
                         topic ->
                             clusterInfo
-                                .partitions(topic)
+                                .replicas(topic)
                                 .forEach(
                                     partitionInfo ->
                                         tpBeanObjects.put(

@@ -74,9 +74,9 @@ public class ClusterInfoTest extends RequireBrokerCluster {
       Assertions.assertTrue(topicPattern.matcher(topic2).matches());
       Assertions.assertEquals(brokerIds().size(), clusterInfo.nodes().size());
       Assertions.assertEquals(Set.of(topic0, topic1, topic2), clusterInfo.topics());
-      Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.partitions(topic0).size());
-      Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.partitions(topic1).size());
-      Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.partitions(topic2).size());
+      Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.replicas(topic0).size());
+      Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.replicas(topic1).size());
+      Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.replicas(topic2).size());
       brokerIds()
           .forEach(
               id -> Assertions.assertEquals(logFolders().get(id), clusterInfo.dataDirectories(id)));

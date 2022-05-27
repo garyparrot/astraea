@@ -94,7 +94,7 @@ public class ReplicaSizeCost implements HasBrokerCost, HasPartitionCost {
 
       @Override
       public Map<TopicPartition, Double> value(String topic) {
-        return clusterInfo.partitions(topic).stream()
+        return clusterInfo.replicas(topic).stream()
             .map(
                 partitionInfo ->
                     TopicPartition.of(
