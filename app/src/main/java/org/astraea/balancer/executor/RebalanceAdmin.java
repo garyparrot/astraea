@@ -20,9 +20,9 @@ import org.astraea.metrics.HasBeanObject;
 public interface RebalanceAdmin {
 
   static RebalanceAdmin of(
-          Admin admin,
-          Supplier<Map<Integer, Collection<HasBeanObject>>> metricSource,
-          Predicate<String> topicFilter) {
+      Admin admin,
+      Supplier<Map<Integer, Collection<HasBeanObject>>> metricSource,
+      Predicate<String> topicFilter) {
     return new RebalanceAdmin() {
 
       private List<LogPlacement> fetchCurrentPlacement(TopicPartition topicPartition) {

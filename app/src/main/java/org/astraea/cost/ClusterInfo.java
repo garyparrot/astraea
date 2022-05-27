@@ -8,7 +8,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.astraea.Utils;
@@ -78,8 +77,6 @@ public interface ClusterInfo {
 
   static ClusterInfo of(Admin admin, Predicate<String> topicPattern) {
     final var nodeInfo = admin.nodes().stream().collect(Collectors.toUnmodifiableList());
-    final var nodeInfoMap =
-        nodeInfo.stream().collect(Collectors.toUnmodifiableMap(NodeInfo::id, Function.identity()));
     final var topics =
         admin.topicNames().stream().filter(topicPattern).collect(Collectors.toUnmodifiableSet());
 

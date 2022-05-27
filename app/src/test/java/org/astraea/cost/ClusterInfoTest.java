@@ -8,8 +8,6 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
-
-import net.bytebuddy.build.ToStringPlugin;
 import org.apache.kafka.common.Cluster;
 import org.astraea.admin.Admin;
 import org.astraea.metrics.HasBeanObject;
@@ -49,7 +47,8 @@ public class ClusterInfoTest extends RequireBrokerCluster {
   @Test
   void testClusterInfoFromAdmin() {
     try (Admin admin = Admin.of(bootstrapServers())) {
-      Supplier<Integer> randomNumber = () -> ThreadLocalRandom.current().nextInt(0, Integer.MAX_VALUE);
+      Supplier<Integer> randomNumber =
+          () -> ThreadLocalRandom.current().nextInt(0, Integer.MAX_VALUE);
       String topic0 = "testClusterInfoFromAdmin_" + randomNumber.get();
       String topic1 = "testClusterInfoFromAdmin_" + randomNumber.get();
       String topic2 = "testClusterInfoFromAdmin_" + randomNumber.get();
@@ -58,11 +57,14 @@ public class ClusterInfoTest extends RequireBrokerCluster {
       short replicaCount = 2;
 
       Stream.of(topic0, topic1, topic2, excludedTopic)
-              .forEach(topicName -> admin.creator()
-                              .topic(topicName)
-                              .numberOfPartitions(partitionCount)
-                              .numberOfReplicas(replicaCount)
-                              .create());
+          .forEach(
+              topicName ->
+                  admin
+                      .creator()
+                      .topic(topicName)
+                      .numberOfPartitions(partitionCount)
+                      .numberOfReplicas(replicaCount)
+                      .create());
 
       final var topicPattern = Pattern.compile("^testClusterInfoFromAdmin_\\d{0,13}$");
       final var clusterInfo = ClusterInfo.of(admin, topicPattern.asMatchPredicate());
@@ -75,8 +77,9 @@ public class ClusterInfoTest extends RequireBrokerCluster {
       Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.partitions(topic0).size());
       Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.partitions(topic1).size());
       Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.partitions(topic2).size());
-      brokerIds().forEach(id ->
-              Assertions.assertEquals(logFolders().get(id), clusterInfo.dataDirectories(id)));
+      brokerIds()
+          .forEach(
+              id -> Assertions.assertEquals(logFolders().get(id), clusterInfo.dataDirectories(id)));
     }
   }
 
