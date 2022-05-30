@@ -1,10 +1,10 @@
 package org.astraea.balancer.executor;
 
-import java.util.stream.Collectors;
-import org.astraea.admin.ReplicaSyncingMonitor;
-import org.astraea.admin.TopicPartition;
 import org.astraea.balancer.log.ClusterLogAllocation;
 import org.astraea.balancer.log.LayeredClusterLogAllocation;
+import org.astraea.common.Utils;
+
+import java.util.concurrent.TimeUnit;
 
 /** Execute every possible migration immediately. */
 public class StraightPlanExecutor implements RebalancePlanExecutor {
@@ -13,36 +13,35 @@ public class StraightPlanExecutor implements RebalancePlanExecutor {
 
   @Override
   public RebalanceExecutionResult run(RebalanceExecutionContext context) {
+    final var clusterInfo = context.rebalanceAdmin().clusterInfo();
+    final var currentLogAllocation = LayeredClusterLogAllocation.of(clusterInfo);
+    final var nonFulfilledTopicPartitions =
+        ClusterLogAllocation.findNonFulfilledAllocation(
+            context.expectedAllocation(), currentLogAllocation);
 
-    do {
-      final var clusterInfo = context.rebalanceAdmin().clusterInfo();
-      final var currentLogAllocation = LayeredClusterLogAllocation.of(clusterInfo);
-      final var nonFulfilledTopicPartitions =
-          ClusterLogAllocation.findNonFulfilledAllocation(
-              context.expectedAllocation(), currentLogAllocation);
+    if (!nonFulfilledTopicPartitions.isEmpty()) {
+        nonFulfilledTopicPartitions.forEach(
+                topicPartition -> {
+                    final var expectedPlacements = context.expectedAllocation().logPlacements(topicPartition);
+                    context.rebalanceAdmin().alterReplicaPlacements(topicPartition, expectedPlacements);
+                });
 
-      // no more work to do
-      if (nonFulfilledTopicPartitions.isEmpty()) break;
+        boolean workDone;
+        do {
+            workDone = context.rebalanceAdmin()
+                    .syncingProgress(nonFulfilledTopicPartitions)
+                    .entrySet()
+                    .stream()
+                    .flatMap(list -> list.getValue().stream())
+                    .allMatch(SyncingProgress::synced);
 
-      nonFulfilledTopicPartitions.forEach(
-          topicPartition -> {
-            final var expectedPlacements =
-                context.expectedAllocation().logPlacements(topicPartition);
-            context.rebalanceAdmin().alterReplicaPlacements(topicPartition, expectedPlacements);
-          });
-
-      // TODO: replace the replica syncing monitor usage after the RebalanceAdmin support migration
-      // watch
-      ReplicaSyncingMonitor.main(
-          new String[] {
-            "--topics",
-            nonFulfilledTopicPartitions.stream()
-                .map(TopicPartition::topic)
-                .distinct()
-                .collect(Collectors.joining(","))
-          });
-
-    } while (true);
+            try {
+                TimeUnit.SECONDS.sleep(1);
+            } catch (InterruptedException e) {
+                return RebalanceExecutionResult.failed(e);
+            }
+        } while(!workDone);
+    }
 
     return RebalanceExecutionResult.done();
   }

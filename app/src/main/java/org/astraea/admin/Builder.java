@@ -31,7 +31,6 @@ import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaEntity;
 import org.apache.kafka.common.quota.ClientQuotaFilter;
 import org.apache.kafka.common.quota.ClientQuotaFilterComponent;
-import org.astraea.balancer.executor.MigrationMonitor;
 import org.astraea.common.Utils;
 import org.astraea.cost.ClusterInfo;
 import org.astraea.cost.NodeInfo;

@@ -8,6 +8,7 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.astraea.admin.Admin;
+import org.astraea.admin.Replica;
 import org.astraea.admin.TopicPartition;
 import org.astraea.balancer.log.LogPlacement;
 import org.astraea.cost.ClusterInfo;
@@ -113,6 +114,42 @@ public interface RebalanceAdmin {
       }
 
       @Override
+      public Map<TopicPartition, List<SyncingProgress>> syncingProgress(
+          Set<TopicPartition> topicPartitions) {
+        final var topics =
+            topicPartitions.stream()
+                .map(TopicPartition::topic)
+                .collect(Collectors.toUnmodifiableSet());
+        final var targetReplicas =
+            admin.replicas(topics).entrySet().stream()
+                .filter(entry -> topicPartitions.contains(entry.getKey()))
+                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+        final var leaderReplica =
+            targetReplicas.entrySet().stream()
+                .collect(
+                    Collectors.toUnmodifiableMap(
+                        Map.Entry::getKey,
+                        entry -> entry.getValue().stream().filter(Replica::leader).findFirst()));
+
+        return targetReplicas.entrySet().stream()
+            .map(
+                entry -> {
+                  final var topicPartition = entry.getKey();
+                  final var migrationProgresses =
+                      entry.getValue().stream()
+                          .map(
+                              replica ->
+                                  SyncingProgress.of(
+                                      topicPartition,
+                                      leaderReplica.get(topicPartition).orElseThrow(),
+                                      replica))
+                          .collect(Collectors.toUnmodifiableList());
+                  return Map.entry(topicPartition, migrationProgresses);
+                })
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+      }
+
+      @Override
       public ClusterInfo clusterInfo() {
         return admin.clusterInfo(
             admin.topicNames().stream()
@@ -137,6 +174,9 @@ public interface RebalanceAdmin {
    */
   void alterReplicaPlacements(TopicPartition topicPartition, List<LogPlacement> expectedPlacement);
   // TODO: made this above method return a watch to watch over the migration progress.
+
+  /** Access the syncing progress of the specific topic/partitions */
+  Map<TopicPartition, List<SyncingProgress>> syncingProgress(Set<TopicPartition> topicPartitions);
 
   ClusterInfo clusterInfo();
 
