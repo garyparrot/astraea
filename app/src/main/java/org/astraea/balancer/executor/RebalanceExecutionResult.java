@@ -1,24 +1,32 @@
 package org.astraea.balancer.executor;
 
+import java.util.Optional;
+
 public interface RebalanceExecutionResult {
 
   boolean isDone();
 
-  static RebalanceExecutionResult done() {
+  Optional<Throwable> exception();
+
+  static RebalanceExecutionResult create(boolean isDone, Throwable exception) {
     return new RebalanceExecutionResult() {
       @Override
       public boolean isDone() {
-        return true;
+        return isDone;
+      }
+
+      @Override
+      public Optional<Throwable> exception() {
+        return Optional.ofNullable(exception);
       }
     };
   }
 
-  static RebalanceExecutionResult failed() {
-    return new RebalanceExecutionResult() {
-      @Override
-      public boolean isDone() {
-        return false;
-      }
-    };
+  static RebalanceExecutionResult done() {
+    return create(true, null);
+  }
+
+  static RebalanceExecutionResult failed(Throwable exception) {
+    return create(false, exception);
   }
 }

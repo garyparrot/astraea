@@ -25,7 +25,14 @@ public interface RebalanceAdmin {
       Predicate<String> topicFilter) {
     return new RebalanceAdmin() {
 
+      private void ensureTopicPermitted(TopicPartition topicPartition) {
+        if (!topicFilter.test(topicPartition.topic()))
+          throw new IllegalArgumentException(
+              "Operation to topic/partition " + topicPartition + "is not permitted");
+      }
+
       private List<LogPlacement> fetchCurrentPlacement(TopicPartition topicPartition) {
+        ensureTopicPermitted(topicPartition);
         // TODO: we only need the info related to the topic/partition, but current Admin
         // implementation force us to fetch everything
         return admin.replicas(Set.of(topicPartition.topic())).get(topicPartition).stream()
@@ -33,10 +40,27 @@ public interface RebalanceAdmin {
             .collect(Collectors.toUnmodifiableList());
       }
 
-      private void declarePreferredLogDirectory(
-          TopicPartition topicPartition,
-          List<LogPlacement> currentPlacement,
-          List<LogPlacement> preferredPlacement) {
+      /**
+       * Declare the preferred data directory at certain brokers.
+       *
+       * <p>By default, upon a new log creation with JBOD enabled broker. Kafka broker will pick up
+       * a data directory that has the fewest log maintained to be the data directory for the new
+       * log. This method declares the preferred data directory for a specific topic/partition on
+       * the certain broker. Upon the new log creation for the specific topic/partition on the
+       * certain broker. The preferred data directory will be used as the data directory for the new
+       * log, which replaces the default approach. This gives you the control to decide which data
+       * directory the replica log you are about to migrate will be.
+       *
+       * @param topicPartition the topic/partition to declare preferred data directory
+       * @param preferredPlacements the replica placements with their desired data directory at
+       *     certain brokers
+       */
+      private void declarePreferredDataDirectories(
+          TopicPartition topicPartition, List<LogPlacement> preferredPlacements) {
+        ensureTopicPermitted(topicPartition);
+
+        final var currentPlacement = fetchCurrentPlacement(topicPartition);
+
         final var currentBrokerAllocation =
             currentPlacement.stream()
                 .map(LogPlacement::broker)
@@ -45,7 +69,7 @@ public interface RebalanceAdmin {
         // TODO: this operation is not supposed to trigger a log movement. But there might be a
         // small window of time to actually trigger it (race condition).
         final var declareMap =
-            preferredPlacement.stream()
+            preferredPlacements.stream()
                 .filter(
                     futurePlacement -> !currentBrokerAllocation.contains(futurePlacement.broker()))
                 .filter(futurePlacement -> futurePlacement.logDirectory().isPresent())
@@ -62,10 +86,10 @@ public interface RebalanceAdmin {
       @Override
       public void alterReplicaPlacements(
           TopicPartition topicPartition, List<LogPlacement> expectedPlacement) {
-        final var currentLogAllocation = fetchCurrentPlacement(topicPartition);
+        ensureTopicPermitted(topicPartition);
 
         // ensure replica will be placed in the correct data directory at destination broker.
-        declarePreferredLogDirectory(topicPartition, currentLogAllocation, expectedPlacement);
+        declarePreferredDataDirectories(topicPartition, expectedPlacement);
 
         // TODO: are we supposed to declare these operations in async way?
         // do cross broker migration
@@ -94,8 +118,6 @@ public interface RebalanceAdmin {
                                         x -> x.logDirectory().orElseThrow()))))
             .start();
         // TODO: do leader election
-
-        // TODO: made this method return a watch to watch over the migration progress.
       }
 
       @Override
@@ -122,8 +144,13 @@ public interface RebalanceAdmin {
    * @param expectedPlacement the expected placement after this request accomplished
    */
   void alterReplicaPlacements(TopicPartition topicPartition, List<LogPlacement> expectedPlacement);
+  // TODO: made this above method return a watch to watch over the migration progress.
 
   ClusterInfo clusterInfo();
 
   ClusterInfo refreshMetrics(ClusterInfo oldClusterInfo);
+
+  // TODO: add method to apply reassignment bandwidth throttle.
+  // TODO: add method to fetch topic configuration
+  // TODO: add method to fetch broker configuration
 }
