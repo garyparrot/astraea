@@ -8,12 +8,8 @@ public interface RebalanceExecutionContext {
   /** The migration interface */
   RebalanceAdmin rebalanceAdmin();
 
-  /** The original log allocation used to generate the rebalance plan */
-  ClusterLogAllocation initialAllocation();
-
   /** The expected log allocation after the rebalance execution */
   ClusterLogAllocation expectedAllocation();
 
-  /** Retrieve specific configuration of Balancer */
-  String balancerConfig(String configName);
+  // TODO: add a method to fetch balancer related configuration
 }

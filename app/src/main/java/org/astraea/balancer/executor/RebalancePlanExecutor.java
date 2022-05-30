@@ -3,14 +3,10 @@ package org.astraea.balancer.executor;
 import java.util.List;
 import org.astraea.metrics.collector.Fetcher;
 
-/**
- * This class associate with the logic of fulfill given rebalance plan.
- */
+/** This class associate with the logic of fulfill given rebalance plan. */
 public interface RebalancePlanExecutor {
 
-  /**
-   * This method responsible for fulfill a rebalance plan.
-   */
+  /** This method responsible for fulfill a rebalance plan. */
   RebalanceExecutionResult run(RebalanceExecutionContext executionContext);
 
   /**

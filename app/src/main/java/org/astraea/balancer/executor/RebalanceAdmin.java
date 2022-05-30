@@ -91,32 +91,24 @@ public interface RebalanceAdmin {
         // ensure replica will be placed in the correct data directory at destination broker.
         declarePreferredDataDirectories(topicPartition, expectedPlacement);
 
-        // TODO: are we supposed to declare these operations in async way?
         // do cross broker migration
-        new Thread(
-                () ->
-                    admin
-                        .migrator()
-                        .partition(topicPartition.topic(), topicPartition.partition())
-                        .moveTo(
-                            expectedPlacement.stream()
-                                .map(LogPlacement::broker)
-                                .collect(Collectors.toUnmodifiableList())))
-            .start();
+        admin
+            .migrator()
+            .partition(topicPartition.topic(), topicPartition.partition())
+            .moveTo(
+                expectedPlacement.stream()
+                    .map(LogPlacement::broker)
+                    .collect(Collectors.toUnmodifiableList()));
         // do inter-data-directories migration
-        new Thread(
-                () ->
-                    admin
-                        .migrator()
-                        .partition(topicPartition.topic(), topicPartition.partition())
-                        .moveTo(
-                            expectedPlacement.stream()
-                                .filter(placement -> placement.logDirectory().isPresent())
-                                .collect(
-                                    Collectors.toUnmodifiableMap(
-                                        LogPlacement::broker,
-                                        x -> x.logDirectory().orElseThrow()))))
-            .start();
+        admin
+            .migrator()
+            .partition(topicPartition.topic(), topicPartition.partition())
+            .moveTo(
+                expectedPlacement.stream()
+                    .filter(placement -> placement.logDirectory().isPresent())
+                    .collect(
+                        Collectors.toUnmodifiableMap(
+                            LogPlacement::broker, x -> x.logDirectory().orElseThrow())));
         // TODO: do leader election
       }
 
