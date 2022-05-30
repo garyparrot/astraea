@@ -1,10 +1,8 @@
 package org.astraea.balancer.executor;
 
+import java.util.concurrent.TimeUnit;
 import org.astraea.balancer.log.ClusterLogAllocation;
 import org.astraea.balancer.log.LayeredClusterLogAllocation;
-import org.astraea.common.Utils;
-
-import java.util.concurrent.TimeUnit;
 
 /** Execute every possible migration immediately. */
 public class StraightPlanExecutor implements RebalancePlanExecutor {
@@ -20,27 +18,30 @@ public class StraightPlanExecutor implements RebalancePlanExecutor {
             context.expectedAllocation(), currentLogAllocation);
 
     if (!nonFulfilledTopicPartitions.isEmpty()) {
-        nonFulfilledTopicPartitions.forEach(
-                topicPartition -> {
-                    final var expectedPlacements = context.expectedAllocation().logPlacements(topicPartition);
-                    context.rebalanceAdmin().alterReplicaPlacements(topicPartition, expectedPlacements);
-                });
+      nonFulfilledTopicPartitions.forEach(
+          topicPartition -> {
+            final var expectedPlacements =
+                context.expectedAllocation().logPlacements(topicPartition);
+            context.rebalanceAdmin().alterReplicaPlacements(topicPartition, expectedPlacements);
+          });
 
-        boolean workDone;
-        do {
-            workDone = context.rebalanceAdmin()
-                    .syncingProgress(nonFulfilledTopicPartitions)
-                    .entrySet()
-                    .stream()
-                    .flatMap(list -> list.getValue().stream())
-                    .allMatch(SyncingProgress::synced);
+      boolean workDone;
+      do {
+        workDone =
+            context
+                .rebalanceAdmin()
+                .syncingProgress(nonFulfilledTopicPartitions)
+                .entrySet()
+                .stream()
+                .flatMap(list -> list.getValue().stream())
+                .allMatch(SyncingProgress::synced);
 
-            try {
-                TimeUnit.SECONDS.sleep(1);
-            } catch (InterruptedException e) {
-                return RebalanceExecutionResult.failed(e);
-            }
-        } while(!workDone);
+        try {
+          TimeUnit.SECONDS.sleep(1);
+        } catch (InterruptedException e) {
+          return RebalanceExecutionResult.failed(e);
+        }
+      } while (!workDone);
     }
 
     return RebalanceExecutionResult.done();
