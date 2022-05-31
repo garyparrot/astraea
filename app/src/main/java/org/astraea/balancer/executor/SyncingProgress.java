@@ -2,8 +2,6 @@ package org.astraea.balancer.executor;
 
 import org.astraea.admin.Replica;
 import org.astraea.admin.TopicPartition;
-import org.astraea.common.DataSize;
-import org.astraea.common.DataUnit;
 
 /** Monitoring the migration progress of specific replica log */
 public interface SyncingProgress {
@@ -36,13 +34,13 @@ public interface SyncingProgress {
       }
 
       @Override
-      public DataSize logSize() {
-        return DataUnit.Byte.of(replica.size());
+      public long logSize() {
+        return replica.size();
       }
 
       @Override
-      public DataSize leaderLogSize() {
-        return DataUnit.Byte.of(leaderReplica.size());
+      public long leaderLogSize() {
+        return leaderReplica.size();
       }
     };
   }
@@ -60,8 +58,8 @@ public interface SyncingProgress {
   double percentage();
 
   /** The size of current migration log */
-  DataSize logSize();
+  long logSize();
 
   /** The size of leader log */
-  DataSize leaderLogSize();
+  long leaderLogSize();
 }

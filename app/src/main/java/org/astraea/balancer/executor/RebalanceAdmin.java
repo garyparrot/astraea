@@ -116,6 +116,8 @@ public interface RebalanceAdmin {
       @Override
       public Map<TopicPartition, List<SyncingProgress>> syncingProgress(
           Set<TopicPartition> topicPartitions) {
+        topicPartitions.forEach(this::ensureTopicPermitted);
+
         final var topics =
             topicPartitions.stream()
                 .map(TopicPartition::topic)
@@ -173,7 +175,6 @@ public interface RebalanceAdmin {
    * @param expectedPlacement the expected placement after this request accomplished
    */
   void alterReplicaPlacements(TopicPartition topicPartition, List<LogPlacement> expectedPlacement);
-  // TODO: made this above method return a watch to watch over the migration progress.
 
   /** Access the syncing progress of the specific topic/partitions */
   Map<TopicPartition, List<SyncingProgress>> syncingProgress(Set<TopicPartition> topicPartitions);

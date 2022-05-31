@@ -36,7 +36,7 @@ public interface LogPlacement {
   }
 
   @SuppressWarnings("OptionalUsedAsFieldOrParameterType")
-  static boolean meetLogDirectoryMigrationRequirement(
+  private static boolean meetLogDirectoryMigrationRequirement(
       Optional<String> sourceDir, Optional<String> targetDir) {
     // don't care which log directory will eventually be in the destination.
     if (targetDir.isEmpty()) return true;

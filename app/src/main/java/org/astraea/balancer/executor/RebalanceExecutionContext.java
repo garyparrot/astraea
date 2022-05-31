@@ -5,6 +5,21 @@ import org.astraea.balancer.log.ClusterLogAllocation;
 /** The states and variables related to current rebalance execution */
 public interface RebalanceExecutionContext {
 
+  static RebalanceExecutionContext of(
+      RebalanceAdmin rebalanceAdmin, ClusterLogAllocation expectedAllocation) {
+    return new RebalanceExecutionContext() {
+      @Override
+      public RebalanceAdmin rebalanceAdmin() {
+        return rebalanceAdmin;
+      }
+
+      @Override
+      public ClusterLogAllocation expectedAllocation() {
+        return expectedAllocation;
+      }
+    };
+  }
+
   /** The migration interface */
   RebalanceAdmin rebalanceAdmin();
 

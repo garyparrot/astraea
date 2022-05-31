@@ -42,7 +42,7 @@ public interface ClusterLogAllocation {
 
     if (!disappearedTopicPartitions.isEmpty())
       throw new IllegalArgumentException(
-          "Some of the topic/partitions in source allocation is disappeared in the target allocation. Balancer can't do topic deletion or shrink partition size: "
+          "Some of the topic/partitions in source allocation is disappeared in the target allocation. Balancer can't do topic deletion or shrinking partition size: "
               + disappearedTopicPartitions);
 
     return source

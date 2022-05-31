@@ -1,40 +1,60 @@
 package org.astraea.balancer.executor;
 
-import org.astraea.balancer.generator.ShufflePlanGenerator;
-import org.astraea.balancer.log.ClusterLogAllocation;
-import org.astraea.cost.ClusterInfoProvider;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import org.astraea.admin.Admin;
+import org.astraea.admin.TopicPartition;
+import org.astraea.balancer.log.LayeredClusterLogAllocation;
+import org.astraea.balancer.log.LogPlacement;
+import org.astraea.common.Utils;
 import org.astraea.service.RequireBrokerCluster;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 
 class StraightPlanExecutorTest extends RequireBrokerCluster {
 
   @Test
-  void doMigration() {
-    final var generator = new ShufflePlanGenerator(5, 10);
-    final var clusterInfoNow = ClusterInfoProvider.fakeClusterInfo(10, 10, 10, 3);
-    final var allocationExpected =
-        generator.generate(clusterInfoNow).findFirst().orElseThrow().rebalancePlan().orElseThrow();
-    final var straightPlanExecutor = new StraightPlanExecutor();
-    final var mockedAdmin = Mockito.mock(RebalanceAdmin.class);
-    Mockito.when(mockedAdmin.clusterInfo()).thenReturn(clusterInfoNow);
+  void testRun() {
+    // arrange
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      final var topicName = "StraightPlanExecutorTest_" + Utils.randomString(8);
+      admin.creator().topic(topicName).numberOfPartitions(10).numberOfReplicas((short) 2).create();
+      admin.creator().topic(topicName).numberOfPartitions(10).numberOfReplicas((short) 2).create();
+      final var broker0 = 0;
+      final var broker1 = 1;
+      final var logFolder0 = logFolders().get(broker0).stream().findAny().orElseThrow();
+      final var logFolder1 = logFolders().get(broker1).stream().findAny().orElseThrow();
+      final var onlyPlacement =
+          List.of(LogPlacement.of(broker0, logFolder0), LogPlacement.of(broker1, logFolder1));
+      final var allocationMap =
+          IntStream.range(0, 10)
+              .mapToObj(i -> new TopicPartition(topicName, i))
+              .collect(Collectors.toUnmodifiableMap(tp -> tp, tp -> onlyPlacement));
+      final var expectedAllocation = LayeredClusterLogAllocation.of(allocationMap);
+      final var expectedTopicPartition =
+          expectedAllocation.topicPartitionStream().collect(Collectors.toUnmodifiableSet());
+      final var rebalanceAdmin = RebalanceAdmin.of(admin, Map::of, (ignore) -> true);
+      final var context = RebalanceExecutionContext.of(rebalanceAdmin, expectedAllocation);
 
-    final var mockedContext =
-        new RebalanceExecutionContext() {
-          @Override
-          public RebalanceAdmin rebalanceAdmin() {
-            return mockedAdmin;
-          }
+      // act
+      final var result = new StraightPlanExecutor().run(context);
 
-          @Override
-          public ClusterLogAllocation expectedAllocation() {
-            return allocationExpected;
-          }
-        };
-
-    final var result = straightPlanExecutor.run(mockedContext);
-
-    Assertions.assertTrue(result.isDone());
+      // assert
+      final var currentAllocation =
+          LayeredClusterLogAllocation.of(admin.clusterInfo(Set.of(topicName)));
+      final var currentTopicPartition =
+          currentAllocation.topicPartitionStream().collect(Collectors.toUnmodifiableSet());
+      Assertions.assertTrue(result.isDone());
+      Assertions.assertEquals(expectedTopicPartition, currentTopicPartition);
+      expectedTopicPartition.forEach(
+          topicPartition ->
+              Assertions.assertEquals(
+                  expectedAllocation.logPlacements(topicPartition),
+                  currentAllocation.logPlacements(topicPartition),
+                  "Testing for " + topicPartition));
+    }
   }
 }
