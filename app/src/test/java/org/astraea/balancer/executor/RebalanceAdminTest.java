@@ -70,11 +70,13 @@ class RebalanceAdminTest extends RequireBrokerCluster {
 
             long size = 1024L * (tp.partition()) + 1;
 
-            Assertions.assertEquals(size, syncingProgress.get(tp).get(0).logSize());
-            Assertions.assertEquals(size, syncingProgress.get(tp).get(1).logSize());
+            // the log contain metadata and record content, it supposed to be bigger than the actual
+            // data
+            Assertions.assertTrue(size < syncingProgress.get(tp).get(0).logSize());
+            Assertions.assertTrue(size < syncingProgress.get(tp).get(1).logSize());
 
-            Assertions.assertEquals(size, syncingProgress.get(tp).get(0).leaderLogSize());
-            Assertions.assertEquals(size, syncingProgress.get(tp).get(1).leaderLogSize());
+            Assertions.assertTrue(size < syncingProgress.get(tp).get(0).leaderLogSize());
+            Assertions.assertTrue(size < syncingProgress.get(tp).get(1).leaderLogSize());
           });
     }
   }

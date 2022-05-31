@@ -22,7 +22,6 @@ class StraightPlanExecutorTest extends RequireBrokerCluster {
     try (Admin admin = Admin.of(bootstrapServers())) {
       final var topicName = "StraightPlanExecutorTest_" + Utils.randomString(8);
       admin.creator().topic(topicName).numberOfPartitions(10).numberOfReplicas((short) 2).create();
-      admin.creator().topic(topicName).numberOfPartitions(10).numberOfReplicas((short) 2).create();
       final var broker0 = 0;
       final var broker1 = 1;
       final var logFolder0 = logFolders().get(broker0).stream().findAny().orElseThrow();
