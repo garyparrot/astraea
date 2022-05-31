@@ -46,7 +46,10 @@ class StraightPlanExecutorTest extends RequireBrokerCluster {
           LayeredClusterLogAllocation.of(admin.clusterInfo(Set.of(topicName)));
       final var currentTopicPartition =
           currentAllocation.topicPartitionStream().collect(Collectors.toUnmodifiableSet());
-      Assertions.assertTrue(result.isDone());
+      Assertions.assertTrue(result.isDone(), () -> {
+        result.exception().orElseThrow().printStackTrace();
+        return result.exception().toString();
+      });
       Assertions.assertEquals(expectedTopicPartition, currentTopicPartition);
       expectedTopicPartition.forEach(
           topicPartition ->
