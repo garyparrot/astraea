@@ -3,7 +3,6 @@ package org.astraea.admin;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -24,6 +23,7 @@ import org.apache.kafka.clients.admin.NewPartitionReassignment;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.OffsetSpec;
 import org.apache.kafka.clients.admin.ReplicaInfo;
+import org.apache.kafka.common.ElectionType;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartitionReplica;
 import org.apache.kafka.common.config.ConfigResource;
@@ -342,7 +342,6 @@ public class Builder {
                                                                         .contains(node),
                                                                     entry.getValue().isFuture(),
                                                                     entry.getKey())))
-                                            .sorted(Comparator.comparing(Replica::broker))
                                             .collect(Collectors.toList()));
                                   }))
                   .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
@@ -565,7 +564,7 @@ public class Builder {
     }
 
     @Override
-    public void moveTo(List<Integer> brokers) {
+    public void moveTo(List<Integer> brokers, boolean doElection) {
       Utils.packException(
           () ->
               admin
@@ -577,6 +576,15 @@ public class Builder {
                                   ignore -> Optional.of(new NewPartitionReassignment(brokers)))))
                   .all()
                   .get());
+      if (doElection && brokers.size() > 1) {
+        Utils.packException(
+            () ->
+                admin.electLeaders(
+                    ElectionType.PREFERRED,
+                    partitions.stream()
+                        .map(TopicPartition::to)
+                        .collect(Collectors.toUnmodifiableSet())));
+      }
     }
   }
 

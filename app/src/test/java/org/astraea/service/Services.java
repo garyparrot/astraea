@@ -61,6 +61,10 @@ public final class Services {
                       new KafkaServer(
                           new KafkaConfig(config), SystemTime.SYSTEM, scala.Option.empty(), false);
 
+                  // Disable auto leader rebalance to ensure test run correctly.
+                  config.setProperty(
+                      KafkaConfig$.MODULE$.AutoLeaderRebalanceEnableDoc(), String.valueOf(false));
+
                   broker.startup();
                   return broker;
                 })

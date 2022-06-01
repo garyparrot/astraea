@@ -28,7 +28,18 @@ public interface ReplicaMigrator {
    *
    * @param brokers to host partitions
    */
-  void moveTo(List<Integer> brokers);
+  default void moveTo(List<Integer> brokers) {
+    moveTo(brokers, false);
+  }
+
+  /**
+   * move partitions to specify brokers. Noted that this method will invoke leader election
+   * explicitly if doElection is enabled and, the replica list has at least two replicas.
+   *
+   * @param brokers to host partitions
+   * @param doElection indicates to perform the leader election
+   */
+  void moveTo(List<Integer> brokers, boolean doElection);
 
   /**
    * move partition to specify folder.

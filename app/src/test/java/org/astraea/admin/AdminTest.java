@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.StreamSupport;
@@ -22,6 +23,8 @@ import org.astraea.service.RequireBrokerCluster;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnOs;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 public class AdminTest extends RequireBrokerCluster {
 
@@ -242,6 +245,56 @@ public class AdminTest extends RequireBrokerCluster {
             return replicas.values().stream()
                 .allMatch(rs -> rs.stream().allMatch(r -> r.broker() == broker));
           });
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource(
+      value = {
+        // replica size, test purpose
+        "             1, Do leader election for 1 replica topic will not raise an exception",
+        "             2, Do leader election",
+        "             3, Do leader election",
+      })
+  void testMigrationWithLeaderElection(short replicaSize) throws InterruptedException {
+    var topicName = "testMigrationWithLeaderElection_" + Utils.randomString(5);
+    var toReplicaList =
+        (Function<Map<TopicPartition, List<Replica>>, Map<TopicPartition, List<Integer>>>)
+            (map) ->
+                map.entrySet().stream()
+                    .collect(
+                        Collectors.toUnmodifiableMap(
+                            Map.Entry::getKey,
+                            entry ->
+                                entry.getValue().stream()
+                                    .map(Replica::broker)
+                                    .collect(Collectors.toUnmodifiableList())));
+
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      admin
+          .creator()
+          .topic(topicName)
+          .numberOfPartitions(10)
+          .numberOfReplicas(replicaSize)
+          .create();
+      TimeUnit.SECONDS.sleep(3);
+
+      var originalReplicaList = toReplicaList.apply(admin.replicas(Set.of(topicName)));
+      var finalReplicaList =
+          originalReplicaList.keySet().stream()
+              .collect(
+                  Collectors.toUnmodifiableMap(
+                      tp -> tp, tp -> List.of(0, 1, 2).subList(0, replicaSize)));
+
+      finalReplicaList.forEach(
+          (tp, newReplicaList) ->
+              admin.migrator().partition(tp.topic(), tp.partition()).moveTo(newReplicaList, true));
+
+      TimeUnit.SECONDS.sleep(3);
+
+      var currentReplicaList = toReplicaList.apply(admin.replicas(Set.of(topicName)));
+
+      Assertions.assertEquals(finalReplicaList, currentReplicaList);
     }
   }
 
