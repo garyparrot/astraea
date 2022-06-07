@@ -1,3 +1,19 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.astraea.balancer.executor;
 
 import java.util.Collection;
@@ -7,12 +23,12 @@ import java.util.Set;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import org.astraea.admin.Admin;
-import org.astraea.admin.Replica;
-import org.astraea.admin.TopicPartition;
-import org.astraea.balancer.log.LogPlacement;
-import org.astraea.cost.ClusterInfo;
-import org.astraea.metrics.HasBeanObject;
+import org.astraea.app.admin.Admin;
+import org.astraea.app.admin.Replica;
+import org.astraea.app.admin.TopicPartition;
+import org.astraea.app.balancer.log.LogPlacement;
+import org.astraea.app.cost.ClusterInfo;
+import org.astraea.app.metrics.HasBeanObject;
 
 /**
  * The wrapper of {@link Admin}. Offer only the essential functionalities & some utilities to

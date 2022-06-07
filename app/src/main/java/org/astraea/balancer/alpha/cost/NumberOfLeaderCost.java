@@ -1,3 +1,19 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.astraea.balancer.alpha.cost;
 
 import java.net.MalformedURLException;
@@ -9,16 +25,16 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import org.astraea.admin.Admin;
+import org.astraea.app.admin.Admin;
+import org.astraea.app.cost.BrokerCost;
+import org.astraea.app.cost.ClusterInfo;
+import org.astraea.app.cost.HasBrokerCost;
+import org.astraea.app.metrics.HasBeanObject;
+import org.astraea.app.metrics.collector.BeanCollector;
+import org.astraea.app.metrics.collector.Fetcher;
+import org.astraea.app.metrics.kafka.HasValue;
+import org.astraea.app.metrics.kafka.KafkaMetrics;
 import org.astraea.balancer.alpha.BalancerUtils;
-import org.astraea.cost.BrokerCost;
-import org.astraea.cost.ClusterInfo;
-import org.astraea.cost.HasBrokerCost;
-import org.astraea.metrics.HasBeanObject;
-import org.astraea.metrics.collector.BeanCollector;
-import org.astraea.metrics.collector.Fetcher;
-import org.astraea.metrics.kafka.HasValue;
-import org.astraea.metrics.kafka.KafkaMetrics;
 
 public class NumberOfLeaderCost implements HasBrokerCost {
   @Override

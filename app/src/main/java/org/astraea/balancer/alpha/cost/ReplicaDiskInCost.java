@@ -1,3 +1,19 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.astraea.balancer.alpha.cost;
 
 import com.beust.jcommander.Parameter;
@@ -21,20 +37,20 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.kafka.common.TopicPartitionReplica;
-import org.astraea.admin.Admin;
-import org.astraea.admin.TopicPartition;
-import org.astraea.argument.Field;
+import org.astraea.app.admin.Admin;
+import org.astraea.app.admin.TopicPartition;
+import org.astraea.app.argument.Field;
+import org.astraea.app.cost.BrokerCost;
+import org.astraea.app.cost.ClusterInfo;
+import org.astraea.app.cost.HasBrokerCost;
+import org.astraea.app.cost.NodeInfo;
+import org.astraea.app.cost.PartitionCost;
+import org.astraea.app.metrics.HasBeanObject;
+import org.astraea.app.metrics.collector.BeanCollector;
+import org.astraea.app.metrics.collector.Fetcher;
+import org.astraea.app.metrics.kafka.HasValue;
+import org.astraea.app.metrics.kafka.KafkaMetrics;
 import org.astraea.balancer.alpha.BalancerUtils;
-import org.astraea.cost.BrokerCost;
-import org.astraea.cost.ClusterInfo;
-import org.astraea.cost.HasBrokerCost;
-import org.astraea.cost.NodeInfo;
-import org.astraea.cost.PartitionCost;
-import org.astraea.metrics.HasBeanObject;
-import org.astraea.metrics.collector.BeanCollector;
-import org.astraea.metrics.collector.Fetcher;
-import org.astraea.metrics.kafka.HasValue;
-import org.astraea.metrics.kafka.KafkaMetrics;
 
 public class ReplicaDiskInCost implements HasBrokerCost {
   Map<Integer, Integer> brokerBandwidthCap;
@@ -281,7 +297,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
 
   public static void main(String[] args) throws InterruptedException, MalformedURLException {
     final var argument =
-        org.astraea.argument.Argument.parse(new ReplicaDiskInCost.Argument(), args);
+        org.astraea.app.argument.Argument.parse(new ReplicaDiskInCost.Argument(), args);
     var admin = Admin.of(argument.bootstrapServers());
     var allBeans = new HashMap<Integer, Collection<HasBeanObject>>();
     var jmxAddress = Map.of(1001, 15629, 1002, 10585, 1003, 12485);
@@ -325,7 +341,7 @@ public class ReplicaDiskInCost implements HasBrokerCost {
     }
   }
 
-  static class Argument extends org.astraea.argument.Argument {
+  static class Argument extends org.astraea.app.argument.Argument {
     @Parameter(
         names = {"--broker.bandwidthCap.file"},
         description = "",

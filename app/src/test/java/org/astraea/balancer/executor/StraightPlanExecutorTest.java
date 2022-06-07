@@ -1,3 +1,19 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.astraea.balancer.executor;
 
 import java.io.PrintWriter;
@@ -5,16 +21,14 @@ import java.io.StringWriter;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import org.astraea.admin.Admin;
-import org.astraea.admin.ReplicaSyncingMonitor;
-import org.astraea.admin.TopicPartition;
-import org.astraea.balancer.log.LayeredClusterLogAllocation;
-import org.astraea.balancer.log.LogPlacement;
-import org.astraea.common.Utils;
-import org.astraea.service.RequireBrokerCluster;
+import org.astraea.app.admin.Admin;
+import org.astraea.app.admin.TopicPartition;
+import org.astraea.app.balancer.log.LayeredClusterLogAllocation;
+import org.astraea.app.balancer.log.LogPlacement;
+import org.astraea.app.common.Utils;
+import org.astraea.app.service.RequireBrokerCluster;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -47,14 +61,21 @@ class StraightPlanExecutorTest extends RequireBrokerCluster {
 
       // assert
       final var currentAllocation =
-              LayeredClusterLogAllocation.of(admin.clusterInfo(Set.of(topicName)));
+          LayeredClusterLogAllocation.of(admin.clusterInfo(Set.of(topicName)));
       final var currentTopicPartition =
-              currentAllocation.topicPartitionStream().collect(Collectors.toUnmodifiableSet());
-      Assertions.assertTrue(result.isDone(), () -> result.exception().map(ex -> {
-        StringWriter sw = new StringWriter();
-        ex.printStackTrace(new PrintWriter(sw));
-        return sw.toString();
-      }).orElse("Failed with unknown reason"));
+          currentAllocation.topicPartitionStream().collect(Collectors.toUnmodifiableSet());
+      Assertions.assertTrue(
+          result.isDone(),
+          () ->
+              result
+                  .exception()
+                  .map(
+                      ex -> {
+                        StringWriter sw = new StringWriter();
+                        ex.printStackTrace(new PrintWriter(sw));
+                        return sw.toString();
+                      })
+                  .orElse("Failed with unknown reason"));
       Assertions.assertEquals(expectedTopicPartition, currentTopicPartition);
       expectedTopicPartition.forEach(
           topicPartition ->

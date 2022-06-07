@@ -1,3 +1,19 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.astraea.balancer.alpha;
 
 import static org.astraea.balancer.alpha.BalancerUtils.clusterSnapShot;
@@ -28,10 +44,23 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.management.remote.JMXServiceURL;
-import org.astraea.admin.Admin;
-import org.astraea.argument.DurationField;
-import org.astraea.argument.Field;
-import org.astraea.balancer.RebalancePlanProposal;
+import org.astraea.app.admin.Admin;
+import org.astraea.app.argument.DurationField;
+import org.astraea.app.argument.Field;
+import org.astraea.app.balancer.RebalancePlanProposal;
+import org.astraea.app.balancer.generator.RebalancePlanGenerator;
+import org.astraea.app.balancer.generator.ShufflePlanGenerator;
+import org.astraea.app.balancer.log.ClusterLogAllocation;
+import org.astraea.app.balancer.log.LayeredClusterLogAllocation;
+import org.astraea.app.common.DataSize;
+import org.astraea.app.common.DataUnit;
+import org.astraea.app.common.Utils;
+import org.astraea.app.cost.BrokerCost;
+import org.astraea.app.cost.ClusterInfo;
+import org.astraea.app.cost.CostFunction;
+import org.astraea.app.cost.HasBrokerCost;
+import org.astraea.app.cost.HasPartitionCost;
+import org.astraea.app.cost.PartitionCost;
 import org.astraea.balancer.alpha.cost.NumberOfLeaderCost;
 import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
 import org.astraea.balancer.alpha.cost.ReplicaMigrationSpeedCost;
@@ -39,19 +68,6 @@ import org.astraea.balancer.alpha.cost.ReplicaSizeCost;
 import org.astraea.balancer.alpha.cost.TopicPartitionDistributionCost;
 import org.astraea.balancer.executor.RebalancePlanExecutor;
 import org.astraea.balancer.executor.StraightPlanExecutor;
-import org.astraea.balancer.generator.RebalancePlanGenerator;
-import org.astraea.balancer.generator.ShufflePlanGenerator;
-import org.astraea.balancer.log.ClusterLogAllocation;
-import org.astraea.balancer.log.LayeredClusterLogAllocation;
-import org.astraea.common.DataSize;
-import org.astraea.common.DataUnit;
-import org.astraea.common.Utils;
-import org.astraea.cost.BrokerCost;
-import org.astraea.cost.ClusterInfo;
-import org.astraea.cost.CostFunction;
-import org.astraea.cost.HasBrokerCost;
-import org.astraea.cost.HasPartitionCost;
-import org.astraea.cost.PartitionCost;
 
 public class Balancer implements Runnable {
 
@@ -347,14 +363,14 @@ public class Balancer implements Runnable {
   }
 
   public static void main(String[] args) throws InterruptedException {
-    final Argument argument = org.astraea.argument.Argument.parse(new Argument(), args);
+    final Argument argument = org.astraea.app.argument.Argument.parse(new Argument(), args);
     final Balancer balancer = new Balancer(argument);
     balancer.start();
     balancer.balancerThread.join();
     balancer.stop();
   }
 
-  static class Argument extends org.astraea.argument.Argument {
+  static class Argument extends org.astraea.app.argument.Argument {
 
     @Parameter(
         names = {"--jmx.server.file"},
