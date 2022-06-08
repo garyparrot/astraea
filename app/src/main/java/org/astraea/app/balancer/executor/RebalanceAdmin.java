@@ -16,6 +16,7 @@
  */
 package org.astraea.app.balancer.executor;
 
+import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +28,7 @@ import org.astraea.app.admin.Admin;
 import org.astraea.app.admin.Replica;
 import org.astraea.app.admin.TopicPartition;
 import org.astraea.app.balancer.log.LogPlacement;
+import org.astraea.app.common.Utils;
 import org.astraea.app.cost.ClusterInfo;
 import org.astraea.app.metrics.HasBeanObject;
 
@@ -126,7 +128,6 @@ public interface RebalanceAdmin {
                     .collect(
                         Collectors.toUnmodifiableMap(
                             LogPlacement::broker, x -> x.logDirectory().orElseThrow())));
-        // TODO: do leader election
       }
 
       @Override
@@ -168,6 +169,43 @@ public interface RebalanceAdmin {
       }
 
       @Override
+      public void waitLeaderSynced(
+          Map<TopicPartition, List<LogPlacement>> target, Duration timeout) {
+        // the set of interested topics.
+        final var topics =
+            target.keySet().stream()
+                .map(TopicPartition::topic)
+                .collect(Collectors.toUnmodifiableSet());
+
+        if (topics.isEmpty()) return;
+
+        // wait until the preferred leader be the actual leader
+        Utils.waitFor(
+            () ->
+                admin.replicas(topics).entrySet().stream()
+                    .filter(entry -> target.containsKey(entry.getKey()))
+                    .allMatch(
+                        entry -> {
+                          var tp = entry.getKey();
+                          var replicas = entry.getValue();
+
+                          // It is possible that a partition has no leader at certain moment.
+                          // So if the leader is not found we call this a false sync.
+                          return replicas.stream()
+                              .filter(Replica::leader)
+                              .findFirst()
+                              .map(x -> x.broker() == target.get(tp).get(0).broker())
+                              .orElse(false);
+                        }),
+            timeout);
+      }
+
+      @Override
+      public void leaderElection(TopicPartition topicPartition) {
+        admin.preferredLeaderElection(topicPartition);
+      }
+
+      @Override
       public ClusterInfo clusterInfo() {
         return admin.clusterInfo(
             admin.topicNames().stream()
@@ -194,6 +232,34 @@ public interface RebalanceAdmin {
 
   /** Access the syncing progress of the specific topic/partitions */
   Map<TopicPartition, List<SyncingProgress>> syncingProgress(Set<TopicPartition> topicPartitions);
+
+  /**
+   * Wait until all given topic/partitions are synced.
+   *
+   * @param target the topic/partitions to wait
+   * @param timeout for the waiting process
+   */
+  default void waitLogSynced(Set<TopicPartition> target, Duration timeout) {
+    if (target.isEmpty()) return;
+
+    Utils.waitFor(
+        () ->
+            syncingProgress(target).entrySet().stream()
+                .flatMap(list -> list.getValue().stream())
+                .allMatch(SyncingProgress::synced),
+        timeout);
+  }
+
+  /**
+   * Wait until all given topic/partitions have their preferred leader be the actual leader.
+   *
+   * @param target the topic/partitions to wait
+   * @param timeout for the waiting process
+   */
+  void waitLeaderSynced(Map<TopicPartition, List<LogPlacement>> target, Duration timeout);
+
+  /** Perform preferred leader election for specific topic/partition. */
+  void leaderElection(TopicPartition topicPartition);
 
   ClusterInfo clusterInfo();
 

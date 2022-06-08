@@ -16,12 +16,11 @@
  */
 package org.astraea.app.balancer.executor;
 
-import java.util.concurrent.TimeUnit;
-import java.util.function.Supplier;
+import java.time.temporal.ChronoUnit;
+import java.util.Map;
+import java.util.stream.Collectors;
 import org.astraea.app.balancer.log.ClusterLogAllocation;
 import org.astraea.app.balancer.log.LayeredClusterLogAllocation;
-import org.astraea.app.balancer.log.LogPlacement;
-import org.astraea.app.common.Utils;
 
 /** Execute every possible migration immediately. */
 public class StraightPlanExecutor implements RebalancePlanExecutor {
@@ -33,45 +32,34 @@ public class StraightPlanExecutor implements RebalancePlanExecutor {
     try {
       final var clusterInfo = context.rebalanceAdmin().clusterInfo();
       final var currentLogAllocation = LayeredClusterLogAllocation.of(clusterInfo);
-      final var nonFulfilledTopicPartitions =
+      final var migrationTargets =
           ClusterLogAllocation.findNonFulfilledAllocation(
               context.expectedAllocation(), currentLogAllocation);
 
-      if (!nonFulfilledTopicPartitions.isEmpty()) {
-        nonFulfilledTopicPartitions.forEach(
-            topicPartition -> {
-              final var expectedPlacements =
-                  context.expectedAllocation().logPlacements(topicPartition);
-              context.rebalanceAdmin().alterReplicaPlacements(topicPartition, expectedPlacements);
-            });
-
-        Supplier<Boolean> copyWorkDone =
-            () ->
+      if (!migrationTargets.isEmpty()) {
+        // migrate everything
+        migrationTargets.forEach(
+            topicPartition ->
                 context
                     .rebalanceAdmin()
-                    .syncingProgress(nonFulfilledTopicPartitions)
-                    .entrySet()
-                    .stream()
-                    .flatMap(list -> list.getValue().stream())
-                    .allMatch(SyncingProgress::synced);
-        Supplier<Boolean> allocationMatch =
-            () -> {
-              final var alloc =
-                  LayeredClusterLogAllocation.of(context.rebalanceAdmin().clusterInfo());
+                    .alterReplicaPlacements(
+                        topicPartition,
+                        context.expectedAllocation().logPlacements(topicPartition)));
 
-              return context
-                  .expectedAllocation()
-                  .topicPartitionStream()
-                  .allMatch(
-                      tp ->
-                          LogPlacement.isMatch(
-                              context.expectedAllocation().logPlacements(tp),
-                              alloc.logPlacements(tp)));
-            };
+        // wait until all target is done
+        context.rebalanceAdmin().waitLogSynced(migrationTargets, ChronoUnit.DAYS.getDuration());
 
-        while (!(copyWorkDone.get() && allocationMatch.get())) {
-          Utils.packException(() -> TimeUnit.SECONDS.sleep(3));
-        }
+        // perform leader election
+        migrationTargets.forEach(tp -> context.rebalanceAdmin().leaderElection(tp));
+
+        // wait until the leader election done
+        final var expected =
+            context
+                .expectedAllocation()
+                .topicPartitionStream()
+                .map(tp -> Map.entry(tp, context.expectedAllocation().logPlacements(tp)))
+                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+        context.rebalanceAdmin().waitLeaderSynced(expected, ChronoUnit.DAYS.getDuration());
       }
       return RebalanceExecutionResult.done();
     } catch (Exception e) {
