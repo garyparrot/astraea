@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.astraea.balancer.executor;
+package org.astraea.app.balancer.executor;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -25,9 +25,6 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.astraea.app.admin.Admin;
 import org.astraea.app.admin.TopicPartition;
-import org.astraea.app.balancer.executor.RebalanceAdmin;
-import org.astraea.app.balancer.executor.RebalanceExecutionContext;
-import org.astraea.app.balancer.executor.StraightPlanExecutor;
 import org.astraea.app.balancer.log.LayeredClusterLogAllocation;
 import org.astraea.app.balancer.log.LogPlacement;
 import org.astraea.app.common.Utils;
