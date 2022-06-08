@@ -24,6 +24,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -434,13 +435,10 @@ public class Builder {
     public ClusterInfo clusterInfo(Set<String> topics) {
       final var nodeInfo = this.nodes().stream().collect(Collectors.toUnmodifiableList());
 
-      final var topicToReplicasMap =
+      final Map<String, List<ReplicaInfo>> topicToReplicasMap =
           Utils.packException(() -> this.replicas(topics)).entrySet().stream()
               .flatMap(
                   entry -> {
-                    // TODO: there is a bug in here. Admin#replicas doesn't return the full
-                    // information of each replica if there are some offline here. might be fix in
-                    // #308?
                     final var topicPartition = entry.getKey();
                     final var replicas = entry.getValue();
 
@@ -453,11 +451,10 @@ public class Builder {
                                     nodeInfo.stream()
                                         .filter(x -> x.id() == replica.broker())
                                         .findFirst()
-                                        .orElseThrow(),
+                                        .orElse(NodeInfo.ofOfflineNode(replica.broker())),
                                     replica.leader(),
                                     replica.inSync(),
-                                    // TODO: fix the isOfflineReplica flag once the #308 is merged
-                                    false,
+                                    replica.isOffline(),
                                     replica.path()));
                   })
               .collect(Collectors.groupingBy(ReplicaInfo::topic));
@@ -477,20 +474,23 @@ public class Builder {
 
         @Override
         public Set<String> dataDirectories(int brokerId) {
-          return dataDirectories.get(brokerId);
+          final var set = dataDirectories.get(brokerId);
+          if (set == null) throw new NoSuchElementException("Unknown broker \"" + brokerId + "\"");
+          else return set;
         }
 
         @Override
         public List<ReplicaInfo> availableReplicaLeaders(String topic) {
-          return topicToReplicasMap.get(topic).stream()
+          return replicas(topic).stream()
               .filter(ReplicaInfo::isLeader)
+              .filter(ReplicaInfo::isOnlineReplica)
               .collect(Collectors.toUnmodifiableList());
         }
 
         @Override
         public List<ReplicaInfo> availableReplicas(String topic) {
-          return topicToReplicasMap.get(topic).stream()
-              .filter((ReplicaInfo x) -> !x.isOfflineReplica())
+          return replicas(topic).stream()
+              .filter(ReplicaInfo::isOnlineReplica)
               .collect(Collectors.toUnmodifiableList());
         }
 
@@ -501,7 +501,11 @@ public class Builder {
 
         @Override
         public List<ReplicaInfo> replicas(String topic) {
-          return topicToReplicasMap.get(topic);
+          final var replicaInfos = topicToReplicasMap.get(topic);
+          if (replicaInfos == null)
+            throw new NoSuchElementException(
+                "This ClusterInfo have no information about topic \"" + topic + "\"");
+          else return replicaInfos;
         }
 
         @Override
