@@ -31,12 +31,10 @@ import org.astraea.app.balancer.log.LogPlacement;
 import org.astraea.app.common.Utils;
 import org.astraea.app.service.RequireBrokerCluster;
 import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 class StraightPlanExecutorTest extends RequireBrokerCluster {
 
-  @Disabled
   @Test
   void testRun() throws InterruptedException {
     // arrange
