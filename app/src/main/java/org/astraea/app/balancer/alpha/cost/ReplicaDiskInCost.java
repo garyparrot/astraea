@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.astraea.balancer.alpha.cost;
+package org.astraea.app.balancer.alpha.cost;
 
 import com.beust.jcommander.Parameter;
 import java.io.IOException;
@@ -40,6 +40,7 @@ import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.app.admin.Admin;
 import org.astraea.app.admin.TopicPartition;
 import org.astraea.app.argument.Field;
+import org.astraea.app.balancer.alpha.BalancerUtils;
 import org.astraea.app.cost.BrokerCost;
 import org.astraea.app.cost.ClusterInfo;
 import org.astraea.app.cost.HasBrokerCost;
@@ -50,7 +51,6 @@ import org.astraea.app.metrics.collector.BeanCollector;
 import org.astraea.app.metrics.collector.Fetcher;
 import org.astraea.app.metrics.kafka.HasValue;
 import org.astraea.app.metrics.kafka.KafkaMetrics;
-import org.astraea.balancer.alpha.BalancerUtils;
 
 public class ReplicaDiskInCost implements HasBrokerCost {
   Map<Integer, Integer> brokerBandwidthCap;

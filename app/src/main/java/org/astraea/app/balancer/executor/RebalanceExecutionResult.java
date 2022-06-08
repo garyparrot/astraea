@@ -14,22 +14,35 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.astraea.balancer.executor;
+package org.astraea.app.balancer.executor;
 
-import java.util.List;
-import org.astraea.app.metrics.collector.Fetcher;
+import java.util.Optional;
 
-/** This class associate with the logic of fulfill given rebalance plan. */
-public interface RebalancePlanExecutor {
+public interface RebalanceExecutionResult {
 
-  /** This method responsible for fulfill a rebalance plan. */
-  RebalanceExecutionResult run(RebalanceExecutionContext executionContext);
+  boolean isDone();
 
-  /**
-   * @return the metric fetcher of this executor requested. An executor can take advantage of
-   *     metrics to monitor cluster state, perform appropriate migration decision.
-   */
-  default Fetcher fetcher() {
-    return Fetcher.of(List.of());
+  Optional<Throwable> exception();
+
+  static RebalanceExecutionResult create(boolean isDone, Throwable exception) {
+    return new RebalanceExecutionResult() {
+      @Override
+      public boolean isDone() {
+        return isDone;
+      }
+
+      @Override
+      public Optional<Throwable> exception() {
+        return Optional.ofNullable(exception);
+      }
+    };
+  }
+
+  static RebalanceExecutionResult done() {
+    return create(true, null);
+  }
+
+  static RebalanceExecutionResult failed(Throwable exception) {
+    return create(false, exception);
   }
 }

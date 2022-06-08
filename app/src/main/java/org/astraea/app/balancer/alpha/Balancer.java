@@ -14,10 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.astraea.balancer.alpha;
-
-import static org.astraea.balancer.alpha.BalancerUtils.clusterSnapShot;
-import static org.astraea.balancer.alpha.BalancerUtils.diffAllocation;
+package org.astraea.app.balancer.alpha;
 
 import com.beust.jcommander.Parameter;
 import java.io.IOException;
@@ -48,6 +45,13 @@ import org.astraea.app.admin.Admin;
 import org.astraea.app.argument.DurationField;
 import org.astraea.app.argument.Field;
 import org.astraea.app.balancer.RebalancePlanProposal;
+import org.astraea.app.balancer.alpha.cost.NumberOfLeaderCost;
+import org.astraea.app.balancer.alpha.cost.ReplicaDiskInCost;
+import org.astraea.app.balancer.alpha.cost.ReplicaMigrationSpeedCost;
+import org.astraea.app.balancer.alpha.cost.ReplicaSizeCost;
+import org.astraea.app.balancer.alpha.cost.TopicPartitionDistributionCost;
+import org.astraea.app.balancer.executor.RebalancePlanExecutor;
+import org.astraea.app.balancer.executor.StraightPlanExecutor;
 import org.astraea.app.balancer.generator.RebalancePlanGenerator;
 import org.astraea.app.balancer.generator.ShufflePlanGenerator;
 import org.astraea.app.balancer.log.ClusterLogAllocation;
@@ -61,13 +65,6 @@ import org.astraea.app.cost.CostFunction;
 import org.astraea.app.cost.HasBrokerCost;
 import org.astraea.app.cost.HasPartitionCost;
 import org.astraea.app.cost.PartitionCost;
-import org.astraea.balancer.alpha.cost.NumberOfLeaderCost;
-import org.astraea.balancer.alpha.cost.ReplicaDiskInCost;
-import org.astraea.balancer.alpha.cost.ReplicaMigrationSpeedCost;
-import org.astraea.balancer.alpha.cost.ReplicaSizeCost;
-import org.astraea.balancer.alpha.cost.TopicPartitionDistributionCost;
-import org.astraea.balancer.executor.RebalancePlanExecutor;
-import org.astraea.balancer.executor.StraightPlanExecutor;
 
 public class Balancer implements Runnable {
 
@@ -141,7 +138,8 @@ public class Balancer implements Runnable {
     // generate cluster info
     final var clusterInfo =
         ClusterInfo.of(
-            clusterSnapShot(topicAdmin, topicIgnoreList), metricCollector.fetchMetrics());
+            BalancerUtils.clusterSnapShot(topicAdmin, topicIgnoreList),
+            metricCollector.fetchMetrics());
     final var currentAllocation = LayeredClusterLogAllocation.of(clusterInfo);
 
     // friendly info
@@ -304,7 +302,8 @@ public class Balancer implements Runnable {
             .orElseThrow();
 
     // replicaMigrationCost
-    final var topicPartitionCopyMap = diffAllocation(proposedCluster, originalCluster);
+    final var topicPartitionCopyMap =
+        BalancerUtils.diffAllocation(proposedCluster, originalCluster);
     // TODO: this cost doesn't consider data folder?
     final Map<Integer, Double> brokerMigrationCost =
         topicPartitionCopyMap.entrySet().stream()

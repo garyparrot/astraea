@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.astraea.balancer.alpha;
+package org.astraea.app.balancer.alpha;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
