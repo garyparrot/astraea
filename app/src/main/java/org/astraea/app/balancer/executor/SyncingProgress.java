@@ -16,13 +16,15 @@
  */
 package org.astraea.app.balancer.executor;
 
+import java.util.OptionalLong;
 import org.astraea.app.admin.Replica;
 import org.astraea.app.admin.TopicPartition;
 
 /** Monitoring the migration progress of specific replica log */
 public interface SyncingProgress {
 
-  static SyncingProgress of(TopicPartition topicPartition, Replica leaderReplica, Replica replica) {
+  private static SyncingProgress of(
+      TopicPartition topicPartition, Replica replica, long leaderSize) {
     return new SyncingProgress() {
       @Override
       public TopicPartition topicPartition() {
@@ -41,11 +43,12 @@ public interface SyncingProgress {
 
       @Override
       public double percentage() {
+        if (leaderSize < 0) return Double.NaN;
         // attempts to bypass the divided by zero issue
-        if (replica.size() == leaderReplica.size()) {
+        if (replica.size() == leaderSize) {
           return 1;
         } else {
-          return (double) replica.size() / leaderReplica.size();
+          return (double) replica.size() / leaderSize;
         }
       }
 
@@ -55,10 +58,18 @@ public interface SyncingProgress {
       }
 
       @Override
-      public long leaderLogSize() {
-        return leaderReplica.size();
+      public OptionalLong leaderLogSize() {
+        return leaderSize >= 0 ? OptionalLong.of(leaderSize) : OptionalLong.empty();
       }
     };
+  }
+
+  static SyncingProgress of(TopicPartition topicPartition, Replica replica, Replica leaderReplica) {
+    return of(topicPartition, replica, leaderReplica.size());
+  }
+
+  static SyncingProgress leaderlessProgress(TopicPartition topicPartition, Replica replica) {
+    return of(topicPartition, replica, -1);
   }
 
   /** Current tracking target */
@@ -77,5 +88,5 @@ public interface SyncingProgress {
   long logSize();
 
   /** The size of leader log */
-  long leaderLogSize();
+  OptionalLong leaderLogSize();
 }

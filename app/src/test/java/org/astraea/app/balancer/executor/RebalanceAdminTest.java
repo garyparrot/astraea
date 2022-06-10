@@ -24,8 +24,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.app.admin.Admin;
-import org.astraea.app.admin.TopicPartition;
 import org.astraea.app.common.Utils;
 import org.astraea.app.metrics.HasBeanObject;
 import org.astraea.app.producer.Producer;
@@ -62,37 +62,39 @@ class RebalanceAdminTest extends RequireBrokerCluster {
                         }
                       }));
 
-      final var tps =
-          IntStream.range(0, 3)
-              .mapToObj(x -> new TopicPartition(name, x))
-              .collect(Collectors.toUnmodifiableSet());
-      final var replicas = admin.replicas(Set.of(name));
+      final var replicaMap = admin.replicas(Set.of(name));
+      final var logs =
+          (Set<TopicPartitionReplica>)
+              replicaMap.entrySet().stream()
+                  .flatMap(
+                      entry -> {
+                        var tp = entry.getKey();
+                        var replicas = entry.getValue();
 
-      final var syncingProgress = rebalanceAdmin.syncingProgress(tps);
-      Assertions.assertEquals(tps, syncingProgress.keySet());
-      tps.forEach(tp -> Assertions.assertEquals(2, syncingProgress.get(tp).size()));
-      tps.forEach(
-          tp -> {
-            Assertions.assertEquals(tp, syncingProgress.get(tp).get(0).topicPartition());
-            Assertions.assertEquals(tp, syncingProgress.get(tp).get(1).topicPartition());
+                        return replicas.stream()
+                            .map(
+                                log ->
+                                    new TopicPartitionReplica(
+                                        tp.topic(), tp.partition(), log.broker()));
+                      })
+                  .collect(Collectors.toUnmodifiableSet());
 
+      logs.forEach(
+          log -> {
+            var syncingProgress = rebalanceAdmin.syncingProgress(log);
+
+            Assertions.assertTrue(syncingProgress.synced());
+            Assertions.assertEquals(log.brokerId(), syncingProgress.brokerId());
+            Assertions.assertEquals(log.topic(), syncingProgress.topicPartition().topic());
+            Assertions.assertEquals(log.partition(), syncingProgress.topicPartition().partition());
             Assertions.assertEquals(
-                replicas.get(tp).get(0).broker(), syncingProgress.get(tp).get(0).brokerId());
-            Assertions.assertEquals(
-                replicas.get(tp).get(1).broker(), syncingProgress.get(tp).get(1).brokerId());
+                syncingProgress.leaderLogSize().orElseThrow(), syncingProgress.logSize());
+            Assertions.assertEquals(1, syncingProgress.percentage());
 
-            Assertions.assertTrue(syncingProgress.get(tp).get(0).synced());
-            Assertions.assertTrue(syncingProgress.get(tp).get(1).synced());
-
-            long size = 1024L * (tp.partition()) + 1;
-
+            long expectedMinLogSize = 1024L * (log.partition()) + 1;
             // the log contain metadata and record content, it supposed to be bigger than the actual
             // data
-            Assertions.assertTrue(size < syncingProgress.get(tp).get(0).logSize());
-            Assertions.assertTrue(size < syncingProgress.get(tp).get(1).logSize());
-
-            Assertions.assertTrue(size < syncingProgress.get(tp).get(0).leaderLogSize());
-            Assertions.assertTrue(size < syncingProgress.get(tp).get(1).leaderLogSize());
+            Assertions.assertTrue(expectedMinLogSize < syncingProgress.logSize());
           });
     }
   }

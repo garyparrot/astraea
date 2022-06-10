@@ -16,9 +16,11 @@
  */
 package org.astraea.app.balancer.executor;
 
-import java.time.temporal.ChronoUnit;
-import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.Collection;
+import java.util.List;
+import java.util.function.Function;
+import org.apache.kafka.common.TopicPartitionReplica;
+import org.astraea.app.admin.TopicPartition;
 import org.astraea.app.balancer.log.ClusterLogAllocation;
 import org.astraea.app.balancer.log.LayeredClusterLogAllocation;
 
@@ -36,31 +38,36 @@ public class StraightPlanExecutor implements RebalancePlanExecutor {
           ClusterLogAllocation.findNonFulfilledAllocation(
               context.expectedAllocation(), currentLogAllocation);
 
-      if (!migrationTargets.isEmpty()) {
-        // migrate everything
-        migrationTargets.forEach(
-            topicPartition ->
-                context
-                    .rebalanceAdmin()
-                    .alterReplicaPlacements(
-                        topicPartition,
-                        context.expectedAllocation().logPlacements(topicPartition)));
+      var executeReplicaMigration =
+          (Function<TopicPartition, List<RebalanceTask<TopicPartitionReplica, SyncingProgress>>>)
+              (topicPartition) ->
+                  context
+                      .rebalanceAdmin()
+                      .alterReplicaPlacements(
+                          topicPartition,
+                          context.expectedAllocation().logPlacements(topicPartition));
 
-        // wait until all target is done
-        context.rebalanceAdmin().waitLogSynced(migrationTargets, ChronoUnit.DAYS.getDuration());
+      // do log migration
+      migrationTargets.stream()
+          .map(executeReplicaMigration)
+          .flatMap(Collection::stream)
+          .peek(RebalanceTask::await)
+          .forEach(
+              task -> {
+                if (!task.progress().synced())
+                  throw new IllegalStateException("Log should be synced");
+              });
 
-        // perform leader election
-        migrationTargets.forEach(tp -> context.rebalanceAdmin().leaderElection(tp));
+      // do leader election
+      migrationTargets.stream()
+          .map(tp -> context.rebalanceAdmin().leaderElection(tp))
+          .peek(RebalanceTask::await)
+          .forEach(
+              task -> {
+                if (!task.progress())
+                  throw new IllegalStateException("Preferred leader should be the leader");
+              });
 
-        // wait until the leader election done
-        final var expected =
-            context
-                .expectedAllocation()
-                .topicPartitionStream()
-                .map(tp -> Map.entry(tp, context.expectedAllocation().logPlacements(tp)))
-                .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-        context.rebalanceAdmin().waitLeaderSynced(expected, ChronoUnit.DAYS.getDuration());
-      }
       return RebalanceExecutionResult.done();
     } catch (Exception e) {
       return RebalanceExecutionResult.failed(e);
