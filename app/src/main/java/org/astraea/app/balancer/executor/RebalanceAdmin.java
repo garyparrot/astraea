@@ -17,6 +17,7 @@
 package org.astraea.app.balancer.executor;
 
 import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -57,16 +58,26 @@ public interface RebalanceAdmin {
   SyncingProgress syncingProgress(TopicPartitionReplica topicPartitionReplica);
 
   /** Wait until all given topic/partitions are synced. */
-  boolean waitLogSynced(TopicPartitionReplica log, Duration timeout);
+  boolean waitLogSynced(TopicPartitionReplica log, Duration timeout) throws InterruptedException;
+
+  default boolean waitLogSynced(TopicPartitionReplica log) throws InterruptedException {
+    return waitLogSynced(log, ChronoUnit.FOREVER.getDuration());
+  }
 
   /**
    * Wait until the given topic/partition have its preferred leader be the actual leader.
    *
    * @param topicPartition the topic/partition to wait
    * @param timeout for the waiting process
-   * @return
+   * @return true if the target is synced
    */
-  boolean waitPreferredLeaderSynced(TopicPartition topicPartition, Duration timeout);
+  boolean waitPreferredLeaderSynced(TopicPartition topicPartition, Duration timeout)
+      throws InterruptedException;
+
+  default boolean waitPreferredLeaderSynced(TopicPartition topicPartition)
+      throws InterruptedException {
+    return waitPreferredLeaderSynced(topicPartition, ChronoUnit.FOREVER.getDuration());
+  }
 
   /** Perform preferred leader election for specific topic/partition. */
   RebalanceTask<TopicPartition, Boolean> leaderElection(TopicPartition topicPartition);

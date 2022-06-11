@@ -51,20 +51,17 @@ public class StraightPlanExecutor implements RebalancePlanExecutor {
       migrationTargets.stream()
           .map(executeReplicaMigration)
           .flatMap(Collection::stream)
-          .peek(RebalanceTask::await)
           .forEach(
               task -> {
-                if (!task.progress().synced())
-                  throw new IllegalStateException("Log should be synced");
+                if (!task.await()) throw new IllegalStateException("Log should be synced");
               });
 
       // do leader election
       migrationTargets.stream()
           .map(tp -> context.rebalanceAdmin().leaderElection(tp))
-          .peek(RebalanceTask::await)
           .forEach(
               task -> {
-                if (!task.progress())
+                if (!task.await())
                   throw new IllegalStateException("Preferred leader should be the leader");
               });
 

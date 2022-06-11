@@ -21,6 +21,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -54,8 +56,6 @@ public class RebalanceAdminImpl implements RebalanceAdmin {
 
   private List<LogPlacement> fetchCurrentPlacement(TopicPartition topicPartition) {
     ensureTopicPermitted(topicPartition.topic());
-    // TODO: we only need the info related to the topic/partition, but current Admin
-    // implementation force us to fetch everything
     return admin.replicas(Set.of(topicPartition.topic())).get(topicPartition).stream()
         .map(replica -> LogPlacement.of(replica.broker(), replica.path()))
         .collect(Collectors.toUnmodifiableList());
@@ -148,7 +148,12 @@ public class RebalanceAdminImpl implements RebalanceAdmin {
 
                   @Override
                   public boolean await(Duration timeout) {
-                    return waitLogSynced(log, timeout);
+                    try {
+                      return waitLogSynced(log, timeout);
+                    } catch (InterruptedException e) {
+                      Thread.currentThread().interrupt();
+                      return false;
+                    }
                   }
                 })
         .collect(Collectors.toUnmodifiableList());
@@ -177,7 +182,8 @@ public class RebalanceAdminImpl implements RebalanceAdmin {
   }
 
   @Override
-  public boolean waitLogSynced(TopicPartitionReplica log, Duration timeout) {
+  public boolean waitLogSynced(TopicPartitionReplica log, Duration timeout)
+      throws InterruptedException {
     ensureTopicPermitted(log.topic());
     return await(
         () ->
@@ -187,13 +193,14 @@ public class RebalanceAdminImpl implements RebalanceAdmin {
                 .flatMap(x -> x.getValue().stream())
                 .filter(x -> x.broker() == log.brokerId())
                 .findFirst()
-                .orElseThrow()
-                .inSync(),
+                .map(Replica::inSync)
+                .orElse(false),
         timeout);
   }
 
   @Override
-  public boolean waitPreferredLeaderSynced(TopicPartition topicPartition, Duration timeout) {
+  public boolean waitPreferredLeaderSynced(TopicPartition topicPartition, Duration timeout)
+      throws InterruptedException {
     ensureTopicPermitted(topicPartition.topic());
     // the set of interested topics.
     return await(
@@ -226,12 +233,26 @@ public class RebalanceAdminImpl implements RebalanceAdmin {
 
       @Override
       public Boolean progress() {
-        return await(Duration.ZERO);
+        return admin.replicas(Set.of(topicPartition.topic())).entrySet().stream()
+            .filter(x -> x.getKey().equals(topicPartition))
+            .findFirst()
+            .map(
+                x -> {
+                  // TODO: use isPreferredLeader flag instead
+                  var replica = x.getValue().get(0);
+                  return replica.inSync();
+                })
+            .orElseThrow();
       }
 
       @Override
       public boolean await(Duration timeout) {
-        return waitPreferredLeaderSynced(topicPartition, timeout);
+        try {
+          return waitPreferredLeaderSynced(topicPartition, timeout);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          return false;
+        }
       }
     };
   }
@@ -247,16 +268,25 @@ public class RebalanceAdminImpl implements RebalanceAdmin {
     return ClusterInfo.of(oldClusterInfo, metricSource.get());
   }
 
-  private static boolean await(Supplier<Boolean> task, Duration timeout) {
+  static boolean await(Supplier<Boolean> task, Duration timeout) throws InterruptedException {
+    long retryInterval = Duration.ofSeconds(0).toMillis();
+    Function<Long, Long> nextRetry = (current) -> Math.min(5000, current + 1000);
     long nowMs = System.currentTimeMillis();
+    long oldMs = nowMs;
     long timeoutMs = timeout.getSeconds() * 1000 + timeout.toMillisPart() + nowMs;
-    if (timeoutMs < 0) timeoutMs = Long.MAX_VALUE;
 
-    boolean isDone = false;
-    while (timeoutMs > nowMs) {
+    // overflow detection
+    if (timeoutMs < timeout.getSeconds()) timeoutMs = Long.MAX_VALUE;
+
+    boolean isDone;
+    do {
+      TimeUnit.MILLISECONDS.sleep(Math.max(0, retryInterval - (nowMs - oldMs)));
+
+      oldMs = nowMs;
       isDone = task.get();
+      retryInterval = nextRetry.apply(retryInterval);
       nowMs = System.currentTimeMillis();
-    }
+    } while (!isDone && timeoutMs > nowMs);
 
     return isDone;
   }
