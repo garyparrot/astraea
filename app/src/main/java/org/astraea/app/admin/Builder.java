@@ -39,6 +39,7 @@ import org.apache.kafka.clients.admin.MemberDescription;
 import org.apache.kafka.clients.admin.NewPartitionReassignment;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.admin.OffsetSpec;
+import org.apache.kafka.clients.admin.TransactionListing;
 import org.apache.kafka.common.ElectionType;
 import org.apache.kafka.common.TopicPartitionReplica;
 import org.apache.kafka.common.config.ConfigResource;
@@ -365,6 +366,10 @@ public class Builder {
                           var tpInfo = entry.getValue();
                           var replicaLeaderId = tpInfo.leader() != null ? tpInfo.leader().id() : -1;
                           var isrSet = tpInfo.isr();
+                          // The first replica in the return result is the preferred leader. This
+                          // only works with Kafka broker version after 0.11. Version before 0.11
+                          // returns the replicas in unspecified order due to a bug.
+                          var preferredLeader = entry.getValue().replicas().get(0);
                           return entry.getValue().replicas().stream()
                               .map(
                                   node -> {
@@ -387,8 +392,16 @@ public class Builder {
                                     long size = replicaInfo != null ? replicaInfo.size() : -1L;
                                     boolean future = replicaInfo != null && replicaInfo.isFuture();
                                     boolean offline = node.isEmpty();
+                                    boolean isPreferredLeader = preferredLeader.id() == broker;
                                     return new Replica(
-                                        broker, lag, size, isLeader, inSync, future, offline,
+                                        broker,
+                                        lag,
+                                        size,
+                                        isLeader,
+                                        inSync,
+                                        future,
+                                        offline,
+                                        isPreferredLeader,
                                         dataPath);
                                   })
                               .collect(Collectors.toList());
@@ -519,6 +532,24 @@ public class Builder {
               .collect(Collectors.toUnmodifiableMap(NodeInfo::id, ignore -> List.of()));
         }
       };
+    }
+
+    @Override
+    public Set<String> transactionIds() {
+      return Utils.packException(
+          () ->
+              admin.listTransactions().all().get().stream()
+                  .map(TransactionListing::transactionalId)
+                  .collect(Collectors.toUnmodifiableSet()));
+    }
+
+    @Override
+    public Map<String, Transaction> transactions(Set<String> transactionIds) {
+      return Utils.packException(
+          () ->
+              admin.describeTransactions(transactionIds).all().get().entrySet().stream()
+                  .collect(
+                      Collectors.toMap(Map.Entry::getKey, e -> Transaction.from(e.getValue()))));
     }
   }
 

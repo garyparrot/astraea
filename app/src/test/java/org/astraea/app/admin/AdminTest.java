@@ -16,11 +16,9 @@
  */
 package org.astraea.app.admin;
 
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.condition.OS.WINDOWS;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
@@ -387,6 +385,46 @@ public class AdminTest extends RequireBrokerCluster {
   }
 
   @Test
+  void testReplicasPreferredLeaderFlag() throws InterruptedException {
+    // arrange
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      var topic = "testReplicasPreferredLeaderFlag_" + Utils.randomString();
+      var partitionCount = 10;
+      admin
+          .creator()
+          .topic(topic)
+          .numberOfPartitions(partitionCount)
+          .numberOfReplicas((short) 3)
+          .create();
+      TimeUnit.SECONDS.sleep(3);
+      var expectedPreferredLeader =
+          IntStream.range(0, partitionCount)
+              .mapToObj(p -> new TopicPartition(topic, p))
+              .collect(Collectors.toUnmodifiableMap(p -> p, p -> List.of(0)));
+      var currentPreferredLeader =
+          (Supplier<Map<TopicPartition, List<Integer>>>)
+              () ->
+                  admin.replicas(Set.of(topic)).entrySet().stream()
+                      .collect(
+                          Collectors.toUnmodifiableMap(
+                              Map.Entry::getKey,
+                              entry ->
+                                  entry.getValue().stream()
+                                      .filter(Replica::isPreferredLeader)
+                                      .map(Replica::broker)
+                                      .collect(Collectors.toUnmodifiableList())));
+
+      // act, make 0 be the preferred leader of every partition
+      IntStream.range(0, partitionCount)
+          .forEach(p -> admin.migrator().partition(topic, p).moveTo(List.of(0, 1, 2)));
+      TimeUnit.SECONDS.sleep(3);
+
+      // assert
+      Assertions.assertEquals(expectedPreferredLeader, currentPreferredLeader.get());
+    }
+  }
+
+  @Test
   void testProducerStates() throws ExecutionException, InterruptedException {
     var topic = Utils.randomString(10);
     try (var producer = Producer.of(bootstrapServers());
@@ -526,14 +564,15 @@ public class AdminTest extends RequireBrokerCluster {
               .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
       replicaOnBroker0.forEach((tp, replica) -> Assertions.assertFalse(replica.get(0).isOffline()));
       closeBroker(0);
-      assertNull(logFolders().get(0));
-      assertNotNull(logFolders().get(1));
-      assertNotNull(logFolders().get(2));
+      Assertions.assertNull(logFolders().get(0));
+      Assertions.assertNotNull(logFolders().get(1));
+      Assertions.assertNotNull(logFolders().get(2));
       var offlineReplicaOnBroker0 =
           admin.replicas(admin.topicNames()).entrySet().stream()
               .filter(replica -> replica.getValue().get(0).broker() == 0)
               .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-      offlineReplicaOnBroker0.forEach((tp, replica) -> assertTrue(replica.get(0).isOffline()));
+      offlineReplicaOnBroker0.forEach(
+          (tp, replica) -> Assertions.assertTrue(replica.get(0).isOffline()));
 
     } catch (InterruptedException e) {
       throw new RuntimeException(e);
@@ -605,7 +644,7 @@ public class AdminTest extends RequireBrokerCluster {
       Assertions.assertThrows(
           NoSuchElementException.class, () -> clusterInfo.availableReplicaLeaders("Unknown Topic"));
       Assertions.assertThrows(NoSuchElementException.class, () -> clusterInfo.dataDirectories(-1));
-      Assertions.assertThrows(IllegalArgumentException.class, () -> clusterInfo.node(-1));
+      Assertions.assertThrows(NoSuchElementException.class, () -> clusterInfo.node(-1));
       Assertions.assertThrows(
           NoSuchElementException.class, () -> clusterInfo.node("unknown", 1024));
     }
@@ -751,6 +790,52 @@ public class AdminTest extends RequireBrokerCluster {
         // after election
         Assertions.assertEquals(expectedLeaderMap.get(), currentLeaderMap.get());
       }
+    }
+  }
+
+  @Test
+  void testTransactionIds() throws ExecutionException, InterruptedException {
+    var topicName = Utils.randomString(10);
+    try (var admin = Admin.of(bootstrapServers());
+        var producer =
+            Producer.builder().bootstrapServers(bootstrapServers()).buildTransactional()) {
+      Assertions.assertTrue(producer.transactional());
+      producer.sender().key(new byte[10]).topic(topicName).run().toCompletableFuture().get();
+
+      Assertions.assertTrue(admin.transactionIds().contains(producer.transactionId().get()));
+
+      var transaction = admin.transactions().get(producer.transactionId().get());
+      Assertions.assertNotNull(transaction);
+      Assertions.assertEquals(
+          transaction.state() == TransactionState.COMPLETE_COMMIT ? 0 : 1,
+          transaction.topicPartitions().size());
+    }
+  }
+
+  @Test
+  void testTransactionIdsWithMultiPuts() throws ExecutionException, InterruptedException {
+    var topicName = Utils.randomString(10);
+    try (var admin = Admin.of(bootstrapServers());
+        var producer =
+            Producer.builder().bootstrapServers(bootstrapServers()).buildTransactional()) {
+      Assertions.assertTrue(producer.transactional());
+      IntStream.range(0, 10)
+          .forEach(
+              index ->
+                  producer
+                      .sender()
+                      .key(String.valueOf(index).getBytes(StandardCharsets.UTF_8))
+                      .topic(topicName)
+                      .run());
+      producer.flush();
+
+      Assertions.assertTrue(admin.transactionIds().contains(producer.transactionId().get()));
+
+      var transaction = admin.transactions().get(producer.transactionId().get());
+      Assertions.assertNotNull(transaction);
+      Assertions.assertEquals(
+          transaction.state() == TransactionState.COMPLETE_COMMIT ? 0 : 1,
+          transaction.topicPartitions().size());
     }
   }
 }
