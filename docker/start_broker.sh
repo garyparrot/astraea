@@ -326,6 +326,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 rejectProperty "listeners"
+rejectProperty "log.dirs"
 rejectProperty "broker.id"
 requireProperty "zookeeper.connect"
 
