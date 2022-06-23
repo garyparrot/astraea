@@ -46,8 +46,6 @@ public class MetricCollector implements AutoCloseable {
    * limit. The actual size might exceed. This issue is minor and fixing that might cause
    * performance issue. So no. This number must be larger than zero.
    */
-  // TODO: guess what? this value must be bigger once there are many topic/partition/broker. A big
-  // thanks to the design of ClusterInfo.
   private final int timeSeriesKeeps = 1000;
 
   private final Map<Integer, MBeanClient> mBeanClientMap;
