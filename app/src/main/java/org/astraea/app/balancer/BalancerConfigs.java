@@ -33,9 +33,12 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.management.remote.JMXServiceURL;
 import org.astraea.app.balancer.executor.RebalancePlanExecutor;
+import org.astraea.app.balancer.executor.StraightPlanExecutor;
 import org.astraea.app.balancer.generator.RebalancePlanGenerator;
+import org.astraea.app.balancer.generator.ShufflePlanGenerator;
 import org.astraea.app.common.Utils;
 import org.astraea.app.cost.CostFunction;
+import org.astraea.app.cost.broker.CpuCost;
 import org.astraea.app.partitioner.Configuration;
 
 public class BalancerConfigs implements Configuration {
@@ -44,7 +47,7 @@ public class BalancerConfigs implements Configuration {
   public static final String JMX_SERVERS_CONFIG = "jmx.servers";
   public static final String METRICS_SCRAPING_QUEUE_SIZE_CONFIG = "metrics.scraping.queue.size";
   public static final String METRICS_SCRAPING_INTERVAL_MS_CONFIG = "metrics.scraping.interval.ms";
-  public static final String METRIC_WARM_UP_PERCENT_CONFIG = "metrics.warm.up.percent";
+  public static final String METRIC_WARM_UP_COUNT_CONFIG = "metrics.warm.up.count";
   public static final String BALANCER_IGNORED_TOPICS_CONFIG = "balancer.ignored.topics";
   public static final String BALANCER_COST_FUNCTIONS = "balancer.cost.functions";
   public static final String BALANCER_REBALANCE_PLAN_GENERATOR =
@@ -107,7 +110,7 @@ public class BalancerConfigs implements Configuration {
 
   @Config(key = METRICS_SCRAPING_QUEUE_SIZE_CONFIG)
   public int metricScrapingQueueSize() {
-    return string(METRICS_SCRAPING_QUEUE_SIZE_CONFIG).map(Integer::parseInt).orElse(1000);
+    return string(METRICS_SCRAPING_QUEUE_SIZE_CONFIG).map(Integer::parseInt).orElse(300);
   }
 
   @Config(key = METRICS_SCRAPING_INTERVAL_MS_CONFIG)
@@ -118,9 +121,9 @@ public class BalancerConfigs implements Configuration {
         .orElse(Duration.ofSeconds(1));
   }
 
-  @Config(key = METRIC_WARM_UP_PERCENT_CONFIG)
-  public double metricWarmUpPercent() {
-    return string(METRIC_WARM_UP_PERCENT_CONFIG).map(Double::parseDouble).orElse(0.5);
+  @Config(key = METRIC_WARM_UP_COUNT_CONFIG)
+  public Integer metricWarmUpCount() {
+    return string(METRIC_WARM_UP_COUNT_CONFIG).map(Integer::parseInt).orElse(30);
   }
 
   @Config(key = BALANCER_IGNORED_TOPICS_CONFIG)
@@ -132,29 +135,30 @@ public class BalancerConfigs implements Configuration {
   }
 
   @Config(key = BALANCER_COST_FUNCTIONS)
-  @Required
   public List<Class<? extends CostFunction>> costFunctionClasses() {
-    return Stream.of(requireString(BALANCER_COST_FUNCTIONS).split(","))
+    var defaultValue =
+        Stream.of(CpuCost.class).map(Class::getName).collect(Collectors.joining(","));
+
+    return Stream.of(string(BALANCER_COST_FUNCTIONS).orElse(defaultValue).split(","))
         .map(classname -> resolveClass(classname, CostFunction.class))
         .collect(Collectors.toUnmodifiableList());
   }
 
   @Config(key = BALANCER_REBALANCE_PLAN_GENERATOR)
-  @Required
   public Class<? extends RebalancePlanGenerator> rebalancePlanGeneratorClass() {
-    String classname = requireString(BALANCER_REBALANCE_PLAN_GENERATOR);
+    String classname =
+        string(BALANCER_REBALANCE_PLAN_GENERATOR).orElse(ShufflePlanGenerator.class.getName());
     return resolveClass(classname, RebalancePlanGenerator.class);
   }
 
   @Config(key = BALANCER_REBALANCE_PLAN_EXECUTOR)
-  @Required
   public Class<? extends RebalancePlanExecutor> rebalancePlanExecutorClass() {
-    String classname = requireString(BALANCER_REBALANCE_PLAN_EXECUTOR);
+    String classname =
+        string(BALANCER_REBALANCE_PLAN_EXECUTOR).orElse(StraightPlanExecutor.class.getName());
     return resolveClass(classname, RebalancePlanExecutor.class);
   }
 
   @Config(key = BALANCER_PLAN_SEARCHING_ITERATION)
-  @Required
   public int rebalancePlanSearchingIteration() {
     return string(BALANCER_PLAN_SEARCHING_ITERATION).map(Integer::parseInt).orElse(2000);
   }
@@ -162,7 +166,7 @@ public class BalancerConfigs implements Configuration {
   private static <T> Class<T> resolveClass(String classname, Class<T> extendedType) {
     Class<?> aClass = Utils.packException(() -> Class.forName(classname));
 
-    if (aClass.isInstance(extendedType)) {
+    if (extendedType.isAssignableFrom(aClass)) {
       //noinspection unchecked
       return (Class<T>) aClass;
     } else {

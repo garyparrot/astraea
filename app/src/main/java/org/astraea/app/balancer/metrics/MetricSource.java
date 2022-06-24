@@ -38,6 +38,8 @@ public interface MetricSource extends AutoCloseable {
                 brokerId -> brokerId, brokerId -> metrics(fetcher, brokerId)));
   }
 
+  double warmUpProgress();
+
   void awaitMetricReady();
 
   void drainMetrics();

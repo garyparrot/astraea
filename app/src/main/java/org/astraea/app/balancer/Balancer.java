@@ -25,15 +25,16 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-
 import org.astraea.app.admin.Admin;
 import org.astraea.app.balancer.executor.RebalanceAdmin;
 import org.astraea.app.balancer.executor.RebalanceExecutionContext;
 import org.astraea.app.balancer.executor.RebalancePlanExecutor;
 import org.astraea.app.balancer.generator.RebalancePlanGenerator;
+import org.astraea.app.balancer.log.ClusterLogAllocation;
 import org.astraea.app.balancer.metrics.IdentifiedFetcher;
 import org.astraea.app.balancer.metrics.JmxMetricSampler;
 import org.astraea.app.balancer.metrics.MetricSource;
@@ -92,23 +93,36 @@ public class Balancer implements AutoCloseable {
     while (!Thread.currentThread().isInterrupted()) {
       boolean shouldDrainMetrics = false;
       // let metric warm up
+      // TODO: find a way to show the progress, without pollute the logic
+      System.out.println("Warmup metrics");
+      var t = progressWatch("Warm Up Metrics", 1, metricSource::warmUpProgress);
+      t.start();
       metricSource.awaitMetricReady();
+      // TODO: find a way to show the progress, without pollute the logic
+      t.interrupt();
+      Utils.packException(() -> t.join());
+      System.out.println("Metrics warmed");
 
       try {
-        // TODO: find a way to show the progress, make it a standalone module, don't pollute the code here
+        // TODO: find a way to show the progress, without pollute the logic
         System.out.println("Run " + planGenerator.getClass().getName());
         var clusterInfo = newClusterInfo();
         var bestProposal = seekingRebalancePlan(clusterInfo);
-        if (bestProposal.rebalancePlan().isEmpty()) break;
+        if (bestProposal.rebalancePlan().isEmpty()) {
+          // TODO: find a way to show the progress, without pollute the logic
+          System.out.println(bestProposal);
+          continue;
+        }
+        // TODO: find a way to show the progress, without pollute the logic
         System.out.println("Run " + planExecutor.getClass().getName());
         shouldDrainMetrics = true;
         executePlan(clusterInfo, bestProposal);
       } catch (Exception e) {
         e.printStackTrace();
       } finally {
-        // drain old metrics, these metrics is probably invalid after the rebalance operation performed.
-        if(shouldDrainMetrics)
-          metricSource.drainMetrics();
+        // drain old metrics, these metrics is probably invalid after the rebalance operation
+        // performed.
+        if (shouldDrainMetrics) metricSource.drainMetrics();
         // wait for a while
         Utils.packException(() -> TimeUnit.SECONDS.sleep(5));
       }
@@ -125,38 +139,29 @@ public class Balancer implements AutoCloseable {
 
   private RebalancePlanProposal seekingRebalancePlan(ClusterInfo clusterInfo) {
     var tries = balancerConfigs.rebalancePlanSearchingIteration();
-    var counter = new AtomicInteger(0);
-    var thread = progressWatch(
-            "Searching for Good Rebalance Plan",
-            tries, counter::get);
+    var counter = new LongAdder();
+    // TODO: find a way to show the progress, without pollute the logic
+    var thread = progressWatch("Searching for Good Rebalance Plan", tries, counter::doubleValue);
     try {
       thread.start();
 
       var bestMigrationProposal =
-              planGenerator
-                      .generate(clusterInfo)
-                      .parallel()
-                      .limit(tries)
-                      .peek(ignore -> counter.incrementAndGet())
-                      .flatMap(plan -> plan.rebalancePlan().stream().map(x -> Map.entry(plan, x)))
-                      .map(
-                              alloc -> {
-                                var proposedCluster =
-                                        BalancerUtils.mockClusterInfoAllocation(clusterInfo, alloc.getValue());
-                                var scores =
-                                        costFunctions.stream()
-                                                .map(cf -> Map.entry(cf, this.costFunctionScore(proposedCluster, cf)))
-                                                .collect(
-                                                        Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-                                var finalScore = aggregateFunction(scores);
-                                return Map.entry(finalScore, alloc.getKey());
-                              })
-                      .min(Map.Entry.comparingByKey());
+          planGenerator
+              .generate(clusterInfo)
+              .parallel()
+              .limit(tries)
+              .peek(ignore -> counter.increment())
+              .map(
+                  plan ->
+                      plan.rebalancePlan()
+                          .map(allocation -> Map.entry(evaluate(clusterInfo, allocation), plan))
+                          .orElse(Map.entry(1.0, plan)))
+              .min(Map.Entry.comparingByKey());
 
       // find the target with the highest score, return it
       return bestMigrationProposal
-              .map(Map.Entry::getValue)
-              .orElseThrow(() -> new NoSuchElementException("No Better Plan Found"));
+          .map(Map.Entry::getValue)
+          .orElseThrow(() -> new NoSuchElementException("No Better Plan Found"));
     } finally {
       thread.interrupt();
       Utils.packException(() -> thread.join());
@@ -186,6 +191,14 @@ public class Balancer implements AutoCloseable {
     }
   }
 
+  private double evaluate(ClusterInfo clusterInfo, ClusterLogAllocation allocation) {
+    var proposedCluster = BalancerUtils.mockClusterInfoAllocation(clusterInfo, allocation);
+    var scores =
+        costFunctions.stream()
+            .map(cf -> Map.entry(cf, this.costFunctionScore(proposedCluster, cf)))
+            .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+    return aggregateFunction(scores);
+  }
   /** the lower, the better. */
   private double aggregateFunction(Map<CostFunction, Double> scores) {
     // use the simple summation result, treat every cost equally.
@@ -232,37 +245,45 @@ public class Balancer implements AutoCloseable {
     throw new UnsupportedOperationException();
   }
 
-
-  // TODO: this usage will be remove some day
-  private static Thread progressWatch(String title, int totalTasks, Supplier<Integer> accTasks) {
+  // TODO: this usage will be removed some day
+  @Deprecated
+  private static Thread progressWatch(String title, double totalTasks, Supplier<Double> accTasks) {
     AtomicInteger counter = new AtomicInteger();
 
-    Supplier<String> nextProgressBar = () -> {
-      int blockCount = 20;
-      double percentagePerBlock = 1.0 / blockCount;
-      int now = accTasks.get();
-      double currentProgress = (double)now / totalTasks;
-      int fulfilled = Math.min((int)(currentProgress / percentagePerBlock), blockCount);
-      int rollingBlock = blockCount - fulfilled >= 1 ? 1 : 0;
-      int emptyBlocks = blockCount - rollingBlock - fulfilled;
+    Supplier<String> nextProgressBar =
+        () -> {
+          int blockCount = 20;
+          double percentagePerBlock = 1.0 / blockCount;
+          double now = accTasks.get();
+          double currentProgress = now / totalTasks;
+          int fulfilled = Math.min((int) (currentProgress / percentagePerBlock), blockCount);
+          int rollingBlock = blockCount - fulfilled >= 1 ? 1 : 0;
+          int emptyBlocks = blockCount - rollingBlock - fulfilled;
 
-      String rollingText = "-\\|/";
-      String filled = String.join("", Collections.nCopies(fulfilled, "-"));
-      String rolling = String.join("", Collections.nCopies(rollingBlock, "" + rollingText.charAt(counter.getAndIncrement() % 4)));
-      String empty = String.join("", Collections.nCopies(emptyBlocks, " "));
-      return String.format("[%s%s%s] (%d/%d)", filled, rolling, empty, now, totalTasks);
-    };
+          String rollingText = "-\\|/";
+          String filled = String.join("", Collections.nCopies(fulfilled, "-"));
+          String rolling =
+              String.join(
+                  "",
+                  Collections.nCopies(
+                      rollingBlock, "" + rollingText.charAt(counter.getAndIncrement() % 4)));
+          String empty = String.join("", Collections.nCopies(emptyBlocks, " "));
+          return String.format("[%s%s%s] (%.2f/%.2f)", filled, rolling, empty, now, totalTasks);
+        };
 
-    Runnable progressWatch = () -> {
-      while (!Thread.currentThread().isInterrupted()) {
-        System.out.println("[" + title + "] " + nextProgressBar.get());
-        try {
-          TimeUnit.MILLISECONDS.sleep(500);
-        } catch (InterruptedException e) {
-          break;
-        }
-      }
-    };
+    Runnable progressWatch =
+        () -> {
+          while (!Thread.currentThread().isInterrupted()) {
+            System.out.println("[" + title + "] " + nextProgressBar.get());
+            try {
+              TimeUnit.MILLISECONDS.sleep(500);
+            } catch (InterruptedException e) {
+              break;
+            }
+          }
+          System.out.println("[" + title + "] " + nextProgressBar.get());
+          System.out.println();
+        };
 
     return new Thread(progressWatch);
   }

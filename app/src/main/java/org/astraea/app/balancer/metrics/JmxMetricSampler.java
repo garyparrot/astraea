@@ -17,6 +17,7 @@
 package org.astraea.app.balancer.metrics;
 
 import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -28,6 +29,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -46,7 +48,9 @@ public class JmxMetricSampler implements MetricSource, AutoCloseable {
    */
   private final int queueSize;
 
-  private final double warmUpRate;
+  private final int brokerCount;
+  private final int warmUpCount;
+  private final LongAdder sampleCounter;
 
   private final Map<Integer, JMXServiceURL> jmxServiceURLMap;
   private final Map<Integer, MBeanClient> mBeanClientMap;
@@ -67,9 +71,10 @@ public class JmxMetricSampler implements MetricSource, AutoCloseable {
       BalancerConfigs configuration,
       Map<Integer, JMXServiceURL> serviceUrls,
       Collection<IdentifiedFetcher> fetchers) {
-    int brokerCount = serviceUrls.size();
+    this.brokerCount = serviceUrls.size();
     this.queueSize = configuration.metricScrapingQueueSize();
-    this.warmUpRate = configuration.metricWarmUpPercent();
+    this.warmUpCount = configuration.metricWarmUpCount();
+    this.sampleCounter = new LongAdder();
     this.jmxServiceURLMap = Map.copyOf(serviceUrls);
     this.mBeanClientMap =
         serviceUrls.entrySet().stream()
@@ -99,43 +104,52 @@ public class JmxMetricSampler implements MetricSource, AutoCloseable {
                           for (IdentifiedFetcher identifiedFetcher : fetchers) {
                             var metricStore = metrics.get(identifiedFetcher).get(broker);
 
-                            // sampling metrics
+                            // There is an issue related to Fetcher, the fetcher can fetch nothing
+                            // back. So some queue might never growth.
                             metricStore.addAll(identifiedFetcher.fetch(client));
 
                             // draining old metrics
                             while (metricStore.size() > queueSize) metricStore.poll();
                           }
+                          sampleCounter.increment();
                         },
                         0,
                         fetchInterval.toMillis(),
                         TimeUnit.MILLISECONDS))
-            .collect(Collectors.toUnmodifiableList());
+            .collect(Collectors.toList());
+  }
+
+  private boolean ensureNotClosed() {
+    if (closed.get()) throw new IllegalStateException("This metric source has been closed");
+    return true;
   }
 
   @Override
   public Collection<HasBeanObject> metrics(IdentifiedFetcher fetcher, int brokerId) {
+    ensureNotClosed();
     return Collections.unmodifiableCollection(metrics.get(fetcher).get(brokerId));
   }
 
   @Override
-  public void awaitMetricReady() {
-    Supplier<Boolean> allQueuesReady =
-        () ->
-            metrics.values().stream()
-                .flatMap(brokers -> brokers.values().stream())
-                .mapToDouble(queue -> (double) queue.size() / queueSize)
-                .allMatch(fillRate -> fillRate >= warmUpRate);
+  public double warmUpProgress() {
+    ensureNotClosed();
+    return Math.min(1.0, sampleCounter.doubleValue() / brokerCount / warmUpCount);
+  }
 
-    Utils.waitFor(allQueuesReady);
+  @Override
+  public void awaitMetricReady() {
+    Supplier<Boolean> allQueuesReady = () -> ensureNotClosed() && warmUpProgress() == 1.0;
+
+    Utils.waitFor(allQueuesReady, ChronoUnit.DAYS.getDuration());
   }
 
   @Override
   public void drainMetrics() {
-    metrics.values()
-            .stream()
-            .map(Map::values)
-            .flatMap(Collection::stream)
-            .forEach(ConcurrentLinkedQueue::clear);
+    ensureNotClosed();
+    metrics.values().stream()
+        .map(Map::values)
+        .flatMap(Collection::stream)
+        .forEach(ConcurrentLinkedQueue::clear);
   }
 
   @Override
