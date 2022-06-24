@@ -59,8 +59,13 @@ public class BalancerConfigs implements Configuration {
   private final Configuration configuration;
 
   public BalancerConfigs(Configuration configuration) {
+    this(configuration, true);
+  }
+
+  // visible for testing
+  BalancerConfigs(Configuration configuration, boolean doSanityCheck) {
     this.configuration = configuration;
-    sanityCheck();
+    if (doSanityCheck) sanityCheck();
   }
 
   /**
@@ -200,13 +205,15 @@ public class BalancerConfigs implements Configuration {
     return configuration.entrySet();
   }
 
+  // visible for test
   @Target(ElementType.METHOD)
   @Retention(RetentionPolicy.RUNTIME)
-  private @interface Required {}
+  @interface Required {}
 
+  // visible for test
   @Target(ElementType.METHOD)
   @Retention(RetentionPolicy.RUNTIME)
-  private @interface Config {
+  @interface Config {
     String key();
   }
 }

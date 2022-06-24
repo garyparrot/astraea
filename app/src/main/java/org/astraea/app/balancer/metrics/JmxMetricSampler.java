@@ -131,6 +131,13 @@ public class JmxMetricSampler implements MetricSource, AutoCloseable {
   }
 
   @Override
+  public Map<Integer, Collection<HasBeanObject>> metrics(
+      Set<Integer> nodes, IdentifiedFetcher fetcher) {
+    ensureNotClosed();
+    return MetricSource.super.metrics(nodes, fetcher);
+  }
+
+  @Override
   public double warmUpProgress() {
     ensureNotClosed();
     return Math.min(1.0, sampleCounter.doubleValue() / brokerCount / warmUpCount);
@@ -138,6 +145,9 @@ public class JmxMetricSampler implements MetricSource, AutoCloseable {
 
   @Override
   public void awaitMetricReady() {
+    ensureNotClosed();
+    // TODO: the below close check won't do anything. waitFor will shallow the ensureNotClosed
+    // error, cause caller wait for days even it is already closed
     Supplier<Boolean> allQueuesReady = () -> ensureNotClosed() && warmUpProgress() == 1.0;
 
     Utils.waitFor(allQueuesReady, ChronoUnit.DAYS.getDuration());
@@ -161,5 +171,9 @@ public class JmxMetricSampler implements MetricSource, AutoCloseable {
     this.scheduledFutures.clear();
     this.executorService.shutdown();
     this.mBeanClientMap.values().forEach(MBeanClient::close);
+    this.metrics.values().stream()
+        .map(Map::values)
+        .flatMap(Collection::stream)
+        .forEach(ConcurrentLinkedQueue::clear);
   }
 }

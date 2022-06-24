@@ -39,7 +39,8 @@ public class BalancerMain {
     execute(configuration(argument.configuration));
   }
 
-  private static Configuration configuration(File configFile) {
+  // visible for test
+  static Configuration configuration(File configFile) {
     try (FileInputStream configStream = new FileInputStream(configFile)) {
       var properties = new Properties();
       properties.load(configStream);

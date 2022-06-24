@@ -119,6 +119,7 @@ class BalancerUtils {
   public static CostFunction constructCostFunction(
       Class<? extends CostFunction> aClass, Configuration configuration) {
     // TODO: make it possible to construct specific object from Config
+    // TODO: add test for this after above TODO is done
     if (!aClass.equals(CpuCost.class)) throw new UnsupportedOperationException();
     return new CpuCost();
   }
@@ -126,6 +127,7 @@ class BalancerUtils {
   public static RebalancePlanGenerator constructGenerator(
       Class<? extends RebalancePlanGenerator> aClass, Configuration configuration) {
     // TODO: make it possible to construct specific object from Config
+    // TODO: add test for this after above TODO is done
     if (!aClass.equals(ShufflePlanGenerator.class)) throw new UnsupportedOperationException();
     var shuffleCount =
         configuration
@@ -138,6 +140,7 @@ class BalancerUtils {
   public static RebalancePlanExecutor constructExecutor(
       Class<? extends RebalancePlanExecutor> aClass, Configuration configuration) {
     // TODO: make it possible to construct specific object from Config
+    // TODO: add test for this after above TODO is done
     if (!aClass.equals(StraightPlanExecutor.class)) throw new UnsupportedOperationException();
     return new StraightPlanExecutor();
   }
