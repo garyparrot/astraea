@@ -21,31 +21,41 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.management.remote.JMXServiceURL;
-import org.astraea.app.balancer.executor.RebalanceExecutionContext;
-import org.astraea.app.balancer.executor.RebalanceExecutionResult;
-import org.astraea.app.balancer.executor.RebalancePlanExecutor;
-import org.astraea.app.balancer.generator.RebalancePlanGenerator;
-import org.astraea.app.balancer.log.ClusterLogAllocation;
+import org.astraea.app.balancer.utils.DummyCostFunction;
+import org.astraea.app.balancer.utils.DummyExecutor;
+import org.astraea.app.balancer.utils.DummyGenerator;
+import org.astraea.app.balancer.utils.DummyMetricSource;
 import org.astraea.app.common.Utils;
-import org.astraea.app.cost.ClusterInfo;
-import org.astraea.app.cost.CostFunction;
-import org.astraea.app.metrics.collector.Fetcher;
 import org.astraea.app.partitioner.Configuration;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 public class BalancerConfigsTest {
 
+  public static String jndiString(String host, int port) {
+    return String.format("service:jmx:rmi://%s:%d/jndi/rmi://%s:%d/jmxrmi", host, port, host, port);
+  }
+
+  public static String jmxString(int brokerId, String hostname, int port) {
+    return String.format("%d@%s", brokerId, jndiString(hostname, port));
+  }
+
   private static class TestData {
     public static final String valueJmx =
-        "1001@service:jmx:rmi://host1:5566/jndi/rmi://host1:5566/jmxrmi,"
-            + "1002@service:jmx:rmi://host2:5566/jndi/rmi://host2:5566/jmxrmi,"
-            + "1003@service:jmx:rmi://host3:5566/jndi/rmi://host3:5566/jmxrmi";
+        String.join(
+            ",",
+            jmxString(1001, "host1", 5566),
+            jmxString(1002, "host2", 5566),
+            jmxString(1003, "host3", 5566));
+
     public static final Map<Integer, JMXServiceURL> expJmx =
         Utils.packException(
             () ->
@@ -71,34 +81,17 @@ public class BalancerConfigsTest {
     public static final String valueExecutor = DummyExecutor.class.getName();
     public static final Class<?> expExecutor = DummyExecutor.class;
 
-    static class DummyCostFunction implements CostFunction {
-      @Override
-      public Fetcher fetcher() {
-        throw new UnsupportedOperationException();
-      }
-    }
-
-    static class DummyGenerator implements RebalancePlanGenerator {
-      @Override
-      public Stream<RebalancePlanProposal> generate(
-          ClusterInfo clusterInfo, ClusterLogAllocation baseAllocation) {
-        throw new UnsupportedOperationException();
-      }
-    }
-
-    static class DummyExecutor implements RebalancePlanExecutor {
-      @Override
-      public RebalanceExecutionResult run(RebalanceExecutionContext executionContext) {
-        throw new UnsupportedOperationException();
-      }
-    }
+    public static final String valueMetricSource = DummyMetricSource.class.getName();
+    public static final String valueMetricSources =
+        String.join(",", DummyMetricSource.class.getName(), DummyMetricSource.class.getName());
+    public static final Class<?> expMetricSource = DummyMetricSource.class;
   }
 
   static <T> Arguments passCase(String key, String value, T expectedReturn) {
     return Arguments.arguments(true, key, value, expectedReturn);
   }
 
-  static <T> Arguments failCase(String key, String value) {
+  static Arguments failCase(String key, String value) {
     return Arguments.arguments(false, key, value, null);
   }
 
@@ -113,8 +106,8 @@ public class BalancerConfigsTest {
         failCase(BalancerConfigs.METRICS_SCRAPING_QUEUE_SIZE_CONFIG, "ten"),
         passCase(BalancerConfigs.METRICS_SCRAPING_INTERVAL_MS_CONFIG, "10", Duration.ofMillis(10)),
         failCase(BalancerConfigs.METRICS_SCRAPING_INTERVAL_MS_CONFIG, "50cent"),
-        passCase(BalancerConfigs.METRIC_WARM_UP_COUNT_CONFIG, "10", 10),
-        failCase(BalancerConfigs.METRIC_WARM_UP_COUNT_CONFIG, "lOO"),
+        passCase(BalancerConfigs.METRICS_WARM_UP_COUNT_CONFIG, "10", 10),
+        failCase(BalancerConfigs.METRICS_WARM_UP_COUNT_CONFIG, "lOO"),
         passCase(BalancerConfigs.BALANCER_IGNORED_TOPICS_CONFIG, "topic", Set.of("topic")),
         passCase(BalancerConfigs.BALANCER_IGNORED_TOPICS_CONFIG, "a,b,c", Set.of("a", "b", "c")),
         passCase(
@@ -132,6 +125,12 @@ public class BalancerConfigsTest {
             TestData.valueExecutor,
             TestData.expExecutor),
         failCase(BalancerConfigs.BALANCER_REBALANCE_PLAN_EXECUTOR, Object.class.getName()),
+        passCase(
+            BalancerConfigs.BALANCER_METRIC_SOURCE_CLASS,
+            TestData.valueMetricSource,
+            TestData.expMetricSource),
+        failCase(BalancerConfigs.BALANCER_METRIC_SOURCE_CLASS, TestData.valueMetricSources),
+        failCase(BalancerConfigs.BALANCER_METRIC_SOURCE_CLASS, Object.class.getName()),
         passCase(BalancerConfigs.BALANCER_PLAN_SEARCHING_ITERATION, "3000", 3000),
         failCase(BalancerConfigs.BALANCER_PLAN_SEARCHING_ITERATION, "owo"));
   }
@@ -140,7 +139,7 @@ public class BalancerConfigsTest {
   @MethodSource(value = "testcases")
   void testConfig(boolean shouldPass, String key, String value, Object expectedReturn) {
     var config = Configuration.of(Map.of(key, value));
-    var balancerConfig = new BalancerConfigs(config, false);
+    var balancerConfig = new BalancerConfigs(config);
     Supplier<?> fetchConfig =
         () ->
             Utils.packException(
@@ -160,7 +159,45 @@ public class BalancerConfigsTest {
     }
   }
 
-  public static BalancerConfigs noCheckConfig(Map<String, String> config) {
-    return new BalancerConfigs(Configuration.of(config), false);
+  @Test
+  void ensureAllConfigsAreCoveredInTest() {
+
+    Set<String> allConfigs =
+        Arrays.stream(BalancerConfigs.class.getMethods())
+            .filter(x -> x.getAnnotation(BalancerConfigs.Config.class) != null)
+            .map(x -> x.getAnnotation(BalancerConfigs.Config.class).key())
+            .collect(Collectors.toUnmodifiableSet());
+
+    Set<String> testedConfigs =
+        testcases().map(x -> (String) x.get()[1]).collect(Collectors.toUnmodifiableSet());
+
+    // use TreeSet to ensure print order.
+    Assertions.assertEquals(new TreeSet<>(allConfigs), new TreeSet<>(testedConfigs));
+  }
+
+  @Test
+  void testSanityCheck() {
+    var emptyConfigs = new BalancerConfigs(Configuration.of(Map.of()));
+    Assertions.assertThrows(Exception.class, emptyConfigs::sanityCheck);
+
+    var minimumConfigs =
+        new BalancerConfigs(
+            Configuration.of(
+                Map.of(
+                    BalancerConfigs.BOOTSTRAP_SERVERS_CONFIG,
+                    "",
+                    BalancerConfigs.JMX_SERVERS_CONFIG,
+                    jmxString(1001, "host0", 5566))));
+    Assertions.assertDoesNotThrow(minimumConfigs::sanityCheck);
+
+    var badConfigs =
+        new BalancerConfigs(
+            Configuration.of(
+                Map.of(
+                    BalancerConfigs.BOOTSTRAP_SERVERS_CONFIG, "",
+                    BalancerConfigs.JMX_SERVERS_CONFIG, jmxString(1001, "host0", 5566),
+                    BalancerConfigs.BALANCER_REBALANCE_PLAN_GENERATOR,
+                        "com.example.class.not.found")));
+    Assertions.assertThrows(IllegalArgumentException.class, badConfigs::sanityCheck);
   }
 }

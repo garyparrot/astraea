@@ -38,8 +38,9 @@ import org.astraea.app.balancer.BalancerConfigs;
 import org.astraea.app.common.Utils;
 import org.astraea.app.metrics.HasBeanObject;
 import org.astraea.app.metrics.jmx.MBeanClient;
+import org.astraea.app.partitioner.Configuration;
 
-public class JmxMetricSampler implements MetricSource, AutoCloseable {
+public class JmxMetricSampler implements MetricSource {
 
   /**
    * The number of old time series to keep in data structure. note that this is not a strict upper
@@ -54,7 +55,7 @@ public class JmxMetricSampler implements MetricSource, AutoCloseable {
 
   private final Map<Integer, JMXServiceURL> jmxServiceURLMap;
   private final Map<Integer, MBeanClient> mBeanClientMap;
-  private final Collection<IdentifiedFetcher> fetcher;
+  private final Collection<IdentifiedFetcher> fetchers;
   private final Map<IdentifiedFetcher, Map<Integer, ConcurrentLinkedQueue<HasBeanObject>>> metrics;
   private final ScheduledExecutorService executorService;
   private final AtomicBoolean closed;
@@ -67,21 +68,19 @@ public class JmxMetricSampler implements MetricSource, AutoCloseable {
         .collect(Collectors.toUnmodifiableMap(x -> x, x -> new ConcurrentLinkedQueue<>()));
   }
 
-  public JmxMetricSampler(
-      BalancerConfigs configuration,
-      Map<Integer, JMXServiceURL> serviceUrls,
-      Collection<IdentifiedFetcher> fetchers) {
-    this.brokerCount = serviceUrls.size();
-    this.queueSize = configuration.metricScrapingQueueSize();
-    this.warmUpCount = configuration.metricWarmUpCount();
+  public JmxMetricSampler(Configuration configuration, Collection<IdentifiedFetcher> fetchers) {
+    var balancerConfigs = new BalancerConfigs(configuration);
+    this.brokerCount = balancerConfigs.jmxServers().size();
+    this.queueSize = balancerConfigs.metricScrapingQueueSize();
+    this.warmUpCount = balancerConfigs.metricWarmUpCount();
     this.sampleCounter = new LongAdder();
-    this.jmxServiceURLMap = Map.copyOf(serviceUrls);
+    this.jmxServiceURLMap = Map.copyOf(balancerConfigs.jmxServers());
     this.mBeanClientMap =
-        serviceUrls.entrySet().stream()
+        jmxServiceURLMap.entrySet().stream()
             .collect(
                 Collectors.toUnmodifiableMap(
                     Map.Entry::getKey, entry -> MBeanClient.of(entry.getValue())));
-    this.fetcher = fetchers;
+    this.fetchers = fetchers;
     this.metrics =
         fetchers.stream()
             .collect(
@@ -90,7 +89,7 @@ public class JmxMetricSampler implements MetricSource, AutoCloseable {
                     (identifiedFetcher) -> newMetricStore(jmxServiceURLMap.keySet())));
     this.executorService = Executors.newScheduledThreadPool(brokerCount);
     this.closed = new AtomicBoolean(false);
-    this.fetchInterval = configuration.metricScrapingInterval();
+    this.fetchInterval = balancerConfigs.metricScrapingInterval();
 
     // schedule metric sampling tasks
     this.scheduledFutures =

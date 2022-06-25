@@ -20,7 +20,6 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.time.Duration;
 import java.util.List;
@@ -36,6 +35,8 @@ import org.astraea.app.balancer.executor.RebalancePlanExecutor;
 import org.astraea.app.balancer.executor.StraightPlanExecutor;
 import org.astraea.app.balancer.generator.RebalancePlanGenerator;
 import org.astraea.app.balancer.generator.ShufflePlanGenerator;
+import org.astraea.app.balancer.metrics.JmxMetricSampler;
+import org.astraea.app.balancer.metrics.MetricSource;
 import org.astraea.app.common.Utils;
 import org.astraea.app.cost.CostFunction;
 import org.astraea.app.cost.broker.CpuCost;
@@ -47,8 +48,9 @@ public class BalancerConfigs implements Configuration {
   public static final String JMX_SERVERS_CONFIG = "jmx.servers";
   public static final String METRICS_SCRAPING_QUEUE_SIZE_CONFIG = "metrics.scraping.queue.size";
   public static final String METRICS_SCRAPING_INTERVAL_MS_CONFIG = "metrics.scraping.interval.ms";
-  public static final String METRIC_WARM_UP_COUNT_CONFIG = "metrics.warm.up.count";
+  public static final String METRICS_WARM_UP_COUNT_CONFIG = "metrics.warm.up.count";
   public static final String BALANCER_IGNORED_TOPICS_CONFIG = "balancer.ignored.topics";
+  public static final String BALANCER_METRIC_SOURCE_CLASS = "balancer.metric.source.class";
   public static final String BALANCER_COST_FUNCTIONS = "balancer.cost.functions";
   public static final String BALANCER_REBALANCE_PLAN_GENERATOR =
       "balancer.rebalance.plan.generator";
@@ -59,20 +61,11 @@ public class BalancerConfigs implements Configuration {
   private final Configuration configuration;
 
   public BalancerConfigs(Configuration configuration) {
-    this(configuration, true);
-  }
-
-  // visible for testing
-  BalancerConfigs(Configuration configuration, boolean doSanityCheck) {
     this.configuration = configuration;
-    if (doSanityCheck) sanityCheck();
   }
 
-  /**
-   * Ensure the configuration is offered correctly. This method is called on {@link BalancerConfigs}
-   * initialization to ensure fail fast.
-   */
-  private void sanityCheck() {
+  /** Ensure the configuration is offered correctly. */
+  public void sanityCheck() {
     List<Method> methods = List.of(this.getClass().getMethods());
     methods.stream()
         .filter(m -> m.getAnnotation(Config.class) != null)
@@ -85,7 +78,7 @@ public class BalancerConfigs implements Configuration {
               try {
                 // TODO: verify config values are in valid range
                 Objects.requireNonNull(m.invoke(this));
-              } catch (IllegalAccessException | InvocationTargetException e) {
+              } catch (IllegalAccessException e) {
                 throw new RuntimeException(e);
               } catch (Exception e) {
                 var key = m.getAnnotation(Config.class).key();
@@ -126,9 +119,9 @@ public class BalancerConfigs implements Configuration {
         .orElse(Duration.ofSeconds(1));
   }
 
-  @Config(key = METRIC_WARM_UP_COUNT_CONFIG)
+  @Config(key = METRICS_WARM_UP_COUNT_CONFIG)
   public Integer metricWarmUpCount() {
-    return string(METRIC_WARM_UP_COUNT_CONFIG).map(Integer::parseInt).orElse(30);
+    return string(METRICS_WARM_UP_COUNT_CONFIG).map(Integer::parseInt).orElse(30);
   }
 
   @Config(key = BALANCER_IGNORED_TOPICS_CONFIG)
@@ -168,6 +161,13 @@ public class BalancerConfigs implements Configuration {
     return string(BALANCER_PLAN_SEARCHING_ITERATION).map(Integer::parseInt).orElse(2000);
   }
 
+  @Config(key = BALANCER_METRIC_SOURCE_CLASS)
+  public Class<? extends MetricSource> metricSourceClass() {
+    String classname =
+        string(BALANCER_METRIC_SOURCE_CLASS).orElse(JmxMetricSampler.class.getName());
+    return resolveClass(classname, MetricSource.class);
+  }
+
   private static <T> Class<T> resolveClass(String classname, Class<T> extendedType) {
     Class<?> aClass = Utils.packException(() -> Class.forName(classname));
 
@@ -203,6 +203,10 @@ public class BalancerConfigs implements Configuration {
   @Override
   public Set<Map.Entry<String, String>> entrySet() {
     return configuration.entrySet();
+  }
+
+  public Configuration asConfiguration() {
+    return configuration;
   }
 
   // visible for test

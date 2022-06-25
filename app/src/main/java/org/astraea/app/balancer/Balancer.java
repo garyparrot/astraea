@@ -36,7 +36,6 @@ import org.astraea.app.balancer.executor.RebalancePlanExecutor;
 import org.astraea.app.balancer.generator.RebalancePlanGenerator;
 import org.astraea.app.balancer.log.ClusterLogAllocation;
 import org.astraea.app.balancer.metrics.IdentifiedFetcher;
-import org.astraea.app.balancer.metrics.JmxMetricSampler;
 import org.astraea.app.balancer.metrics.MetricSource;
 import org.astraea.app.common.Utils;
 import org.astraea.app.cost.ClusterInfo;
@@ -62,6 +61,7 @@ public class Balancer implements AutoCloseable {
 
   public Balancer(Configuration configuration) {
     this.balancerConfigs = new BalancerConfigs(configuration);
+    this.balancerConfigs.sanityCheck();
     this.costFunctions =
         balancerConfigs.costFunctionClasses().stream()
             .map(x -> BalancerUtils.constructCostFunction(x, configuration))
@@ -82,13 +82,15 @@ public class Balancer implements AutoCloseable {
     this.fetcherOwnership.put(planExecutor, new IdentifiedFetcher(planExecutor.fetcher()));
 
     this.metricSource =
-        new JmxMetricSampler(
-            balancerConfigs, balancerConfigs.jmxServers(), fetcherOwnership.values());
+        BalancerUtils.constructMetricSource(
+            balancerConfigs.metricSourceClass(),
+            balancerConfigs.asConfiguration(),
+            fetcherOwnership.values());
 
     this.isClosed = new AtomicBoolean(false);
   }
 
-  public void start() {
+  public void run() {
     // run
     while (!Thread.currentThread().isInterrupted()) {
       boolean shouldDrainMetrics = false;
@@ -199,6 +201,7 @@ public class Balancer implements AutoCloseable {
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
     return aggregateFunction(scores);
   }
+
   /** the lower, the better. */
   private double aggregateFunction(Map<CostFunction, Double> scores) {
     // use the simple summation result, treat every cost equally.

@@ -30,7 +30,7 @@ public class BalancerMain {
 
   public static void execute(Configuration configuration) {
     try (Balancer balancer = new Balancer(configuration)) {
-      balancer.start();
+      balancer.run();
     }
   }
 

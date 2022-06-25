@@ -16,19 +16,20 @@
  */
 package org.astraea.app.balancer.metrics;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
-import javax.management.remote.JMXServiceURL;
 import org.astraea.app.balancer.BalancerConfigs;
 import org.astraea.app.balancer.BalancerConfigsTest;
 import org.astraea.app.common.Utils;
 import org.astraea.app.metrics.HasBeanObject;
 import org.astraea.app.metrics.jmx.BeanObject;
 import org.astraea.app.metrics.jmx.MBeanClient;
+import org.astraea.app.partitioner.Configuration;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -37,7 +38,8 @@ class JmxMetricSamplerTest {
 
   @FunctionalInterface
   private interface SamplerConsumer {
-    void execute(JmxMetricSampler jmxMetricSampler, int brokerId, IdentifiedFetcher fetcher)
+    void execute(
+        JmxMetricSampler jmxMetricSampler, Set<Integer> brokerId, List<IdentifiedFetcher> fetcher)
         throws Exception;
   }
 
@@ -46,19 +48,32 @@ class JmxMetricSamplerTest {
   }
 
   private void withMockedSampler(Map<String, String> config, SamplerConsumer execution) {
+    // variables
     var brokerId = 5566;
-    var url = Mockito.mock(JMXServiceURL.class);
     var counter = new AtomicInteger();
+
+    // fake bean & fetcher
     var aBean = (HasBeanObject) () -> numberedBean(counter.getAndIncrement());
     var fetcher = new IdentifiedFetcher((client) -> List.of(aBean));
-    var emptyConfigs = BalancerConfigsTest.noCheckConfig(config);
+
+    // if no jmxServers specified, some default value put in
+    var customConfig = new HashMap<>(config);
+    customConfig.putIfAbsent(
+        BalancerConfigs.JMX_SERVERS_CONFIG, BalancerConfigsTest.jmxString(brokerId, "host0", 5566));
+    var balancerConfig = new BalancerConfigs(Configuration.of(customConfig));
+
+    // mock the MBeanClient logic
     try (var mockStatic = Mockito.mockStatic(MBeanClient.class)) {
       mockStatic
           .when(() -> MBeanClient.of(Mockito.any()))
           .thenReturn(Mockito.mock(MBeanClient.class));
-      try (var sampler =
-          new JmxMetricSampler(emptyConfigs, Map.of(brokerId, url), List.of(fetcher))) {
-        Utils.packException(() -> execution.execute(sampler, brokerId, fetcher));
+
+      // initialize the testing target
+      try (var sampler = new JmxMetricSampler(balancerConfig, List.of(fetcher))) {
+        // run
+        Utils.packException(
+            () ->
+                execution.execute(sampler, balancerConfig.jmxServers().keySet(), List.of(fetcher)));
       }
     }
   }
@@ -71,7 +86,7 @@ class JmxMetricSamplerTest {
         (sampler, brokerId, fetcher) -> {
           TimeUnit.MILLISECONDS.sleep(500);
           Assertions.assertTrue(
-              sampler.metrics(fetcher, brokerId).stream()
+              sampler.metrics(fetcher.iterator().next(), brokerId.iterator().next()).stream()
                   .map(HasBeanObject::beanObject)
                   .map(BeanObject::domainName)
                   .map(Integer::parseInt)
@@ -84,7 +99,7 @@ class JmxMetricSamplerTest {
   void warmUpProgress() {
     var config =
         Map.of(
-            BalancerConfigs.METRIC_WARM_UP_COUNT_CONFIG, "4",
+            BalancerConfigs.METRICS_WARM_UP_COUNT_CONFIG, "4",
             BalancerConfigs.METRICS_SCRAPING_INTERVAL_MS_CONFIG, "1000");
     withMockedSampler(
         config,
@@ -104,7 +119,7 @@ class JmxMetricSamplerTest {
   void testAwaitMetricReady() {
     var config =
         Map.of(
-            BalancerConfigs.METRIC_WARM_UP_COUNT_CONFIG, "10",
+            BalancerConfigs.METRICS_WARM_UP_COUNT_CONFIG, "10",
             BalancerConfigs.METRICS_SCRAPING_INTERVAL_MS_CONFIG, "100");
     withMockedSampler(
         config,
@@ -121,29 +136,31 @@ class JmxMetricSamplerTest {
     withMockedSampler(
         config,
         (sampler, brokerId, fetcher) -> {
+          var aFetcher = fetcher.iterator().next();
+          var aBroker = brokerId.iterator().next();
           TimeUnit.SECONDS.sleep(1);
-          Assertions.assertTrue(sampler.metrics(fetcher, brokerId).size() > 0);
+          Assertions.assertTrue(sampler.metrics(aFetcher, aBroker).size() > 0);
           sampler.drainMetrics();
-          Assertions.assertEquals(0, sampler.metrics(fetcher, brokerId).size());
+          Assertions.assertEquals(0, sampler.metrics(aFetcher, aBroker).size());
         });
   }
 
   @Test
   void testClose() {
-    // arrange
-    var emptyConfigs = BalancerConfigsTest.noCheckConfig(Map.of());
-    var jmxMetricSampler = new JmxMetricSampler(emptyConfigs, Map.of(), List.of());
+    withMockedSampler(
+        Map.of(),
+        (sampler, ignore0, ignore1) -> {
+          // act
+          sampler.close();
 
-    // act
-    jmxMetricSampler.close();
-
-    // assert
-    Assertions.assertDoesNotThrow(jmxMetricSampler::close);
-    Assertions.assertThrows(IllegalStateException.class, () -> jmxMetricSampler.metrics(null, 0));
-    Assertions.assertThrows(
-        IllegalStateException.class, () -> jmxMetricSampler.metrics(Set.of(), null));
-    Assertions.assertThrows(IllegalStateException.class, jmxMetricSampler::drainMetrics);
-    Assertions.assertThrows(IllegalStateException.class, jmxMetricSampler::awaitMetricReady);
-    Assertions.assertThrows(IllegalStateException.class, jmxMetricSampler::warmUpProgress);
+          // assert
+          Assertions.assertDoesNotThrow(sampler::close);
+          Assertions.assertThrows(IllegalStateException.class, () -> sampler.metrics(null, 0));
+          Assertions.assertThrows(
+              IllegalStateException.class, () -> sampler.metrics(Set.of(), null));
+          Assertions.assertThrows(IllegalStateException.class, sampler::drainMetrics);
+          Assertions.assertThrows(IllegalStateException.class, sampler::awaitMetricReady);
+          Assertions.assertThrows(IllegalStateException.class, sampler::warmUpProgress);
+        });
   }
 }
