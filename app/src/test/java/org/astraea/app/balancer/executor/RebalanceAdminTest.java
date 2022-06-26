@@ -60,12 +60,13 @@ class RebalanceAdminTest extends RequireBrokerCluster {
       admin.creator().topic(topic).numberOfPartitions(1).numberOfReplicas((short) 1).create();
       TimeUnit.SECONDS.sleep(2);
 
-      rebalanceAdmin.alterReplicaPlacements(
-          new TopicPartition(topic, 0),
-          List.of(
-              LogPlacement.of(0, selectedLogFolder.get(0)),
-              LogPlacement.of(1, selectedLogFolder.get(1)),
-              LogPlacement.of(2, selectedLogFolder.get(2))));
+      var tasks =
+          rebalanceAdmin.alterReplicaPlacements(
+              new TopicPartition(topic, 0),
+              List.of(
+                  LogPlacement.of(0, selectedLogFolder.get(0)),
+                  LogPlacement.of(1, selectedLogFolder.get(1)),
+                  LogPlacement.of(2, selectedLogFolder.get(2))));
       TimeUnit.SECONDS.sleep(3);
 
       var replicas =
@@ -89,6 +90,15 @@ class RebalanceAdminTest extends RequireBrokerCluster {
                           .findFirst()
                           .map(Replica::path)
                           .orElseThrow()));
+      for (int i = 0; i < 3; i++) {
+        var replicaMigrationTask = tasks.get(i);
+        Assertions.assertTrue(replicaMigrationTask.progress().synced());
+        Assertions.assertEquals(i, replicaMigrationTask.progress().brokerId());
+        Assertions.assertEquals(1, replicaMigrationTask.progress().percentage());
+        Assertions.assertTrue(replicaMigrationTask.await());
+        Assertions.assertEquals(
+            new TopicPartitionReplica(topic, 0, i), replicaMigrationTask.info());
+      }
     }
   }
 
@@ -154,7 +164,7 @@ class RebalanceAdminTest extends RequireBrokerCluster {
   }
 
   @Test
-  void clusterInfo() {
+  void clusterInfo() throws InterruptedException {
     try (Admin admin = Admin.of(bootstrapServers())) {
       final var rebalanceAdmin = RebalanceAdmin.of(admin, Map::of, (ignore) -> true);
       final var clusterInfo = rebalanceAdmin.clusterInfo();
@@ -162,6 +172,8 @@ class RebalanceAdminTest extends RequireBrokerCluster {
 
       final var name = "RebalanceAdminTest" + Utils.randomString(6);
       admin.creator().topic(name).numberOfPartitions(3).create();
+      TimeUnit.SECONDS.sleep(1);
+
       final var rebalanceAdmin1 = RebalanceAdmin.of(admin, Map::of, name::equals);
       final var clusterInfo1 = rebalanceAdmin1.clusterInfo();
       Assertions.assertEquals(Set.of(name), clusterInfo1.topics());
@@ -276,7 +288,73 @@ class RebalanceAdminTest extends RequireBrokerCluster {
   @Test
   void leaderElection() throws InterruptedException {
     // this test can guard leaderElection too.
-    waitPreferredLeaderSynced();
+    try (var admin = Admin.of(bootstrapServers())) {
+      var topic = "WaitPreferredLeaderSynced_" + Utils.randomString();
+      var rebalanceAdmin = RebalanceAdmin.of(admin, Map::of, (ignore) -> true);
+
+      admin.creator().topic(topic).numberOfPartitions(1).numberOfReplicas((short) 3).create();
+      TimeUnit.SECONDS.sleep(2);
+
+      var currentLeader =
+          (Supplier<Integer>)
+              () ->
+                  admin.replicas(Set.of(topic)).entrySet().stream()
+                      .filter(x -> x.getKey().topic().equals(topic))
+                      .filter(x -> x.getKey().partition() == 0)
+                      .flatMap(x -> x.getValue().stream())
+                      .filter(Replica::leader)
+                      .findFirst()
+                      .orElseThrow()
+                      .broker();
+
+      int oldLeader = currentLeader.get();
+
+      // change the preferred leader
+      int newPreferredLeader = (oldLeader + 2) % 3;
+      admin
+          .migrator()
+          .partition(topic, 0)
+          .moveTo(List.of(newPreferredLeader, (oldLeader + 1) % 3, oldLeader));
+
+      // assert not leader yet
+      Assertions.assertNotEquals(newPreferredLeader, currentLeader.get());
+
+      // do election
+      var task = rebalanceAdmin.leaderElection(new TopicPartition(topic, 0));
+
+      // wait for this
+      Assertions.assertTrue(rebalanceAdmin.waitPreferredLeaderSynced(new TopicPartition(topic, 0)));
+
+      // the task object works
+      Assertions.assertTrue(task.progress());
+      Assertions.assertTrue(task.await());
+
+      // assert it is the leader
+      Assertions.assertEquals(newPreferredLeader, currentLeader.get());
+    }
+  }
+
+  @Test
+  void debouncedAwait() throws InterruptedException {
+    Assertions.assertTrue(
+        RebalanceAdminImpl.debouncedAwait(
+            () -> true, Duration.ofSeconds(1), Duration.ofSeconds(3)));
+    Assertions.assertFalse(
+        RebalanceAdminImpl.debouncedAwait(
+            () -> false, Duration.ofSeconds(1), Duration.ofSeconds(3)));
+
+    Assertions.assertTrue(
+        RebalanceAdminImpl.debouncedAwait(
+            new Supplier<Boolean>() {
+              final AtomicInteger i = new AtomicInteger(0);
+
+              @Override
+              public Boolean get() {
+                return i.getAndIncrement() > 0;
+              }
+            },
+            Duration.ofMillis(500),
+            Duration.ofSeconds(3)));
   }
 
   @Test

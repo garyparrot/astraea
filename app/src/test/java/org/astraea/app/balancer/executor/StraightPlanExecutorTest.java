@@ -26,6 +26,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.astraea.app.admin.Admin;
 import org.astraea.app.admin.TopicPartition;
+import org.astraea.app.balancer.log.ClusterLogAllocation;
 import org.astraea.app.balancer.log.LayeredClusterLogAllocation;
 import org.astraea.app.balancer.log.LogPlacement;
 import org.astraea.app.common.Utils;
@@ -41,6 +42,8 @@ class StraightPlanExecutorTest extends RequireBrokerCluster {
     try (Admin admin = Admin.of(bootstrapServers())) {
       final var topicName = "StraightPlanExecutorTest_" + Utils.randomString(8);
       admin.creator().topic(topicName).numberOfPartitions(10).numberOfReplicas((short) 2).create();
+      final var originalAllocation =
+          LayeredClusterLogAllocation.of(admin.clusterInfo(Set.of(topicName)));
       TimeUnit.SECONDS.sleep(3);
       final var broker0 = 0;
       final var broker1 = 1;
@@ -85,6 +88,13 @@ class StraightPlanExecutorTest extends RequireBrokerCluster {
                   expectedAllocation.logPlacements(topicPartition),
                   currentAllocation.logPlacements(topicPartition),
                   "Testing for " + topicPartition));
+
+      System.out.println("Expected:");
+      System.out.println(ClusterLogAllocation.describeAllocation(expectedAllocation));
+      System.out.println("Current:");
+      System.out.println(ClusterLogAllocation.describeAllocation(currentAllocation));
+      System.out.println("Original:");
+      System.out.println(ClusterLogAllocation.describeAllocation(originalAllocation));
     }
   }
 }

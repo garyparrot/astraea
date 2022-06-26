@@ -86,4 +86,27 @@ public interface ClusterLogAllocation {
         .filter(tp -> !LogPlacement.isMatch(source.logPlacements(tp), target.logPlacements(tp)))
         .collect(Collectors.toUnmodifiableSet());
   }
+
+  static String describeAllocation(ClusterLogAllocation allocation) {
+    StringBuilder stringBuilder = new StringBuilder();
+
+    allocation
+        .topicPartitionStream()
+        .sorted()
+        .forEach(
+            tp -> {
+              stringBuilder.append("[").append(tp).append("] ");
+
+              allocation
+                  .logPlacements(tp)
+                  .forEach(
+                      log ->
+                          stringBuilder.append(
+                              String.format("%s(%s) ", log.broker(), log.logDirectory())));
+
+              stringBuilder.append(System.lineSeparator());
+            });
+
+    return stringBuilder.toString();
+  }
 }

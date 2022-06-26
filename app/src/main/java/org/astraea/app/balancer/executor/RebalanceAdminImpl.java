@@ -31,15 +31,24 @@ import org.astraea.app.admin.Admin;
 import org.astraea.app.admin.Replica;
 import org.astraea.app.admin.TopicPartition;
 import org.astraea.app.balancer.log.LogPlacement;
+import org.astraea.app.common.Utils;
 import org.astraea.app.cost.ClusterInfo;
 import org.astraea.app.metrics.HasBeanObject;
 
-public class RebalanceAdminImpl implements RebalanceAdmin {
+class RebalanceAdminImpl implements RebalanceAdmin {
 
   private final Predicate<String> topicFilter;
   private final Admin admin;
   private final Supplier<Map<Integer, Collection<HasBeanObject>>> metricSource;
 
+  /**
+   * Construct a implementation of {@link RebalanceAdmin}
+   *
+   * @param topicFilter to determine which topics are permitted for balance operation
+   * @param admin the actual {@link Admin} implementation
+   * @param metricSource the supplier for new metrics, this supplier should return the metrics that
+   *     {@link RebalancePlanExecutor#fetcher()} is interested.
+   */
   public RebalanceAdminImpl(
       Predicate<String> topicFilter,
       Admin admin,
@@ -102,7 +111,7 @@ public class RebalanceAdminImpl implements RebalanceAdmin {
   }
 
   @Override
-  public List<RebalanceTask<TopicPartitionReplica, SyncingProgress>> alterReplicaPlacements(
+  public List<ReplicaMigrationTask> alterReplicaPlacements(
       TopicPartition topicPartition, List<LogPlacement> expectedPlacement) {
     ensureTopicPermitted(topicPartition.topic());
 
@@ -133,29 +142,7 @@ public class RebalanceAdminImpl implements RebalanceAdmin {
             log ->
                 new TopicPartitionReplica(
                     topicPartition.topic(), topicPartition.partition(), log.broker()))
-        .map(
-            log ->
-                new RebalanceTask<TopicPartitionReplica, SyncingProgress>() {
-                  @Override
-                  public TopicPartitionReplica info() {
-                    return log;
-                  }
-
-                  @Override
-                  public SyncingProgress progress() {
-                    return syncingProgress(log);
-                  }
-
-                  @Override
-                  public boolean await(Duration timeout) {
-                    try {
-                      return waitLogSynced(log, timeout);
-                    } catch (InterruptedException e) {
-                      Thread.currentThread().interrupt();
-                      return false;
-                    }
-                  }
-                })
+        .map(log -> new ReplicaMigrationTask(this, log))
         .collect(Collectors.toUnmodifiableList());
   }
 
@@ -185,7 +172,7 @@ public class RebalanceAdminImpl implements RebalanceAdmin {
   public boolean waitLogSynced(TopicPartitionReplica log, Duration timeout)
       throws InterruptedException {
     ensureTopicPermitted(log.topic());
-    return await(
+    return debouncedAwait(
         () ->
             admin.replicas(Set.of(log.topic())).entrySet().stream()
                 .filter(x -> x.getKey().partition() == log.partition())
@@ -195,7 +182,8 @@ public class RebalanceAdminImpl implements RebalanceAdmin {
                 .findFirst()
                 .map(Replica::inSync)
                 .orElse(false),
-        timeout);
+        timeout,
+        Duration.ofSeconds(3));
   }
 
   @Override
@@ -203,7 +191,7 @@ public class RebalanceAdminImpl implements RebalanceAdmin {
       throws InterruptedException {
     ensureTopicPermitted(topicPartition.topic());
     // the set of interested topics.
-    return await(
+    return debouncedAwait(
         () ->
             admin.replicas(Set.of(topicPartition.topic())).entrySet().stream()
                 .filter(x -> x.getKey().equals(topicPartition))
@@ -211,50 +199,25 @@ public class RebalanceAdminImpl implements RebalanceAdmin {
                 .map(Map.Entry::getValue)
                 .map(
                     replicas -> {
-                      // TODO: should use a flag to find the preferred leader
-                      var preferred = replicas.get(0);
+                      var preferred =
+                          replicas.stream()
+                              .filter(Replica::isPreferredLeader)
+                              .findFirst()
+                              .orElseThrow();
                       return preferred.leader();
                     })
                 .orElseThrow(),
-        timeout);
+        timeout,
+        Duration.ofSeconds(3));
   }
 
   @Override
-  public RebalanceTask<TopicPartition, Boolean> leaderElection(TopicPartition topicPartition) {
+  public LeaderElectionTask leaderElection(TopicPartition topicPartition) {
     ensureTopicPermitted(topicPartition.topic());
 
     admin.preferredLeaderElection(topicPartition);
 
-    return new RebalanceTask<>() {
-      @Override
-      public TopicPartition info() {
-        return topicPartition;
-      }
-
-      @Override
-      public Boolean progress() {
-        return admin.replicas(Set.of(topicPartition.topic())).entrySet().stream()
-            .filter(x -> x.getKey().equals(topicPartition))
-            .findFirst()
-            .map(
-                x -> {
-                  // TODO: use isPreferredLeader flag instead
-                  var replica = x.getValue().get(0);
-                  return replica.inSync();
-                })
-            .orElseThrow();
-      }
-
-      @Override
-      public boolean await(Duration timeout) {
-        try {
-          return waitPreferredLeaderSynced(topicPartition, timeout);
-        } catch (InterruptedException e) {
-          Thread.currentThread().interrupt();
-          return false;
-        }
-      }
-    };
+    return new LeaderElectionTask(this, topicPartition);
   }
 
   @Override
@@ -266,6 +229,19 @@ public class RebalanceAdminImpl implements RebalanceAdmin {
   @Override
   public ClusterInfo refreshMetrics(ClusterInfo oldClusterInfo) {
     return ClusterInfo.of(oldClusterInfo, metricSource.get());
+  }
+
+  /** Wait until the condition is hold true over certain amount of time */
+  static boolean debouncedAwait(Supplier<Boolean> task, Duration timeout, Duration debounce)
+      throws InterruptedException {
+    return await(
+        () -> {
+          if (!task.get()) return false;
+          Utils.packException(() -> Thread.sleep(debounce.toMillis()));
+          if (!task.get()) return false;
+          return true;
+        },
+        timeout);
   }
 
   static boolean await(Supplier<Boolean> task, Duration timeout) throws InterruptedException {
