@@ -21,7 +21,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -43,7 +42,6 @@ import org.astraea.app.cost.CostFunction;
 import org.astraea.app.cost.HasBrokerCost;
 import org.astraea.app.cost.HasPartitionCost;
 import org.astraea.app.cost.NodeInfo;
-import org.astraea.app.cost.Normalizer;
 import org.astraea.app.metrics.HasBeanObject;
 import org.astraea.app.partitioner.Configuration;
 
@@ -53,11 +51,12 @@ public class Balancer implements AutoCloseable {
   private final List<CostFunction> costFunctions;
   private final RebalancePlanGenerator planGenerator;
   private final RebalancePlanExecutor planExecutor;
-  private final Set<String> ignoredTopics;
+  private final Predicate<String> topicFilter;
   private final Admin admin;
   private final MetricSource metricSource;
   private final Map<Object, IdentifiedFetcher> fetcherOwnership;
   private final AtomicBoolean isClosed;
+  private final AtomicInteger runCount;
 
   public Balancer(Configuration configuration) {
     this.balancerConfigs = new BalancerConfigs(configuration);
@@ -72,7 +71,13 @@ public class Balancer implements AutoCloseable {
     this.planExecutor =
         BalancerUtils.constructExecutor(
             balancerConfigs.rebalancePlanExecutorClass(), configuration);
-    this.ignoredTopics = balancerConfigs.ignoredTopics();
+    this.topicFilter =
+        (topic) -> {
+          if (!balancerConfigs.allowedTopics().isEmpty())
+            return balancerConfigs.allowedTopics().contains(topic)
+                && !balancerConfigs.ignoredTopics().contains(topic);
+          else return !balancerConfigs.ignoredTopics().contains(topic);
+        };
     // TODO: add support for security-enabled cluster
     this.admin = Admin.of(balancerConfigs.bootstrapServers());
 
@@ -88,11 +93,13 @@ public class Balancer implements AutoCloseable {
             fetcherOwnership.values());
 
     this.isClosed = new AtomicBoolean(false);
+    this.runCount = new AtomicInteger(0);
   }
 
   public void run() {
     // run
-    while (!Thread.currentThread().isInterrupted()) {
+    var maxRun = balancerConfigs.balancerRunCount();
+    while (!Thread.currentThread().isInterrupted() && runCount.getAndIncrement() < maxRun) {
       boolean shouldDrainMetrics = false;
       // let metric warm up
       // TODO: find a way to show the progress, without pollute the logic
@@ -110,9 +117,9 @@ public class Balancer implements AutoCloseable {
         System.out.println("Run " + planGenerator.getClass().getName());
         var clusterInfo = newClusterInfo();
         var bestProposal = seekingRebalancePlan(clusterInfo);
+        // TODO: find a way to show the progress, without pollute the logic
+        System.out.println(bestProposal);
         if (bestProposal.rebalancePlan().isEmpty()) {
-          // TODO: find a way to show the progress, without pollute the logic
-          System.out.println(bestProposal);
           continue;
         }
         // TODO: find a way to show the progress, without pollute the logic
@@ -125,17 +132,13 @@ public class Balancer implements AutoCloseable {
         // drain old metrics, these metrics is probably invalid after the rebalance operation
         // performed.
         if (shouldDrainMetrics) metricSource.drainMetrics();
-        // wait for a while
-        Utils.packException(() -> TimeUnit.SECONDS.sleep(5));
       }
     }
   }
 
   private ClusterInfo newClusterInfo() {
     var topics =
-        admin.topicNames().stream()
-            .filter(name -> !ignoredTopics.contains(name))
-            .collect(Collectors.toUnmodifiableSet());
+        admin.topicNames().stream().filter(topicFilter).collect(Collectors.toUnmodifiableSet());
     return admin.clusterInfo(topics);
   }
 
@@ -175,7 +178,6 @@ public class Balancer implements AutoCloseable {
     var allocation =
         proposal.rebalancePlan().orElseThrow(() -> new NoSuchElementException("No Proposal"));
     try (Admin newAdmin = Admin.of(balancerConfigs.bootstrapServers())) {
-      var topicFilter = (Predicate<String>) (topicName) -> !ignoredTopics.contains(topicName);
       var executorFetcher = this.fetcherOwnership.get(planExecutor);
       var metricSource =
           (Supplier<Map<Integer, Collection<HasBeanObject>>>)
@@ -231,12 +233,7 @@ public class Balancer implements AutoCloseable {
   private <T extends HasBrokerCost> double brokerCostScore(
       ClusterInfo clusterInfo, T costFunction) {
     // TODO: revise the default usage
-    return costFunction
-        .brokerCost(clusterInfo)
-        .normalize(Normalizer.proportion())
-        .value()
-        .values()
-        .stream()
+    return costFunction.brokerCost(clusterInfo).value().values().stream()
         .mapToDouble(x -> x)
         .max()
         .orElseThrow();
@@ -248,7 +245,7 @@ public class Balancer implements AutoCloseable {
     throw new UnsupportedOperationException();
   }
 
-  // TODO: this usage will be removed some day
+  // TODO: this usage will be removed someday
   @Deprecated
   private static Thread progressWatch(String title, double totalTasks, Supplier<Double> accTasks) {
     AtomicInteger counter = new AtomicInteger();

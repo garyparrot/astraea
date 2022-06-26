@@ -49,6 +49,7 @@ public class BalancerConfigs implements Configuration {
   public static final String METRICS_SCRAPING_QUEUE_SIZE_CONFIG = "metrics.scraping.queue.size";
   public static final String METRICS_SCRAPING_INTERVAL_MS_CONFIG = "metrics.scraping.interval.ms";
   public static final String METRICS_WARM_UP_COUNT_CONFIG = "metrics.warm.up.count";
+  public static final String BALANCER_ALLOWED_TOPICS = "balancer.allowed.topics";
   public static final String BALANCER_IGNORED_TOPICS_CONFIG = "balancer.ignored.topics";
   public static final String BALANCER_METRIC_SOURCE_CLASS = "balancer.metric.source.class";
   public static final String BALANCER_COST_FUNCTIONS = "balancer.cost.functions";
@@ -57,6 +58,7 @@ public class BalancerConfigs implements Configuration {
   public static final String BALANCER_REBALANCE_PLAN_EXECUTOR = "balancer.rebalance.plan.executor";
   public static final String BALANCER_PLAN_SEARCHING_ITERATION =
       "balancer.plan.searching.iteration";
+  public static final String BALANCER_RUN_COUNT = "balancer.run.count";
 
   private final Configuration configuration;
 
@@ -132,6 +134,11 @@ public class BalancerConfigs implements Configuration {
         .orElse(Set.of());
   }
 
+  @Config(key = BALANCER_ALLOWED_TOPICS)
+  public Set<String> allowedTopics() {
+    return string(BALANCER_ALLOWED_TOPICS).map(s -> s.split(",")).map(Set::of).orElse(Set.of());
+  }
+
   @Config(key = BALANCER_COST_FUNCTIONS)
   public List<Class<? extends CostFunction>> costFunctionClasses() {
     var defaultValue =
@@ -166,6 +173,11 @@ public class BalancerConfigs implements Configuration {
     String classname =
         string(BALANCER_METRIC_SOURCE_CLASS).orElse(JmxMetricSampler.class.getName());
     return resolveClass(classname, MetricSource.class);
+  }
+
+  @Config(key = BALANCER_RUN_COUNT)
+  public Integer balancerRunCount() {
+    return string(BALANCER_RUN_COUNT).map(Integer::parseInt).orElse(Integer.MAX_VALUE);
   }
 
   private static <T> Class<T> resolveClass(String classname, Class<T> extendedType) {

@@ -132,7 +132,11 @@ public class BalancerConfigsTest {
         failCase(BalancerConfigs.BALANCER_METRIC_SOURCE_CLASS, TestData.valueMetricSources),
         failCase(BalancerConfigs.BALANCER_METRIC_SOURCE_CLASS, Object.class.getName()),
         passCase(BalancerConfigs.BALANCER_PLAN_SEARCHING_ITERATION, "3000", 3000),
-        failCase(BalancerConfigs.BALANCER_PLAN_SEARCHING_ITERATION, "owo"));
+        failCase(BalancerConfigs.BALANCER_PLAN_SEARCHING_ITERATION, "owo"),
+        passCase(
+            BalancerConfigs.BALANCER_ALLOWED_TOPICS, "Aaa,B,C,D", Set.of("Aaa", "B", "C", "D")),
+        passCase(BalancerConfigs.BALANCER_RUN_COUNT, "1024", 1024),
+        failCase(BalancerConfigs.BALANCER_RUN_COUNT, "once"));
   }
 
   @ParameterizedTest
