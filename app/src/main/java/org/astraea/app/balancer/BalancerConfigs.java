@@ -22,6 +22,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.lang.reflect.Method;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -128,15 +129,18 @@ public class BalancerConfigs implements Configuration {
 
   @Config(key = BALANCER_IGNORED_TOPICS_CONFIG)
   public Set<String> ignoredTopics() {
-    return string(BALANCER_IGNORED_TOPICS_CONFIG)
-        .map(s -> s.split(","))
-        .map(Set::of)
-        .orElse(Set.of());
+    return string(BALANCER_IGNORED_TOPICS_CONFIG).stream()
+        .flatMap(s -> Arrays.stream(s.split(",")))
+        .filter(x -> !x.isEmpty())
+        .collect(Collectors.toUnmodifiableSet());
   }
 
   @Config(key = BALANCER_ALLOWED_TOPICS)
   public Set<String> allowedTopics() {
-    return string(BALANCER_ALLOWED_TOPICS).map(s -> s.split(",")).map(Set::of).orElse(Set.of());
+    return string(BALANCER_ALLOWED_TOPICS).stream()
+        .flatMap(s -> Arrays.stream(s.split(",")))
+        .filter(x -> !x.isEmpty())
+        .collect(Collectors.toUnmodifiableSet());
   }
 
   @Config(key = BALANCER_COST_FUNCTIONS)
@@ -144,7 +148,11 @@ public class BalancerConfigs implements Configuration {
     var defaultValue =
         Stream.of(CpuCost.class).map(Class::getName).collect(Collectors.joining(","));
 
-    return Stream.of(string(BALANCER_COST_FUNCTIONS).orElse(defaultValue).split(","))
+    return Stream.of(
+            string(BALANCER_COST_FUNCTIONS)
+                .filter(x -> !x.isEmpty())
+                .orElse(defaultValue)
+                .split(","))
         .map(classname -> resolveClass(classname, CostFunction.class))
         .collect(Collectors.toUnmodifiableList());
   }

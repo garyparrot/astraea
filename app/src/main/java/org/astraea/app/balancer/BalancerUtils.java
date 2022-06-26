@@ -192,8 +192,6 @@ class BalancerUtils {
 
   public static CostFunction constructCostFunction(
       Class<? extends CostFunction> aClass, Configuration configuration) {
-    // TODO: make it possible to construct specific object from Config
-    // TODO: add test for this after above TODO is done
     return Stream.of(newInstance(aClass, configuration), newInstance(aClass))
         .flatMap(Optional::stream)
         .findFirst()
@@ -202,8 +200,6 @@ class BalancerUtils {
 
   public static RebalancePlanGenerator constructGenerator(
       Class<? extends RebalancePlanGenerator> aClass, Configuration configuration) {
-    // TODO: make it possible to construct specific object from Config
-    // TODO: add test for this after above TODO is done
     return Stream.of(newInstance(aClass, configuration), newInstance(aClass))
         .flatMap(Optional::stream)
         .findFirst()
@@ -212,8 +208,6 @@ class BalancerUtils {
 
   public static RebalancePlanExecutor constructExecutor(
       Class<? extends RebalancePlanExecutor> aClass, Configuration configuration) {
-    // TODO: make it possible to construct specific object from Config
-    // TODO: add test for this after above TODO is done
     return Stream.of(newInstance(aClass, configuration), newInstance(aClass))
         .flatMap(Optional::stream)
         .findFirst()

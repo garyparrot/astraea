@@ -16,20 +16,28 @@
  */
 package org.astraea.app.balancer;
 
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.astraea.app.admin.Admin;
 import org.astraea.app.admin.TopicPartition;
+import org.astraea.app.balancer.executor.RebalanceExecutionContext;
+import org.astraea.app.balancer.executor.RebalanceExecutionResult;
 import org.astraea.app.balancer.generator.RebalancePlanGenerator;
 import org.astraea.app.balancer.log.ClusterLogAllocation;
 import org.astraea.app.balancer.log.LayeredClusterLogAllocation;
 import org.astraea.app.balancer.log.LogPlacement;
+import org.astraea.app.balancer.metrics.IdentifiedFetcher;
+import org.astraea.app.balancer.utils.DummyExecutor;
+import org.astraea.app.balancer.utils.DummyMetricSource;
 import org.astraea.app.common.Utils;
 import org.astraea.app.cost.BrokerCost;
 import org.astraea.app.cost.ClusterInfo;
@@ -46,16 +54,19 @@ import org.mockito.Mockito;
 
 class BalancerTest extends RequireBrokerCluster {
 
+  public static HasBeanObject randomBean() {
+    var value = ThreadLocalRandom.current().nextInt();
+    BeanObject bean = new BeanObject(Integer.toString(value), Map.of(), Map.of());
+    return () -> bean;
+  }
+
   static class RandomCostFunction implements HasBrokerCost {
 
     public RandomCostFunction(Configuration configuration) {}
 
-    private static final BeanObject bean = new BeanObject("test", Map.of(), Map.of());
-    private static final HasBeanObject hasBean = () -> bean;
-
     @Override
     public Fetcher fetcher() {
-      return Fetcher.of(List.of(ignore -> List.of(hasBean)));
+      return Fetcher.of(List.of(ignore -> List.of(randomBean())));
     }
 
     @Override
@@ -67,6 +78,16 @@ class BalancerTest extends RequireBrokerCluster {
                       NodeInfo::id, id -> ThreadLocalRandom.current().nextDouble(0, 1)));
 
       return () -> randomScore;
+    }
+  }
+
+  static class RandomMetricSource extends DummyMetricSource {
+    public RandomMetricSource(
+        Configuration configuration, Collection<IdentifiedFetcher> identifiedFetchers) {}
+
+    @Override
+    public Collection<HasBeanObject> metrics(IdentifiedFetcher fetcher, int brokerId) {
+      return List.of(randomBean(), randomBean(), randomBean());
     }
   }
 
@@ -284,5 +305,50 @@ class BalancerTest extends RequireBrokerCluster {
               });
       run.run();
     }
+  }
+
+  static class SpiedExecutor extends DummyExecutor {
+    static AtomicReference<ClusterInfo> info1 = new AtomicReference<>();
+    static AtomicReference<ClusterInfo> info2 = new AtomicReference<>();
+
+    public SpiedExecutor(Configuration configuration) {}
+
+    @Override
+    public RebalanceExecutionResult run(RebalanceExecutionContext executionContext) {
+      ClusterInfo clusterInfo0 = executionContext.rebalanceAdmin().clusterInfo();
+      Utils.packException(() -> TimeUnit.MILLISECONDS.sleep(500));
+      ClusterInfo clusterInfo1 = executionContext.rebalanceAdmin().refreshMetrics(clusterInfo0);
+      Utils.packException(() -> TimeUnit.MILLISECONDS.sleep(500));
+      ClusterInfo clusterInfo2 = executionContext.rebalanceAdmin().refreshMetrics(clusterInfo0);
+
+      info1.set(clusterInfo1);
+      info2.set(clusterInfo2);
+
+      return super.run(executionContext);
+    }
+  }
+
+  @Test
+  void testMetricSourceUpdate() {
+    // arrange
+    var topic = "BalancerTest_testMetricSourceUpdate_" + Utils.randomString();
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      admin.creator().topic(topic).numberOfPartitions(3).numberOfReplicas((short) 3).create();
+    }
+
+    var extraConfigs =
+        Map.of(
+            BalancerConfigs.BALANCER_METRIC_SOURCE_CLASS, RandomMetricSource.class.getName(),
+            BalancerConfigs.BALANCER_REBALANCE_PLAN_EXECUTOR, SpiedExecutor.class.getName());
+    withPredefinedScenario(
+        Set.of(topic),
+        extraConfigs,
+        (bConfig, balancer) -> {
+          // act
+          balancer.run();
+
+          // assert the metrics do update over time.
+          Assertions.assertNotEquals(SpiedExecutor.info2.get(), SpiedExecutor.info1.get());
+        });
   }
 }
