@@ -144,6 +144,7 @@ public class Balancer implements AutoCloseable {
 
   private RebalancePlanProposal seekingRebalancePlan(ClusterInfo clusterInfo) {
     var tries = balancerConfigs.rebalancePlanSearchingIteration();
+    var clusterMetrics = metricSource.allBeans();
     var counter = new LongAdder();
     // TODO: find a way to show the progress, without pollute the logic
     var thread = progressWatch("Searching for Good Rebalance Plan", tries, counter::doubleValue);
@@ -159,7 +160,10 @@ public class Balancer implements AutoCloseable {
               .map(
                   plan ->
                       plan.rebalancePlan()
-                          .map(allocation -> Map.entry(evaluate(clusterInfo, allocation), plan))
+                          .map(
+                              allocation ->
+                                  Map.entry(
+                                      evaluate(clusterInfo, clusterMetrics, allocation), plan))
                           .orElse(Map.entry(1.0, plan)))
               .min(Map.Entry.comparingByKey());
 
@@ -195,11 +199,20 @@ public class Balancer implements AutoCloseable {
     }
   }
 
-  private double evaluate(ClusterInfo clusterInfo, ClusterLogAllocation allocation) {
+  private double evaluate(
+      ClusterInfo clusterInfo,
+      Map<IdentifiedFetcher, Map<Integer, Collection<HasBeanObject>>> metrics,
+      ClusterLogAllocation allocation) {
     var proposedCluster = BalancerUtils.mockClusterInfoAllocation(clusterInfo, allocation);
     var scores =
         costFunctions.stream()
-            .map(cf -> Map.entry(cf, this.costFunctionScore(proposedCluster, cf)))
+            .map(
+                cf -> {
+                  var fetcher = fetcherOwnership.get(cf);
+                  var theMetrics = metrics.get(fetcher);
+                  var clusterAndMetrics = ClusterInfo.of(proposedCluster, theMetrics);
+                  return Map.entry(cf, this.costFunctionScore(clusterAndMetrics, cf));
+                })
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
     return aggregateFunction(scores);
   }
@@ -210,16 +223,7 @@ public class Balancer implements AutoCloseable {
     return scores.values().stream().mapToDouble(x -> x).sum();
   }
 
-  private double costFunctionScore(ClusterInfo logAllocation, CostFunction costFunction) {
-    var itsFetcher = this.fetcherOwnership.get(costFunction);
-    var metrics =
-        this.metricSource.metrics(
-            logAllocation.nodes().stream()
-                .map(NodeInfo::id)
-                .collect(Collectors.toUnmodifiableSet()),
-            itsFetcher);
-    // TODO: add a test to ensure the offered bean is what I needed
-    var clusterInfo = ClusterInfo.of(logAllocation, metrics);
+  private double costFunctionScore(ClusterInfo clusterInfo, CostFunction costFunction) {
 
     if (costFunction instanceof HasBrokerCost) {
       return brokerCostScore(clusterInfo, (HasBrokerCost) costFunction);

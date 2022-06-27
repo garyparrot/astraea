@@ -18,6 +18,7 @@ package org.astraea.app.balancer.utils;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import org.astraea.app.balancer.metrics.IdentifiedFetcher;
 import org.astraea.app.balancer.metrics.MetricSource;
 import org.astraea.app.metrics.HasBeanObject;
@@ -27,6 +28,11 @@ public class DummyMetricSource implements MetricSource {
   @Override
   public Collection<HasBeanObject> metrics(IdentifiedFetcher fetcher, int brokerId) {
     return List.of();
+  }
+
+  @Override
+  public Map<IdentifiedFetcher, Map<Integer, Collection<HasBeanObject>>> allBeans() {
+    return Map.of();
   }
 
   @Override

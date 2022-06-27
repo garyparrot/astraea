@@ -137,6 +137,23 @@ public class JmxMetricSampler implements MetricSource {
   }
 
   @Override
+  public Map<IdentifiedFetcher, Map<Integer, Collection<HasBeanObject>>> allBeans() {
+    ensureNotClosed();
+    return metrics.entrySet().stream()
+        .collect(
+            Collectors.toUnmodifiableMap(
+                Map.Entry::getKey,
+                x ->
+                    metrics.get(x.getKey()).entrySet().stream()
+                        .collect(
+                            Collectors.toUnmodifiableMap(
+                                Map.Entry::getKey,
+                                y ->
+                                    Collections.unmodifiableCollection(
+                                        metrics.get(x.getKey()).get(y.getKey()))))));
+  }
+
+  @Override
   public double warmUpProgress() {
     ensureNotClosed();
     return Math.min(1.0, sampleCounter.doubleValue() / brokerCount / warmUpCount);
