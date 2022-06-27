@@ -29,6 +29,7 @@ import org.astraea.app.partitioner.Configuration;
 public class BalancerMain {
 
   public static void execute(Configuration configuration) {
+    printConfig(configuration);
     try (Balancer balancer = new Balancer(configuration)) {
       balancer.run();
     }
@@ -52,6 +53,13 @@ public class BalancerMain {
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
+  }
+
+  private static void printConfig(Configuration configuration) {
+    System.out.println("[Configuration]");
+    configuration.entrySet().stream()
+        .sorted()
+        .forEach(entry -> System.out.printf("%s=%s%n", entry.getKey(), entry.getValue()));
   }
 
   public static class Argument {

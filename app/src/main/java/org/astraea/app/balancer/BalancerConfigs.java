@@ -192,8 +192,9 @@ public class BalancerConfigs implements Configuration {
     Class<?> aClass = Utils.packException(() -> Class.forName(classname));
 
     if (extendedType.isAssignableFrom(aClass)) {
-      //noinspection unchecked
-      return (Class<T>) aClass;
+      @SuppressWarnings("unchecked")
+      var theClass = (Class<T>) aClass;
+      return theClass;
     } else {
       throw new IllegalArgumentException(
           "The given class \"" + classname + "\" is not a instance of " + extendedType.getName());

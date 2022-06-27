@@ -33,7 +33,6 @@ import org.astraea.app.balancer.executor.RebalanceAdmin;
 import org.astraea.app.balancer.executor.RebalanceExecutionContext;
 import org.astraea.app.balancer.executor.RebalancePlanExecutor;
 import org.astraea.app.balancer.generator.RebalancePlanGenerator;
-import org.astraea.app.balancer.log.ClusterLogAllocation;
 import org.astraea.app.balancer.metrics.IdentifiedFetcher;
 import org.astraea.app.balancer.metrics.MetricSource;
 import org.astraea.app.common.Utils;
@@ -96,6 +95,7 @@ public class Balancer implements AutoCloseable {
     this.runCount = new AtomicInteger(0);
   }
 
+  /** Run balancer */
   public void run() {
     // run
     var maxRun = balancerConfigs.balancerRunCount();
@@ -113,13 +113,30 @@ public class Balancer implements AutoCloseable {
       System.out.println("Metrics warmed");
 
       try {
+        // calculate the score of current cluster
+        var clusterInfo = newClusterInfo();
+        var clusterMetrics = metricSource.allBeans();
+        var currentClusterScore = evaluate(clusterInfo, clusterMetrics);
         // TODO: find a way to show the progress, without pollute the logic
         System.out.println("Run " + planGenerator.getClass().getName());
-        var clusterInfo = newClusterInfo();
-        var bestProposal = seekingRebalancePlan(clusterInfo);
+        var bestProposal = seekingRebalancePlan(clusterInfo, clusterMetrics);
         // TODO: find a way to show the progress, without pollute the logic
         System.out.println(bestProposal);
         if (bestProposal.rebalancePlan().isEmpty()) {
+          // TODO: find a way to show the progress, without pollute the logic
+          System.out.println("No usable rebalance plan found");
+          continue;
+        }
+        var bestCluster =
+            BalancerUtils.mockClusterInfoAllocation(
+                clusterInfo, bestProposal.rebalancePlan().get());
+        var bestScore = evaluate(bestCluster, clusterMetrics);
+        System.out.printf(
+            "Current cluster score: %.2f, Proposed cluster score: %.2f%n",
+            currentClusterScore, bestScore);
+        if (!isPlanExecutionWorth(clusterInfo, bestProposal, currentClusterScore, bestScore)) {
+          // TODO: find a way to show the progress, without pollute the logic
+          System.out.println("The proposed plan is rejected due to no worth improvement");
           continue;
         }
         // TODO: find a way to show the progress, without pollute the logic
@@ -136,15 +153,17 @@ public class Balancer implements AutoCloseable {
     }
   }
 
+  /** Retrieve a new {@link ClusterInfo}, with info only related to the permitted topics. */
   private ClusterInfo newClusterInfo() {
     var topics =
         admin.topicNames().stream().filter(topicFilter).collect(Collectors.toUnmodifiableSet());
     return admin.clusterInfo(topics);
   }
 
-  private RebalancePlanProposal seekingRebalancePlan(ClusterInfo clusterInfo) {
+  private RebalancePlanProposal seekingRebalancePlan(
+      ClusterInfo clusterInfo,
+      Map<IdentifiedFetcher, Map<Integer, Collection<HasBeanObject>>> clusterMetrics) {
     var tries = balancerConfigs.rebalancePlanSearchingIteration();
-    var clusterMetrics = metricSource.allBeans();
     var counter = new LongAdder();
     // TODO: find a way to show the progress, without pollute the logic
     var thread = progressWatch("Searching for Good Rebalance Plan", tries, counter::doubleValue);
@@ -158,13 +177,17 @@ public class Balancer implements AutoCloseable {
               .limit(tries)
               .peek(ignore -> counter.increment())
               .map(
-                  plan ->
-                      plan.rebalancePlan()
-                          .map(
-                              allocation ->
-                                  Map.entry(
-                                      evaluate(clusterInfo, clusterMetrics, allocation), plan))
-                          .orElse(Map.entry(1.0, plan)))
+                  plan -> {
+                    if (plan.rebalancePlan().isPresent()) {
+                      var allocation = plan.rebalancePlan().get();
+                      var mockedCluster =
+                          BalancerUtils.mockClusterInfoAllocation(clusterInfo, allocation);
+                      var score = evaluate(mockedCluster, clusterMetrics);
+                      return Map.entry(score, plan);
+                    } else {
+                      return Map.entry(1.0, plan);
+                    }
+                  })
               .min(Map.Entry.comparingByKey());
 
       // find the target with the highest score, return it
@@ -199,18 +222,25 @@ public class Balancer implements AutoCloseable {
     }
   }
 
+  // visible for testing
+  boolean isPlanExecutionWorth(
+      ClusterInfo currentCluster,
+      RebalancePlanProposal proposal,
+      double currentScore,
+      double proposedScore) {
+    return currentScore > proposedScore;
+  }
+
   private double evaluate(
       ClusterInfo clusterInfo,
-      Map<IdentifiedFetcher, Map<Integer, Collection<HasBeanObject>>> metrics,
-      ClusterLogAllocation allocation) {
-    var proposedCluster = BalancerUtils.mockClusterInfoAllocation(clusterInfo, allocation);
+      Map<IdentifiedFetcher, Map<Integer, Collection<HasBeanObject>>> metrics) {
     var scores =
         costFunctions.stream()
             .map(
                 cf -> {
                   var fetcher = fetcherOwnership.get(cf);
                   var theMetrics = metrics.get(fetcher);
-                  var clusterAndMetrics = ClusterInfo.of(proposedCluster, theMetrics);
+                  var clusterAndMetrics = ClusterInfo.of(clusterInfo, theMetrics);
                   return Map.entry(cf, this.costFunctionScore(clusterAndMetrics, cf));
                 })
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));

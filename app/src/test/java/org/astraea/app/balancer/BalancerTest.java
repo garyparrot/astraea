@@ -49,6 +49,7 @@ import org.astraea.app.metrics.jmx.BeanObject;
 import org.astraea.app.partitioner.Configuration;
 import org.astraea.app.service.RequireBrokerCluster;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -128,7 +129,13 @@ class BalancerTest extends RequireBrokerCluster {
     predefinedConfig.putAll(extraConfig);
     var config = Configuration.of(predefinedConfig);
     var balancerConfig = new BalancerConfigs(config);
-    try (Balancer balancer = new Balancer(config)) {
+    try (Balancer balancer = Mockito.spy(new Balancer(config))) {
+      // permit plan execution no matter what.
+      Mockito.when(
+              balancer.isPlanExecutionWorth(
+                  Mockito.any(), Mockito.any(), Mockito.anyDouble(), Mockito.anyDouble()))
+          .thenReturn(true);
+      // run test content
       consumer.run(balancerConfig, balancer);
     }
   }
@@ -412,6 +419,7 @@ class BalancerTest extends RequireBrokerCluster {
   }
 
   @Test
+  @DisplayName("Two different cost functions won't receive metrics requested by the other")
   void testCostFunctionOfferedWithItsOwnMetrics() {
     var topic = "BalancerTest_testCostFunction_" + Utils.randomString();
     try (Admin admin = Admin.of(bootstrapServers())) {
@@ -437,10 +445,10 @@ class BalancerTest extends RequireBrokerCluster {
 
           cfm0.values().stream()
               .flatMap(Collection::stream)
-              .forEach(bean -> Assertions.assertEquals(TestCostFunction0.bean0, bean));
+              .forEach(bean -> Assertions.assertEquals("Bean0", bean.beanObject().domainName()));
           cfm1.values().stream()
               .flatMap(Collection::stream)
-              .forEach(bean -> Assertions.assertEquals(TestCostFunction1.bean1, bean));
+              .forEach(bean -> Assertions.assertEquals("Bean1", bean.beanObject().domainName()));
         });
   }
 }
