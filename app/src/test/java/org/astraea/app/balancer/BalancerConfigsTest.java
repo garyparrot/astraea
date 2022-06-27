@@ -104,10 +104,14 @@ public class BalancerConfigsTest {
         failCase(BalancerConfigs.JMX_SERVERS_CONFIG, "1001@localhost:5566"),
         passCase(BalancerConfigs.METRICS_SCRAPING_QUEUE_SIZE_CONFIG, "10", 10),
         failCase(BalancerConfigs.METRICS_SCRAPING_QUEUE_SIZE_CONFIG, "ten"),
+        failCase(BalancerConfigs.METRICS_SCRAPING_QUEUE_SIZE_CONFIG, "-100"),
+        failCase(BalancerConfigs.METRICS_SCRAPING_QUEUE_SIZE_CONFIG, "0"),
         passCase(BalancerConfigs.METRICS_SCRAPING_INTERVAL_MS_CONFIG, "10", Duration.ofMillis(10)),
         failCase(BalancerConfigs.METRICS_SCRAPING_INTERVAL_MS_CONFIG, "50cent"),
+        failCase(BalancerConfigs.METRICS_SCRAPING_INTERVAL_MS_CONFIG, "-30"),
         passCase(BalancerConfigs.METRICS_WARM_UP_COUNT_CONFIG, "10", 10),
         failCase(BalancerConfigs.METRICS_WARM_UP_COUNT_CONFIG, "lOO"),
+        failCase(BalancerConfigs.METRICS_WARM_UP_COUNT_CONFIG, "-50"),
         passCase(BalancerConfigs.BALANCER_IGNORED_TOPICS_CONFIG, "topic", Set.of("topic")),
         passCase(BalancerConfigs.BALANCER_IGNORED_TOPICS_CONFIG, "a,b,c", Set.of("a", "b", "c")),
         passCase(
@@ -133,6 +137,8 @@ public class BalancerConfigsTest {
         failCase(BalancerConfigs.BALANCER_METRIC_SOURCE_CLASS, Object.class.getName()),
         passCase(BalancerConfigs.BALANCER_PLAN_SEARCHING_ITERATION, "3000", 3000),
         failCase(BalancerConfigs.BALANCER_PLAN_SEARCHING_ITERATION, "owo"),
+        failCase(BalancerConfigs.BALANCER_PLAN_SEARCHING_ITERATION, "0"),
+        failCase(BalancerConfigs.BALANCER_PLAN_SEARCHING_ITERATION, "-5"),
         passCase(
             BalancerConfigs.BALANCER_ALLOWED_TOPICS, "Aaa,B,C,D", Set.of("Aaa", "B", "C", "D")),
         passCase(BalancerConfigs.BALANCER_RUN_COUNT, "1024", 1024),
@@ -203,5 +209,14 @@ public class BalancerConfigsTest {
                     BalancerConfigs.BALANCER_REBALANCE_PLAN_GENERATOR,
                         "com.example.class.not.found")));
     Assertions.assertThrows(IllegalArgumentException.class, badConfigs::sanityCheck);
+
+    var invalidValueConfigs =
+        new BalancerConfigs(
+            Configuration.of(
+                Map.of(
+                    BalancerConfigs.BOOTSTRAP_SERVERS_CONFIG, "",
+                    BalancerConfigs.JMX_SERVERS_CONFIG, jmxString(1001, "host0", 5566),
+                    BalancerConfigs.BALANCER_PLAN_SEARCHING_ITERATION, "0")));
+    Assertions.assertThrows(IllegalArgumentException.class, invalidValueConfigs::sanityCheck);
   }
 }

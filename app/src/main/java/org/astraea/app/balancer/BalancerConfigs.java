@@ -111,20 +111,27 @@ public class BalancerConfigs implements Configuration {
 
   @Config(key = METRICS_SCRAPING_QUEUE_SIZE_CONFIG)
   public int metricScrapingQueueSize() {
-    return string(METRICS_SCRAPING_QUEUE_SIZE_CONFIG).map(Integer::parseInt).orElse(300);
+    int val = string(METRICS_SCRAPING_QUEUE_SIZE_CONFIG).map(Integer::parseInt).orElse(300);
+    assertion("value should be positive integer", val > 0);
+    return val;
   }
 
   @Config(key = METRICS_SCRAPING_INTERVAL_MS_CONFIG)
   public Duration metricScrapingInterval() {
-    return string(METRICS_SCRAPING_INTERVAL_MS_CONFIG)
-        .map(Integer::parseInt)
-        .map(Duration::ofMillis)
-        .orElse(Duration.ofSeconds(1));
+    var val =
+        string(METRICS_SCRAPING_INTERVAL_MS_CONFIG)
+            .map(Integer::parseInt)
+            .map(Duration::ofMillis)
+            .orElse(Duration.ofSeconds(1));
+    assertion("interval should be non-negative integer", !val.isNegative());
+    return val;
   }
 
   @Config(key = METRICS_WARM_UP_COUNT_CONFIG)
-  public Integer metricWarmUpCount() {
-    return string(METRICS_WARM_UP_COUNT_CONFIG).map(Integer::parseInt).orElse(30);
+  public int metricWarmUpCount() {
+    int val = string(METRICS_WARM_UP_COUNT_CONFIG).map(Integer::parseInt).orElse(30);
+    assertion("value should be non-negative integer", val >= 0);
+    return val;
   }
 
   @Config(key = BALANCER_IGNORED_TOPICS_CONFIG)
@@ -173,7 +180,9 @@ public class BalancerConfigs implements Configuration {
 
   @Config(key = BALANCER_PLAN_SEARCHING_ITERATION)
   public int rebalancePlanSearchingIteration() {
-    return string(BALANCER_PLAN_SEARCHING_ITERATION).map(Integer::parseInt).orElse(2000);
+    int val = string(BALANCER_PLAN_SEARCHING_ITERATION).map(Integer::parseInt).orElse(2000);
+    assertion("value should be a positive integer", val > 0);
+    return val;
   }
 
   @Config(key = BALANCER_METRIC_SOURCE_CLASS)
@@ -201,6 +210,14 @@ public class BalancerConfigs implements Configuration {
     }
   }
 
+  public Configuration asConfiguration() {
+    return configuration;
+  }
+
+  public void assertion(String description, boolean condition) {
+    if (!condition) throw new IllegalArgumentException(description);
+  }
+
   @Override
   public Optional<String> string(String key) {
     return configuration.string(key);
@@ -224,10 +241,6 @@ public class BalancerConfigs implements Configuration {
   @Override
   public Set<Map.Entry<String, String>> entrySet() {
     return configuration.entrySet();
-  }
-
-  public Configuration asConfiguration() {
-    return configuration;
   }
 
   // visible for test
