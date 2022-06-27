@@ -20,12 +20,23 @@ import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.util.Map;
 import org.astraea.app.common.Utils;
+import org.astraea.app.partitioner.Configuration;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class BalancerMainTest {
+
+  @Test
+  void testExecute() {
+    var emptyConfigs = Configuration.of(Map.of());
+    try (var mockConstructor = Mockito.mockConstruction(Balancer.class)) {
+      BalancerMain.execute(emptyConfigs);
+      Mockito.verify(mockConstructor.constructed().get(0), Mockito.times(1)).run();
+    }
+  }
 
   @Test
   void testArgument() {

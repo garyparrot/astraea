@@ -28,6 +28,7 @@ import org.astraea.app.metrics.HasBeanObject;
  * moment</strong>.
  */
 public interface MetricSource extends AutoCloseable {
+
   Collection<HasBeanObject> metrics(IdentifiedFetcher fetcher, int brokerId);
 
   default Map<Integer, Collection<HasBeanObject>> metrics(
@@ -38,10 +39,13 @@ public interface MetricSource extends AutoCloseable {
                 brokerId -> brokerId, brokerId -> metrics(fetcher, brokerId)));
   }
 
+  // TODO: "Is the metrics ready" who's responsibility?
+
   double warmUpProgress();
 
   void awaitMetricReady();
 
+  /** Remove all metrics */
   void drainMetrics();
 
   @Override

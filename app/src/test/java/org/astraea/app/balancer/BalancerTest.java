@@ -226,7 +226,12 @@ class BalancerTest extends RequireBrokerCluster {
       // act
       Runnable run =
           () -> {
-            var customConfig = Map.of(BalancerConfigs.BALANCER_IGNORED_TOPICS_CONFIG, ignoredTopic);
+            var customConfig =
+                Map.of(
+                    BalancerConfigs.BALANCER_IGNORED_TOPICS_CONFIG,
+                    ignoredTopic,
+                    BalancerConfigs.BALANCER_REBALANCE_PLAN_EXECUTOR,
+                    DummyExecutor.class.getName());
             withPredefinedScenario(
                 Set.of(),
                 customConfig,
@@ -280,7 +285,9 @@ class BalancerTest extends RequireBrokerCluster {
                     BalancerConfigs.BALANCER_ALLOWED_TOPICS,
                     String.join(",", allowedTopic0, allowedTopic1, allowedTopic2, ignoredTopic),
                     BalancerConfigs.BALANCER_IGNORED_TOPICS_CONFIG,
-                    ignoredTopic);
+                    ignoredTopic,
+                    BalancerConfigs.BALANCER_REBALANCE_PLAN_EXECUTOR,
+                    DummyExecutor.class.getName());
             withPredefinedScenario(
                 Set.of(),
                 customConfig,
@@ -349,6 +356,89 @@ class BalancerTest extends RequireBrokerCluster {
 
           // assert the metrics do update over time.
           Assertions.assertNotEquals(SpiedExecutor.info2.get(), SpiedExecutor.info1.get());
+        });
+  }
+
+  static class TestCostFunction0 implements HasBrokerCost {
+
+    public TestCostFunction0(Configuration configuration) {}
+
+    static AtomicReference<Map<Integer, Collection<HasBeanObject>>> metrics =
+        new AtomicReference<>();
+
+    static HasBeanObject bean0 = () -> new BeanObject("Bean0", Map.of(), Map.of());
+
+    @Override
+    public Fetcher fetcher() {
+      return (ignore) -> List.of(bean0);
+    }
+
+    @Override
+    public BrokerCost brokerCost(ClusterInfo clusterInfo) {
+      metrics.set(clusterInfo.allBeans());
+      return () ->
+          clusterInfo.nodes().stream()
+              .collect(
+                  Collectors.toUnmodifiableMap(
+                      NodeInfo::id, x -> ThreadLocalRandom.current().nextDouble(0, 1)));
+    }
+  }
+
+  static class TestCostFunction1 implements HasBrokerCost {
+
+    public TestCostFunction1(Configuration configuration) {}
+
+    static AtomicReference<Map<Integer, Collection<HasBeanObject>>> metrics =
+        new AtomicReference<>();
+
+    static HasBeanObject bean1 = () -> new BeanObject("Bean1", Map.of(), Map.of());
+
+    @Override
+    public Fetcher fetcher() {
+      return (ignore) -> List.of(bean1);
+    }
+
+    @Override
+    public BrokerCost brokerCost(ClusterInfo clusterInfo) {
+      metrics.set(clusterInfo.allBeans());
+      return () ->
+          clusterInfo.nodes().stream()
+              .collect(
+                  Collectors.toUnmodifiableMap(
+                      NodeInfo::id, x -> ThreadLocalRandom.current().nextDouble(0, 1)));
+    }
+  }
+
+  @Test
+  void testCostFunctionOfferedWithItsOwnMetrics() {
+    var topic = "BalancerTest_testCostFunction_" + Utils.randomString();
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      admin.creator().topic(topic).numberOfPartitions(3).numberOfReplicas((short) 3).create();
+    }
+
+    var extraConfig =
+        Map.of(
+            BalancerConfigs.BALANCER_COST_FUNCTIONS,
+                String.join(
+                    ",", TestCostFunction0.class.getName(), TestCostFunction1.class.getName()),
+            BalancerConfigs.BALANCER_REBALANCE_PLAN_EXECUTOR, DummyExecutor.class.getName());
+    withPredefinedScenario(
+        Set.of(topic),
+        extraConfig,
+        (config, balancer) -> {
+          // act
+          balancer.run();
+
+          // assert
+          var cfm0 = TestCostFunction0.metrics.get();
+          var cfm1 = TestCostFunction1.metrics.get();
+
+          cfm0.values().stream()
+              .flatMap(Collection::stream)
+              .forEach(bean -> Assertions.assertEquals(TestCostFunction0.bean0, bean));
+          cfm1.values().stream()
+              .flatMap(Collection::stream)
+              .forEach(bean -> Assertions.assertEquals(TestCostFunction1.bean1, bean));
         });
   }
 }

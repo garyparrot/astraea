@@ -31,9 +31,11 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import org.astraea.app.admin.TopicPartition;
 import org.astraea.app.balancer.executor.RebalancePlanExecutor;
 import org.astraea.app.balancer.generator.RebalancePlanGenerator;
 import org.astraea.app.balancer.log.ClusterLogAllocation;
+import org.astraea.app.balancer.log.LayeredClusterLogAllocation;
 import org.astraea.app.balancer.metrics.IdentifiedFetcher;
 import org.astraea.app.balancer.metrics.MetricSource;
 import org.astraea.app.cost.ClusterInfo;
@@ -45,9 +47,26 @@ import org.astraea.app.partitioner.Configuration;
 
 class BalancerUtils {
 
+  /**
+   * Create a {@link ClusterInfo} with its log placement replaced by {@link ClusterLogAllocation}.
+   * Every log will be marked as online & synced. Based on the given content in {@link
+   * ClusterLogAllocation}, some logs might not have its data directory specified. Noted that this
+   * method doesn't check if the given logs is suitable & exists in the cluster info base. the beans
+   * alongside the based cluster info might be out-of-date or even completely meaningless.
+   *
+   * @param clusterInfo the based cluster info
+   * @param allocation the log allocation to replace {@link ClusterInfo}'s log placement. If the
+   *     allocation implementation is {@link LayeredClusterLogAllocation} then the given instance
+   *     will be locked.
+   * @return a {@link ClusterInfo} with its log placement replaced.
+   */
   public static ClusterInfo mockClusterInfoAllocation(
       ClusterInfo clusterInfo, ClusterLogAllocation allocation) {
+    // making defensive copy
+    final var allocationCopy = LayeredClusterLogAllocation.of(allocation);
     return new ClusterInfo() {
+      // TODO: maybe add a field to tell if this cluster info is mocked.
+
       @Override
       public List<NodeInfo> nodes() {
         return clusterInfo.nodes();
@@ -60,7 +79,10 @@ class BalancerUtils {
 
       @Override
       public Set<String> topics() {
-        return clusterInfo.topics();
+        return allocationCopy
+            .topicPartitionStream()
+            .map(TopicPartition::topic)
+            .collect(Collectors.toUnmodifiableSet());
       }
 
       @Override
@@ -92,10 +114,10 @@ class BalancerUtils {
             nodes().stream()
                 .collect(Collectors.toUnmodifiableMap(NodeInfo::id, Function.identity()));
         var result =
-            allocation
+            allocationCopy
                 .topicPartitionStream()
                 .filter(tp -> tp.topic().equals(topic))
-                .map(tp -> Map.entry(tp, allocation.logPlacements(tp)))
+                .map(tp -> Map.entry(tp, allocationCopy.logPlacements(tp)))
                 .flatMap(
                     entry -> {
                       var tp = entry.getKey();
@@ -130,16 +152,15 @@ class BalancerUtils {
   static <T> Optional<T> newInstance(Class<? extends T> aClass, Object... args) {
     try {
       // Class#getConstructor(Class<?> argTypes) doesn't consider the inheritance relationship.
-      // Which means `MyClass(Number)` constructor must provide a variable with the exact same type
+      // Which means `MyClass(Number)` constructor must give a variable with the exact same type
       // `Number`. Given an `Integer`, `Double` or any anonymous class is not going to work. Also,
-      // `Number` is an abstract class so there is basically no variable that can match this
-      // constructor. Given that abstract class must be initialized with a concrete implementation.
-      // By the time we provide a concrete implementation, it is no longer that `Number` type. The
-      // same as interface. This makes the `Configuration` type(interface) impossible to search by
-      // that method. To bypass this issue we have to use Class#getConstructors(), then manually
-      // check each constructor and validate the subclass assignment relationship all by ourselves.
-
-      //noinspection unchecked, see the javadoc of Class#getConstructors() for the reason to uncheck
+      // `Number` is an abstract class so there is basically no variable can match this constructor.
+      // Given that abstract class must be initialized with a concrete implementation. By the time
+      // we provide a concrete implementation, it is no longer that `Number` type. The same as
+      // interface. This makes the `Configuration` type(interface) impossible to search by that
+      // method. To bypass this issue we have to use Class#getConstructors(), then manually check
+      // each constructor and validate the subclass assignment relationship all by ourselves.
+      @SuppressWarnings("unchecked") // see javadoc of Class#getConstructors() for the reason.
       var constructors = (Constructor<T>[]) aClass.getConstructors();
 
       // deal with primitive type. The API doesn't consider int assignable to Integer
@@ -176,13 +197,13 @@ class BalancerUtils {
     return Optional.empty();
   }
 
-  private static Supplier<RuntimeException> noSuitableConstructorException(Class<?> theClass) {
+  static Supplier<RuntimeException> noSuitableConstructorException(Class<?> theClass) {
     return () ->
         new IllegalArgumentException(
             "No suitable class constructor found for " + theClass.getName());
   }
 
-  public static MetricSource constructMetricSource(
+  static MetricSource constructMetricSource(
       Class<? extends MetricSource> aClass,
       Configuration configuration,
       Collection<IdentifiedFetcher> fetchers) {
@@ -190,7 +211,7 @@ class BalancerUtils {
         .orElseThrow(noSuitableConstructorException(aClass));
   }
 
-  public static CostFunction constructCostFunction(
+  static CostFunction constructCostFunction(
       Class<? extends CostFunction> aClass, Configuration configuration) {
     return Stream.of(newInstance(aClass, configuration), newInstance(aClass))
         .flatMap(Optional::stream)
@@ -198,7 +219,7 @@ class BalancerUtils {
         .orElseThrow(noSuitableConstructorException(aClass));
   }
 
-  public static RebalancePlanGenerator constructGenerator(
+  static RebalancePlanGenerator constructGenerator(
       Class<? extends RebalancePlanGenerator> aClass, Configuration configuration) {
     return Stream.of(newInstance(aClass, configuration), newInstance(aClass))
         .flatMap(Optional::stream)
@@ -206,7 +227,7 @@ class BalancerUtils {
         .orElseThrow(noSuitableConstructorException(aClass));
   }
 
-  public static RebalancePlanExecutor constructExecutor(
+  static RebalancePlanExecutor constructExecutor(
       Class<? extends RebalancePlanExecutor> aClass, Configuration configuration) {
     return Stream.of(newInstance(aClass, configuration), newInstance(aClass))
         .flatMap(Optional::stream)

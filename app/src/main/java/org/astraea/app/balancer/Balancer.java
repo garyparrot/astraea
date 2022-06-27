@@ -218,6 +218,7 @@ public class Balancer implements AutoCloseable {
                 .map(NodeInfo::id)
                 .collect(Collectors.toUnmodifiableSet()),
             itsFetcher);
+    // TODO: add a test to ensure the offered bean is what I needed
     var clusterInfo = ClusterInfo.of(logAllocation, metrics);
 
     if (costFunction instanceof HasBrokerCost) {
