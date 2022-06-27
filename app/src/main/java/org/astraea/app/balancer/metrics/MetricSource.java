@@ -46,8 +46,8 @@ public interface MetricSource extends AutoCloseable {
   /**
    * Wait until the metric source is ready. Metric source might take some time to perform
    * initialization. The initialization detail is implementation specific. For example: loading old
-   * metrics from a metric storage. Note that the metric source is ready doesn't mean the metrics is ok
-   * for the rebalance task. The cost function might not be satisfied with the given metrics(for
+   * metrics from a metric storage. Note that the metric source is ready doesn't mean the metrics is
+   * ok for the rebalance task. The cost function might not be satisfied with the given metrics(for
    * example: too much noise, contradicted metrics) so reject the balance task execution.
    */
   void awaitMetricReady();
