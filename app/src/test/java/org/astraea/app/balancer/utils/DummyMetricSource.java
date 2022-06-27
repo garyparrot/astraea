@@ -19,11 +19,21 @@ package org.astraea.app.balancer.utils;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.astraea.app.balancer.metrics.IdentifiedFetcher;
 import org.astraea.app.balancer.metrics.MetricSource;
 import org.astraea.app.metrics.HasBeanObject;
+import org.astraea.app.partitioner.Configuration;
+import org.mockito.Mockito;
 
 public class DummyMetricSource implements MetricSource {
+
+  private final Collection<IdentifiedFetcher> fetchers;
+
+  public DummyMetricSource(
+      Configuration configuration, Collection<IdentifiedFetcher> identifiedFetchers) {
+    this.fetchers = identifiedFetchers;
+  }
 
   @Override
   public Collection<HasBeanObject> metrics(IdentifiedFetcher fetcher, int brokerId) {
@@ -32,7 +42,20 @@ public class DummyMetricSource implements MetricSource {
 
   @Override
   public Map<IdentifiedFetcher, Map<Integer, Collection<HasBeanObject>>> allBeans() {
-    return Map.of();
+    return fetchers.stream()
+        .collect(
+            Collectors.toUnmodifiableMap(
+                fetcher -> fetcher,
+                fetcher -> {
+                  @SuppressWarnings("unchecked")
+                  Map<Integer, Collection<HasBeanObject>> mockedMap = Mockito.mock(Map.class);
+                  Mockito.when(mockedMap.get(Mockito.anyInt()))
+                      .thenAnswer(
+                          invocation -> {
+                            return metrics(fetcher, invocation.getArgument(0));
+                          });
+                  return mockedMap;
+                }));
   }
 
   @Override

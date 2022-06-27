@@ -47,7 +47,9 @@ class BalancerUtilsTest {
   private static final Configuration emptyConfig = Configuration.of(Map.of());
 
   static class DummyConfigMetricSource extends DummyMetricSource {
-    public DummyConfigMetricSource(Configuration c, Collection<IdentifiedFetcher> something) {}
+    public DummyConfigMetricSource(Configuration c, Collection<IdentifiedFetcher> something) {
+      super(c, something);
+    }
   }
 
   static class DummyConfigCostFunction extends DummyCostFunction {

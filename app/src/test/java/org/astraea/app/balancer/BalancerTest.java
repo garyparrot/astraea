@@ -83,7 +83,9 @@ class BalancerTest extends RequireBrokerCluster {
 
   static class RandomMetricSource extends DummyMetricSource {
     public RandomMetricSource(
-        Configuration configuration, Collection<IdentifiedFetcher> identifiedFetchers) {}
+        Configuration configuration, Collection<IdentifiedFetcher> identifiedFetchers) {
+      super(configuration, identifiedFetchers);
+    }
 
     @Override
     public Collection<HasBeanObject> metrics(IdentifiedFetcher fetcher, int brokerId) {
