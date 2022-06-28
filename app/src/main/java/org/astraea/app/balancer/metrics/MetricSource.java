@@ -25,7 +25,7 @@ import org.astraea.app.metrics.HasBeanObject;
 /**
  * Declare the implementation class has the ability to return a collection of {@link HasBeanObject}
  * result from a {@link IdentifiedFetcher} for a specific broker at <strong>the function call
- * moment</strong>.
+ * moment</strong>. The implementation should be thread-safe.
  */
 public interface MetricSource extends AutoCloseable {
 
@@ -48,7 +48,8 @@ public interface MetricSource extends AutoCloseable {
    * initialization. The initialization detail is implementation specific. For example: loading old
    * metrics from a metric storage. Note that the metric source is ready doesn't mean the metrics is
    * ok for the rebalance task. The cost function might not be satisfied with the given metrics(for
-   * example: too much noise, contradicted metrics) so reject the balance task execution.
+   * example: too much noise, contradicted metrics), which raise an exception for any given
+   * rebalance plan proposal.
    */
   void awaitMetricReady();
 
