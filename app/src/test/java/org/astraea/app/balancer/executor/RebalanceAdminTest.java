@@ -190,11 +190,11 @@ class RebalanceAdminTest extends RequireBrokerCluster {
       final var rebalanceAdmin = RebalanceAdmin.of(admin, metricSource, (ignore) -> true);
       final var clusterInfo = rebalanceAdmin.refreshMetrics(rebalanceAdmin.clusterInfo());
 
-      Assertions.assertEquals(List.of(), clusterInfo.beans(0));
+      Assertions.assertEquals(List.of(), clusterInfo.clusterBean().all().get(0));
       next.incrementAndGet();
-      Assertions.assertEquals(List.of(), clusterInfo.beans(1));
+      Assertions.assertEquals(List.of(), clusterInfo.clusterBean().all().get(1));
       next.incrementAndGet();
-      Assertions.assertEquals(List.of(), clusterInfo.beans(2));
+      Assertions.assertEquals(List.of(), clusterInfo.clusterBean().all().get(2));
     }
   }
 

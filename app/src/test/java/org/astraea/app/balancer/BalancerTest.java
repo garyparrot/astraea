@@ -384,7 +384,7 @@ class BalancerTest extends RequireBrokerCluster {
 
     @Override
     public BrokerCost brokerCost(ClusterInfo clusterInfo) {
-      metrics.set(clusterInfo.allBeans());
+      metrics.set(clusterInfo.clusterBean().all());
       return () ->
           clusterInfo.nodes().stream()
               .collect(
@@ -409,7 +409,7 @@ class BalancerTest extends RequireBrokerCluster {
 
     @Override
     public BrokerCost brokerCost(ClusterInfo clusterInfo) {
-      metrics.set(clusterInfo.allBeans());
+      metrics.set(clusterInfo.clusterBean().all());
       return () ->
           clusterInfo.nodes().stream()
               .collect(
