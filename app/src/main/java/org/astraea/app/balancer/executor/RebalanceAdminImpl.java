@@ -22,14 +22,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.app.admin.Admin;
 import org.astraea.app.admin.Replica;
 import org.astraea.app.admin.TopicPartition;
+import org.astraea.app.admin.TopicPartitionReplica;
 import org.astraea.app.balancer.log.LogPlacement;
 import org.astraea.app.common.Utils;
 import org.astraea.app.cost.ClusterInfo;
@@ -42,7 +43,7 @@ class RebalanceAdminImpl implements RebalanceAdmin {
   private final Supplier<Map<Integer, Collection<HasBeanObject>>> metricSource;
 
   /**
-   * Construct a implementation of {@link RebalanceAdmin}
+   * Construct an implementation of {@link RebalanceAdmin}
    *
    * @param topicFilter to determine which topics are permitted for balance operation
    * @param admin the actual {@link Admin} implementation
@@ -147,28 +148,6 @@ class RebalanceAdminImpl implements RebalanceAdmin {
   }
 
   @Override
-  public SyncingProgress syncingProgress(TopicPartitionReplica log) {
-    this.ensureTopicPermitted(log.topic());
-
-    List<Replica> replicas =
-        admin.replicas(Set.of(log.topic())).entrySet().stream()
-            .filter(x -> x.getKey().partition() == log.partition())
-            .filter(x -> x.getKey().topic().equals(log.topic()))
-            .map(Map.Entry::getValue)
-            .findFirst()
-            .orElseThrow();
-
-    var topicPartition = new TopicPartition(log.topic(), log.partition());
-    var leader = replicas.stream().filter(Replica::leader).findFirst();
-    var replica =
-        replicas.stream().filter(x -> x.broker() == log.brokerId()).findFirst().orElseThrow();
-
-    return leader
-        .map(leaderLog -> SyncingProgress.of(topicPartition, replica, leaderLog))
-        .orElse(SyncingProgress.leaderlessProgress(topicPartition, replica));
-  }
-
-  @Override
   public boolean waitLogSynced(TopicPartitionReplica log, Duration timeout)
       throws InterruptedException {
     ensureTopicPermitted(log.topic());
@@ -180,10 +159,10 @@ class RebalanceAdminImpl implements RebalanceAdmin {
                 .flatMap(x -> x.getValue().stream())
                 .filter(x -> x.broker() == log.brokerId())
                 .findFirst()
-                .map(Replica::inSync)
+                .map(x -> x.inSync() && !x.isFuture())
                 .orElse(false),
         timeout,
-        Duration.ofSeconds(3));
+        debounceTime.get());
   }
 
   @Override
@@ -208,7 +187,7 @@ class RebalanceAdminImpl implements RebalanceAdmin {
                     })
                 .orElseThrow(),
         timeout,
-        Duration.ofSeconds(3));
+        debounceTime.get());
   }
 
   @Override
@@ -265,5 +244,13 @@ class RebalanceAdminImpl implements RebalanceAdmin {
     } while (!isDone && timeoutMs > nowMs);
 
     return isDone;
+  }
+
+  private static final AtomicReference<Duration> debounceTime =
+      new AtomicReference<>(Duration.ofSeconds(1));
+
+  // visible for test
+  static void changeDebounceTime(Duration newDebounceTime) {
+    debounceTime.set(newDebounceTime);
   }
 }

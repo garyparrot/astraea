@@ -23,9 +23,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
-import org.apache.kafka.common.TopicPartitionReplica;
 import org.astraea.app.admin.Admin;
 import org.astraea.app.admin.TopicPartition;
+import org.astraea.app.admin.TopicPartitionReplica;
 import org.astraea.app.balancer.log.LogPlacement;
 import org.astraea.app.cost.ClusterInfo;
 import org.astraea.app.metrics.HasBeanObject;
@@ -36,6 +36,14 @@ import org.astraea.app.metrics.HasBeanObject;
  */
 public interface RebalanceAdmin {
 
+  /**
+   * Construct an implementation of {@link RebalanceAdmin}
+   *
+   * @param topicFilter to determine which topics are permitted for balance operation
+   * @param admin the actual {@link Admin} implementation
+   * @param metricSource the supplier for new metrics, this supplier should return the metrics that
+   *     {@link RebalancePlanExecutor#fetcher()} is interested.
+   */
   static RebalanceAdmin of(
       Admin admin,
       Supplier<Map<Integer, Collection<HasBeanObject>>> metricSource,
@@ -55,9 +63,6 @@ public interface RebalanceAdmin {
    */
   List<ReplicaMigrationTask> alterReplicaPlacements(
       TopicPartition topicPartition, List<LogPlacement> expectedPlacement);
-
-  /** Access the syncing progress of the specific topic/partitions */
-  SyncingProgress syncingProgress(TopicPartitionReplica topicPartitionReplica);
 
   /**
    * Wait until the given log is synced or the timeout is due.

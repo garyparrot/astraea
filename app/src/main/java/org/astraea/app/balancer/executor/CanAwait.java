@@ -19,25 +19,21 @@ package org.astraea.app.balancer.executor;
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 
-public interface RebalanceTask<TaskInfoObject, TaskProgressDataObject> {
+public interface CanAwait {
 
   /**
-   * Access the information related to this migration task, it is like metadata to this task.
+   * Wait for specific condition fulfilled.
    *
-   * @return the information related to the given rebalance task.
-   */
-  TaskInfoObject info();
-
-  /** @return the progress of this rebalance task. */
-  TaskProgressDataObject progress();
-
-  /**
-   * Await the task finished
-   *
-   * @return true if the task is finished.
+   * @param timeout the timeout for waiting for a specific condition to fulfill
+   * @return true if the condition is fulfilled.
    */
   boolean await(Duration timeout);
 
+  /**
+   * Wait for specific condition fulfilled, with no timeout.
+   *
+   * @return true if the condition is fulfilled.
+   */
   default boolean await() {
     return await(ChronoUnit.FOREVER.getDuration());
   }

@@ -17,9 +17,9 @@
 package org.astraea.app.balancer.executor;
 
 import java.time.Duration;
-import org.apache.kafka.common.TopicPartitionReplica;
+import org.astraea.app.admin.TopicPartitionReplica;
 
-public class ReplicaMigrationTask implements RebalanceTask<TopicPartitionReplica, SyncingProgress> {
+public class ReplicaMigrationTask implements CanAwait {
 
   private final RebalanceAdmin admin;
   private final TopicPartitionReplica log;
@@ -27,15 +27,6 @@ public class ReplicaMigrationTask implements RebalanceTask<TopicPartitionReplica
   public ReplicaMigrationTask(RebalanceAdmin admin, TopicPartitionReplica log) {
     this.admin = admin;
     this.log = log;
-  }
-
-  public TopicPartitionReplica info() {
-    return log;
-  }
-
-  @Override
-  public SyncingProgress progress() {
-    return admin.syncingProgress(log);
   }
 
   @Override
