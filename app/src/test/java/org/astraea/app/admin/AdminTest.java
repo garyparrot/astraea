@@ -680,7 +680,6 @@ public class AdminTest extends RequireBrokerCluster {
     } catch (InterruptedException e) {
       throw new RuntimeException(e);
     }
-    restartCluster();
   }
 
   @Test
@@ -807,7 +806,6 @@ public class AdminTest extends RequireBrokerCluster {
               .filter(x -> !x.isOfflineReplica())
               .allMatch(x -> x.nodeInfo().id() != brokerToClose));
     }
-    restartCluster();
   }
 
   @ParameterizedTest
