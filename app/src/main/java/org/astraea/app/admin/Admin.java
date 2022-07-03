@@ -249,6 +249,13 @@ public interface Admin extends Closeable {
    */
   Map<TopicPartition, Reassignment> reassignments(Set<String> topics);
 
+  /**
+   * Delete specified topics.
+   *
+   * @param topics topics to delete.
+   */
+  void deleteTopics(Set<String> topics);
+
   @Override
   void close();
 }

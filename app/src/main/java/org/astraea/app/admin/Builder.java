@@ -650,6 +650,11 @@ public class Builder {
                           Collections.unmodifiableSet(e.getValue().getKey()),
                           Collections.unmodifiableSet(e.getValue().getValue()))));
     }
+
+    @Override
+    public void deleteTopics(Set<String> topics) {
+      Utils.packException(() -> admin.deleteTopics(topics).all().get());
+    }
   }
 
   private static class ConfigImpl implements Config {
