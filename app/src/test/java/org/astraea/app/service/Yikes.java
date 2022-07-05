@@ -32,6 +32,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
@@ -112,6 +114,14 @@ class Yikes extends RequireManyBrokerCluster {
     return numbers.limit(maxSize)
         .collect(Collectors.groupingBy(x -> x, Collectors.counting()));
   }
+
+  Gson gson = new GsonBuilder()
+      .registerTypeAdapter(LogPlacement.of(0).getClass(), new LogPlacementSerializer())
+      .registerTypeAdapter(LogPlacement.class, new LogPlacementSerializer())
+      .registerTypeHierarchyAdapter(LogPlacement.class, new LogPlacementSerializer())
+      .registerTypeAdapter(DataSize.class, new DataSizeTypeAdapter())
+      .setPrettyPrinting()
+      .create();
 
   @Test
   void visualizeDistribution() {
@@ -516,13 +526,6 @@ class Yikes extends RequireManyBrokerCluster {
               allocation::logPlacements));
 
       Type type = new TypeToken<Map<TopicPartition, List<LogPlacement>>>() {}.getType();
-      Gson gson = new GsonBuilder()
-          .registerTypeAdapter(LogPlacement.of(0).getClass(), new LogPlacementSerializer())
-          .registerTypeAdapter(LogPlacement.class, new LogPlacementSerializer())
-          .registerTypeHierarchyAdapter(LogPlacement.class, new LogPlacementSerializer())
-          .registerTypeAdapter(DataSize.class, new DataSizeTypeAdapter())
-          .setPrettyPrinting()
-          .create();
       JsonElement jsonAllocation = gson.toJsonTree(collect, type);
       JsonElement jsonProduce = gson.toJsonTree(theSimulation.produceLoading);
       JsonElement jsonConsume = gson.toJsonTree(theSimulation.consumeLoading);
@@ -547,6 +550,65 @@ class Yikes extends RequireManyBrokerCluster {
     }
   }
 
+  @Test
+  void applyCluster() {
+    // var bootstrap = bootstrapServers();
+    var bootstrap = "192.168.103.177:25655,192.168.103.178:25655,192.168.103.179:25655,192.168.103.180:25655,192.168.103.181:25655,192.168.103.182:25655";
+    try (Admin admin = Admin.of(bootstrap)) {
+
+      if(!admin.topicNames().isEmpty()) {
+        System.out.println("This cluster is not clean: " + admin.topicNames());
+      }
+
+      Type type = new TypeToken<Map<String, List<LogPlacement>>>() {}.getType();
+      Type type1 = new TypeToken<Map<String, DataSize>>() {}.getType();
+
+      Path path = Path.of("/home/garyparrot/cluster-allocation.json");
+      JsonObject object = gson.fromJson(Files.newBufferedReader(path), JsonObject.class);
+      Map<TopicPartition, List<LogPlacement>> allocation = ((Map<String, List<LogPlacement>>)gson.fromJson(object.get("allocation"), type))
+          .entrySet().stream()
+              .collect(Collectors.toUnmodifiableMap(
+                  x -> TopicPartition.of(x.getKey()),
+                  Map.Entry::getValue));
+      Map<TopicPartition, DataSize> produce = ((Map<String, DataSize>)gson.fromJson(object.get("produce"), type1))
+          .entrySet().stream()
+          .collect(Collectors.toUnmodifiableMap(
+              x -> TopicPartition.of(x.getKey()),
+              Map.Entry::getValue));
+      Map<TopicPartition, DataSize> consume = ((Map<String, DataSize>)gson.fromJson(object.get("consume"), type1))
+          .entrySet().stream()
+          .collect(Collectors.toUnmodifiableMap(
+              x -> TopicPartition.of(x.getKey()),
+              Map.Entry::getValue));
+
+      // reconstruct the allocation
+      allocation.entrySet().stream()
+          .collect(Collectors.groupingBy(x -> x.getKey().topic(), Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue)))
+          .forEach((topic, map) -> {
+            System.out.println("Create topic - " + topic);
+            admin.creator()
+                .topic(topic)
+                .numberOfPartitions(map.size())
+                .numberOfReplicas((short) map.entrySet().iterator().next().getValue().size())
+                .create();
+          });
+      allocation.entrySet().stream()
+          .collect(Collectors.groupingBy(x -> x.getKey().topic(), Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue)))
+          .forEach((topic, map) -> {
+            map.forEach((tp, placements) -> {
+              admin.migrator()
+                  .partition(tp.topic(), tp.partition())
+                  .moveTo(placements.stream()
+                      .map(LogPlacement::broker)
+                      .collect(Collectors.toUnmodifiableList()));
+            });
+          });
+
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
   static class LogPlacementSerializer extends TypeAdapter<LogPlacement> {
 
     @Override
@@ -559,7 +621,21 @@ class Yikes extends RequireManyBrokerCluster {
 
     @Override
     public LogPlacement read(JsonReader in) throws IOException {
-      return null;
+      OptionalInt broker = OptionalInt.empty();
+      Optional<String> path = Optional.empty();
+      in.beginObject();
+      while (in.hasNext()) {
+        switch (in.nextName()) {
+          case "broker":
+            broker = OptionalInt.of(in.nextInt());
+            break;
+          case "logDirectory":
+            path = Optional.of(in.nextString());
+            break;
+        }
+      }
+      in.endObject();
+      return LogPlacement.of(broker.orElseThrow(), path.orElse(null));
     }
   }
 
@@ -572,7 +648,7 @@ class Yikes extends RequireManyBrokerCluster {
 
     @Override
     public DataSize read(JsonReader in) throws IOException {
-      return null;
+      return DataUnit.Byte.of(in.nextLong());
     }
   }
 
