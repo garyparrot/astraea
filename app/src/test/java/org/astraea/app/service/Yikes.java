@@ -16,7 +16,11 @@
  */
 package org.astraea.app.service;
 
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
+import java.lang.reflect.Type;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -39,6 +43,20 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonPrimitive;
+import com.google.gson.JsonSerializationContext;
+import com.google.gson.JsonSerializer;
+import com.google.gson.TypeAdapter;
+import com.google.gson.TypeAdapterFactory;
+import com.google.gson.reflect.TypeToken;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonWriter;
+import net.bytebuddy.description.method.MethodDescription;
 import org.apache.commons.math3.distribution.BetaDistribution;
 import org.astraea.app.admin.Admin;
 import org.astraea.app.admin.Replica;
@@ -321,12 +339,15 @@ class Yikes extends RequireManyBrokerCluster {
                         simulation.calculateBrokerEgress(node.id()))));
   }
 
+  private static ClusterSimulation theSimulation;
+
   // specify loading for topic, spread evenly on each partitions
   Map<Integer, BrokerNetworkLoad> simulateLoading2(Admin admin, Set<String> topics) {
     final var replicas = admin.replicas(topics);
 
     // simulate the loading
     ClusterSimulation simulation = new ClusterSimulation(replicas);
+    theSimulation = simulation;
     Supplier<Integer> nextFanout = () -> ThreadLocalRandom.current().nextInt(1, 3);
     Map<String, DataSize> topicProduceRate =
         topics.stream().collect(Collectors.toUnmodifiableMap(x -> x, x -> nextProduceRate.get()));
@@ -475,7 +496,7 @@ class Yikes extends RequireManyBrokerCluster {
                   return (double) ((maxEgress - avgEgress) / avgEgress);
                 }
               })
-          .limit(50000)
+          .limit(100)
           .forEach(
               x -> {
                 int normalized = (int) (x * 10);
@@ -494,12 +515,64 @@ class Yikes extends RequireManyBrokerCluster {
               x -> x,
               allocation::logPlacements));
 
-      ClusterFormat clusterFormat = new ClusterFormat(collect);
-      System.out.println(clusterFormat);
+      Type type = new TypeToken<Map<TopicPartition, List<LogPlacement>>>() {}.getType();
+      Gson gson = new GsonBuilder()
+          .registerTypeAdapter(LogPlacement.of(0).getClass(), new LogPlacementSerializer())
+          .registerTypeAdapter(LogPlacement.class, new LogPlacementSerializer())
+          .registerTypeHierarchyAdapter(LogPlacement.class, new LogPlacementSerializer())
+          .registerTypeAdapter(DataSize.class, new DataSizeTypeAdapter())
+          .setPrettyPrinting()
+          .create();
+      JsonElement jsonAllocation = gson.toJsonTree(collect, type);
+      JsonElement jsonProduce = gson.toJsonTree(theSimulation.produceLoading);
+      JsonElement jsonConsume = gson.toJsonTree(theSimulation.consumeLoading);
+
+      JsonObject jsonObject = new JsonObject();
+      jsonObject.add("allocation", jsonAllocation);
+      jsonObject.add("produce", jsonProduce);
+      jsonObject.add("consume", jsonConsume);
+
+      Path path = Path.of("/home/garyparrot/cluster-allocation.json");
+      BufferedWriter bufferedWriter = Files.newBufferedWriter(path, StandardOpenOption.CREATE);
+      bufferedWriter.write(jsonObject.toString());
+      bufferedWriter.close();
+
       nextSimulatedLoading.get().forEach((broker, load) -> {
         System.out.printf("Broker #%d, [ingress %s] [egress %s]%n", broker,
             load.ingress, load.egress);
       });
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    } finally {
+    }
+  }
+
+  static class LogPlacementSerializer extends TypeAdapter<LogPlacement> {
+
+    @Override
+    public void write(JsonWriter out, LogPlacement value) throws IOException {
+      out.beginObject();
+      out.name("broker").value(value.broker());
+      out.name("logDirectory").value(value.logDirectory().orElse(null));
+      out.endObject();
+    }
+
+    @Override
+    public LogPlacement read(JsonReader in) throws IOException {
+      return null;
+    }
+  }
+
+  static class DataSizeTypeAdapter extends TypeAdapter<DataSize> {
+
+    @Override
+    public void write(JsonWriter out, DataSize value) throws IOException {
+      out.value(value.measurement(DataUnit.Byte).longValue());
+    }
+
+    @Override
+    public DataSize read(JsonReader in) throws IOException {
+      return null;
     }
   }
 

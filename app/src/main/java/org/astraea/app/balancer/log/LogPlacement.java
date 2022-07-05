@@ -30,30 +30,41 @@ public interface LogPlacement {
   }
 
   static LogPlacement of(int broker, String logDirectory) {
-    return new LogPlacement() {
-      @Override
-      public int broker() {
-        return broker;
-      }
-
-      @Override
-      public Optional<String> logDirectory() {
-        return Optional.ofNullable(logDirectory);
-      }
-
-      @Override
-      public boolean equals(Object obj) {
-        if (obj instanceof LogPlacement) {
-          final var that = (LogPlacement) obj;
-          return this.broker() == that.broker() && this.logDirectory().equals(that.logDirectory());
-        }
-        return false;
-      }
-
-      @Override
-      public String toString() {
-        return "LogPlacement{broker=" + broker() + " logDir=" + logDirectory() + "}";
-      }
-    };
+    return new LogPlacementImpl(broker, logDirectory);
   }
+  class LogPlacementImpl implements LogPlacement {
+
+    private final int broker;
+    private final String logDirectory;
+
+    public LogPlacementImpl(int broker, String logDirectory) {
+      this.broker = broker;
+      this.logDirectory = logDirectory;
+    }
+
+
+    @Override
+    public int broker() {
+      return broker;
+    }
+
+    @Override
+    public Optional<String> logDirectory() {
+      return Optional.ofNullable(logDirectory);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+      if (obj instanceof LogPlacement) {
+        final var that = (LogPlacement) obj;
+        return this.broker() == that.broker() && this.logDirectory().equals(that.logDirectory());
+      }
+      return false;
+    }
+
+    @Override
+    public String toString() {
+      return "LogPlacement{broker=" + broker() + " logDir=" + logDirectory() + "}";
+    }
+  };
 }
