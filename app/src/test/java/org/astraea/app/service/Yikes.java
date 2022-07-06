@@ -142,9 +142,14 @@ class Yikes extends RequireManyBrokerCluster {
         nextProduceRate.get().measurement(DataUnit.MB).longValue() / 10), 10000));
     System.out.println();
 
-    System.out.println("Topic Consumer Rate");
+    // System.out.println("Topic Consumer Rate");
+    // virtualize(experimentMap(Stream.generate(() ->
+    //     nextConsumeRate.get().measurement(DataUnit.MB).longValue() / 10), 10000));
+    // System.out.println();
+
+    System.out.println("Consume Fanout Rate");
     virtualize(experimentMap(Stream.generate(() ->
-        nextConsumeRate.get().measurement(DataUnit.MB).longValue() / 10), 10000));
+        nextReplicaFactor.get()), 10000));
     System.out.println();
   }
 
@@ -332,9 +337,9 @@ class Yikes extends RequireManyBrokerCluster {
         .keySet()
         .forEach(
             topicPartition -> {
-              simulation.applyProducerLoading(topicPartition, nextProduceRate.get());
-              simulation.applyConsumerLoading(
-                  topicPartition, nextConsumeRate.get(), nextFanout.get());
+              var produceRate = nextProduceRate.get();
+              simulation.applyProducerLoading(topicPartition, produceRate);
+              simulation.applyConsumerLoading(topicPartition, produceRate, nextFanout.get());
             });
 
     Set<NodeInfo> nodes = admin.nodes();
@@ -553,7 +558,7 @@ class Yikes extends RequireManyBrokerCluster {
   @Test
   void applyCluster() {
     // var bootstrap = bootstrapServers();
-    var bootstrap = "192.168.103.177:25655,192.168.103.178:25655,192.168.103.179:25655,192.168.103.180:25655,192.168.103.181:25655,192.168.103.182:25655";
+    var bootstrap = "192.168.103.177:25655,192.168.103.179:25655,192.168.103.180:25655,192.168.103.181:25655,192.168.103.182:25655";
     try (Admin admin = Admin.of(bootstrap)) {
 
       if(!admin.topicNames().isEmpty()) {
