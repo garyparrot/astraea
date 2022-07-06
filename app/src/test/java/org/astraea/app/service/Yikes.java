@@ -428,18 +428,18 @@ class Yikes extends RequireManyBrokerCluster {
                                         .doubleValue())
                             .max()
                             .orElseThrow();
-                    var avgIngress =
+                    var minIngress =
                         map.values().stream()
                             .mapToDouble(
                                 x ->
                                     x.ingress
                                         .toBigDecimal(DataUnit.Byte, ChronoUnit.SECONDS)
                                         .doubleValue())
-                            .average()
+                            .min()
                             .orElseThrow();
-                    System.out.println("Average: " + DataUnit.Byte.of((long) avgIngress));
+                    System.out.println("Min: " + DataUnit.Byte.of((long) minIngress));
                     System.out.println("Max: " + DataUnit.Byte.of((long) maxIngress));
-                    return (double) ((maxIngress - avgIngress) / avgIngress);
+                    return (double) ((maxIngress - minIngress) / maxIngress);
                   })
               .peek(x -> counter.incrementAndGet())
               .peek(
@@ -558,7 +558,7 @@ class Yikes extends RequireManyBrokerCluster {
   @Test
   void applyCluster() {
     // var bootstrap = bootstrapServers();
-    var bootstrap = "192.168.103.177:25655,192.168.103.179:25655,192.168.103.180:25655,192.168.103.181:25655,192.168.103.182:25655";
+    var bootstrap = "192.168.103.177:25655,192.168.103.178:25655,192.168.103.179:25655,192.168.103.180:25655";
     try (Admin admin = Admin.of(bootstrap)) {
 
       if(!admin.topicNames().isEmpty()) {
@@ -590,7 +590,10 @@ class Yikes extends RequireManyBrokerCluster {
       allocation.entrySet().stream()
           .collect(Collectors.groupingBy(x -> x.getKey().topic(), Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue)))
           .forEach((topic, map) -> {
-            System.out.println("Create topic - " + topic);
+            System.out.printf("Create topic '%s' with %d partitions and %d replicas.%n",
+                topic,
+                map.size(),
+                (short) map.entrySet().iterator().next().getValue().size());
             admin.creator()
                 .topic(topic)
                 .numberOfPartitions(map.size())
@@ -665,6 +668,8 @@ class Yikes extends RequireManyBrokerCluster {
         lines.stream()
             .map(Double::parseDouble)
             .collect(Collectors.groupingBy(x -> (int) (x * 100), Collectors.counting()));
+    virtualize(collect);
+    System.out.println();
     virtualizeCumulative(collect);
   }
 
