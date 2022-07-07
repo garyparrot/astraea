@@ -27,6 +27,7 @@ import org.astraea.app.admin.TopicExplorer;
 import org.astraea.app.automation.Automation;
 import org.astraea.app.cost.topic.PartitionScore;
 import org.astraea.app.loading.ProduceLoading;
+import org.astraea.app.loading.ProduceLoading2;
 import org.astraea.app.metrics.MetricExplorer;
 import org.astraea.app.performance.Performance;
 import org.astraea.app.web.WebService;
@@ -42,7 +43,7 @@ public class App {
           "monitor", ReplicaSyncingMonitor.class,
           "automation", Automation.class,
           "web", WebService.class,
-          "producer", ProduceLoading.class);
+          "producer", ProduceLoading2.class);
 
   static void execute(Map<String, Class<?>> mains, List<String> args) throws Throwable {
 
