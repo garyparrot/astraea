@@ -29,6 +29,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,8 +59,13 @@ import com.google.gson.TypeAdapterFactory;
 import com.google.gson.reflect.TypeToken;
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonWriter;
+import com.sun.jna.platform.unix.X11;
+import kafka.utils.Json;
 import net.bytebuddy.description.method.MethodDescription;
 import org.apache.commons.math3.distribution.BetaDistribution;
+import org.apache.commons.math3.distribution.BinomialDistribution;
+import org.apache.commons.math3.distribution.NormalDistribution;
+import org.apache.commons.math3.fitting.leastsquares.EvaluationRmsChecker;
 import org.astraea.app.admin.Admin;
 import org.astraea.app.admin.Replica;
 import org.astraea.app.admin.TopicPartition;
@@ -71,22 +77,26 @@ import org.astraea.app.common.DataUnit;
 import org.astraea.app.common.Utils;
 import org.astraea.app.cost.ClusterInfo;
 import org.astraea.app.cost.NodeInfo;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
+import scala.Int;
+
+import javax.xml.crypto.Data;
 
 class Yikes extends RequireManyBrokerCluster {
 
-  boolean verbose = false;
+  boolean verbose = true;
 
 
   // for topic creation, use uniform distribution.
-  double partitionCreationRate = 0.3;
+  double partitionCreationRate = 0.7;
   Supplier<Boolean> shouldCreate =
       () -> ThreadLocalRandom.current().nextDouble(0, 1) <= partitionCreationRate;
 
   // for creation size, use beta(0.5, 0.5) distribution
-  BetaDistribution topicCreationSize = new BetaDistribution(0.5, 0.5);
-  int partitionCreationSizeAverage = (int) (10 / topicCreationSize.getNumericalMean());
+  NormalDistribution topicCreationSize = new NormalDistribution(20, 10);
+  int partitionCreationSizeAverage = 1; // (int) (10 / topicCreationSize.getNumericalMean());
   Supplier<Integer> nextSize =
       () -> Math.max((int) (topicCreationSize.sample() * partitionCreationSizeAverage), 3);
 
@@ -95,18 +105,23 @@ class Yikes extends RequireManyBrokerCluster {
 
   // for topic life
   BetaDistribution betaDistribution1 = new BetaDistribution(0.2, 0.5);
+  BinomialDistribution betaDistribution1_2 = new BinomialDistribution(120, 0.2);
+  BinomialDistribution betaDistribution1_3 = new BinomialDistribution(120, 0.8);
 
-  int partitionLifeAverage = (int) (80 / betaDistribution1.getNumericalMean());
+  int partitionLifeAverage = (int) (80 / betaDistribution1_2.getNumericalMean());
+  Supplier<Integer> nea = () -> ThreadLocalRandom.current().nextDouble() < 0.5 ? betaDistribution1_3.sample() : betaDistribution1_2.sample();
   Supplier<Integer> nextLife =
-      () -> Math.max((int) (betaDistribution1.sample() * partitionLifeAverage), 5);
+      () -> Math.max(nea.get(), 5);
 
   // for produce & consume size
   BetaDistribution produceRateDistribution = new BetaDistribution(0.1, 0.3);
   BetaDistribution consumeRateDistribution = new BetaDistribution(0.1, 0.3);
-  double produceRateMeanKB = 80 * 1e3 / produceRateDistribution.getNumericalMean();
-  double consumeRateMeanKB = 80 * 1e3 / produceRateDistribution.getNumericalMean();
+  BinomialDistribution aaa = new BinomialDistribution(100000, 0.002);
+  BinomialDistribution bbb = new BinomialDistribution(200, 0.5);
+  double produceRateMeanKB = 30 * 1e3 / bbb.getNumericalMean();
+  double consumeRateMeanKB = 30 * 1e3 / produceRateDistribution.getNumericalMean();
   Supplier<DataSize> nextProduceRate =
-      () -> DataUnit.KB.of((long) (produceRateMeanKB * produceRateDistribution.sample()));
+      () -> DataUnit.MB.of(ThreadLocalRandom.current().nextDouble() < 0.9 ? (aaa.sample()) : (bbb.sample()));
   Supplier<DataSize> nextConsumeRate =
       () -> DataUnit.KB.of((long) (consumeRateMeanKB * consumeRateDistribution.sample()));
 
@@ -124,6 +139,7 @@ class Yikes extends RequireManyBrokerCluster {
       .create();
 
   @Test
+  @DisplayName("See the distribution in use")
   void visualizeDistribution() {
     System.out.println("Creation size");
     virtualize(experimentMap(Stream.generate(nextSize), 10000));
@@ -139,7 +155,7 @@ class Yikes extends RequireManyBrokerCluster {
 
     System.out.println("Topic Produce Rate");
     virtualize(experimentMap(Stream.generate(() ->
-        nextProduceRate.get().measurement(DataUnit.MB).longValue() / 10), 10000));
+        nextProduceRate.get().measurement(DataUnit.MB).longValue()), 10000));
     System.out.println();
 
     // System.out.println("Topic Consumer Rate");
@@ -151,21 +167,6 @@ class Yikes extends RequireManyBrokerCluster {
     virtualize(experimentMap(Stream.generate(() ->
         nextReplicaFactor.get()), 10000));
     System.out.println();
-  }
-
-
-  @Test
-  void testVisualizer() {
-    BiFunction<Double, Double, Void> run =
-        (a, b) -> {
-          System.out.printf("[Beta %.3f %.3f]%n", a, b);
-          BetaDistribution betaDistribution = new BetaDistribution(a, b);
-          distributionVisualizer((int) 1e6, betaDistribution::sample);
-          return null;
-        };
-
-    run.apply(0.3, 0.1);
-    run.apply(0.1, 0.3);
   }
 
   void distributionVisualizer(int trials, Supplier<Number> outcome) {
@@ -381,7 +382,7 @@ class Yikes extends RequireManyBrokerCluster {
               var consume = topicConsumeRate.get(topicName).divide(topicSize.apply(topicName));
               var consumeFanout = topicConsumeFanout.get(topicName);
               simulation.applyProducerLoading(topicPartition, produce);
-              simulation.applyConsumerLoading(topicPartition, consume, consumeFanout);
+              simulation.applyConsumerLoading(topicPartition, produce, consumeFanout);
             });
 
     Set<NodeInfo> nodes = admin.nodes();
@@ -462,11 +463,12 @@ class Yikes extends RequireManyBrokerCluster {
       var topics = fuzzyCluster(admin, simulationTime);
       var storage = IntStream.range(0, 10).boxed().collect(Collectors.toMap(x -> x, x -> 0L));
       var ingress = false;
+      System.out.println("Generate cluster");
       Supplier<Map<Integer, BrokerNetworkLoad>> nextSimulatedLoading =
           () -> simulateLoading2(admin, topics);
       var counter = new AtomicInteger();
+      System.out.println("Start");
       Stream.generate(nextSimulatedLoading)
-          .parallel()
           .map(
               map -> {
                 if (ingress) {
@@ -511,15 +513,16 @@ class Yikes extends RequireManyBrokerCluster {
                   return (double) ((maxEgress - avgEgress) / avgEgress);
                 }
               })
-          .limit(100)
+          .limit(300)
           .forEach(
               x -> {
                 int normalized = (int) (x * 10);
                 storage.putIfAbsent(normalized, 0L);
                 storage.put(normalized, storage.get(normalized) + 1);
-                if (counter.incrementAndGet() % 1000 == 0) {
+                if (counter.incrementAndGet() % 100 == 0) {
                   virtualize(storage);
                   System.out.println();
+                  System.out.flush();
                 }
               });
 
@@ -545,13 +548,103 @@ class Yikes extends RequireManyBrokerCluster {
       bufferedWriter.write(jsonObject.toString());
       bufferedWriter.close();
 
-      nextSimulatedLoading.get().forEach((broker, load) -> {
+      Map<Integer, BrokerNetworkLoad> loadingMap = nextSimulatedLoading.get();
+      loadingMap.forEach((broker, load) -> {
         System.out.printf("Broker #%d, [ingress %s] [egress %s]%n", broker,
             load.ingress, load.egress);
       });
+
+      Map<String, DataSize> produceLoad = theSimulation.produceLoading.entrySet().stream()
+          .collect(Collectors.groupingBy(x -> x.getKey().topic(), Collectors.mapping(
+              Map.Entry::getValue,
+              Collectors.reducing(DataUnit.Byte.of(0), DataSize::add))));
+      Map<String, DataSize> consumeLoad = theSimulation.consumeLoading.entrySet().stream()
+          .collect(Collectors.groupingBy(x -> x.getKey().topic(), Collectors.mapping(
+              Map.Entry::getValue,
+              Collectors.reducing(DataUnit.Byte.of(0), DataSize::add))));
+      Map<String, DataSize> hostResource = Map.of(
+          "192.168.103.181", DataUnit.Gb.of(10),
+          "192.168.103.182", DataUnit.Gb.of(10));
+
+      Path produceFile = Path.of("/home/garyparrot/produce-inventory.json");
+      Path consumeFile = Path.of("/home/garyparrot/consume-inventory.json");
+      writeAnsibleLoading(produceFile, "Producer", produceLoad, hostResource);
+      writeAnsibleLoading(consumeFile, "Consumer", consumeLoad, hostResource);
     } catch (IOException e) {
       throw new RuntimeException(e);
     } finally {
+    }
+  }
+
+  void writeAnsibleLoading(Path path, String type, Map<String, DataSize> loading, Map<String, DataSize> hostAndResourceLimit) {
+    AtomicInteger loadingNumber = new AtomicInteger();
+    List<Map.Entry<String, DataSize>> listOfLoading = loading.entrySet().stream()
+        .sorted(Map.Entry.comparingByValue())
+        .collect(Collectors.toUnmodifiableList());
+    Map<String, Long> remainResources = hostAndResourceLimit.entrySet()
+        .stream()
+        .collect(Collectors.toMap(
+            Map.Entry::getKey,
+            x -> x.getValue().measurement(DataUnit.Byte).longValue()));
+
+    JsonObject allLoadingHost = new JsonObject();
+    allLoadingHost.add("hosts", new JsonObject());
+    AtomicInteger a = new AtomicInteger();
+    hostAndResourceLimit.forEach((host, dataLoad) -> {
+      int index = a.getAndIncrement();
+      JsonObject theHost = new JsonObject();
+      theHost.addProperty("ansible_user", "kafka");
+      theHost.addProperty("ansible_host", host);
+      allLoadingHost.getAsJsonObject("hosts").add("host" + index , theHost);
+    });
+    JsonObject jsonLoading = new JsonObject();
+    jsonLoading.add("hosts", new JsonObject());
+
+    // start allocation algorithm
+    listOfLoading.forEach((entry) -> {
+      String topic = entry.getKey();
+      long bytes = entry.getValue().measurement(DataUnit.Byte).longValue();
+
+      var targetHost = remainResources.entrySet().stream()
+          .filter(x -> x.getValue() >= bytes)
+          .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+          .findAny()
+          .map(Map.Entry::getKey)
+          .orElse(null);
+      if(targetHost == null) {
+        System.out.println("Current Allocation");
+        System.out.println(remainResources);
+        System.out.println(listOfLoading);
+        throw new IllegalStateException("No suitable host can meet resource constraint");
+      }
+
+      long now = remainResources.get(targetHost);
+      long next = now - bytes;
+      remainResources.put(targetHost, next);
+
+      JsonObject theLoad = new JsonObject();
+      theLoad.addProperty("ansible_user", "kafka");
+      theLoad.addProperty("ansible_host", targetHost);
+      theLoad.addProperty("topic_name", topic);
+      theLoad.addProperty("throttle", bytes + "Byte");
+      int num = loadingNumber.getAndIncrement();
+      jsonLoading.getAsJsonObject("hosts").add("loading" + num, theLoad);
+    });
+
+    JsonObject all = new JsonObject();
+    all.add("loading-" + type.toLowerCase() + "-hosts", allLoadingHost);
+    all.add("loading-" + type.toLowerCase(), jsonLoading);
+
+    try {
+      System.out.println("Write file " + path);
+      System.out.println(all);
+      if(Files.exists(path))
+        Files.delete(path);
+      try (BufferedWriter bufferedWriter = Files.newBufferedWriter(path, StandardOpenOption.CREATE)) {
+        gson.toJson(all, bufferedWriter);
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(e);
     }
   }
 

@@ -23,7 +23,7 @@ import org.junit.jupiter.api.AfterAll;
 
 public class RequireManyBrokerCluster {
 
-  private static final int NUMBER_OF_BROKERS = 5;
+  private static final int NUMBER_OF_BROKERS = 4;
   private static final ZookeeperCluster ZOOKEEPER_CLUSTER = Services.zookeeperCluster();
   private static final BrokerCluster BROKER_CLUSTER =
       Services.brokerCluster(ZOOKEEPER_CLUSTER, NUMBER_OF_BROKERS);
