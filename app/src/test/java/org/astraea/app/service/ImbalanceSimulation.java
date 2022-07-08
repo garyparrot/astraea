@@ -22,6 +22,7 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.LongSummaryStatistics;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
@@ -96,6 +97,7 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
         .collect(Collectors.toUnmodifiableList());
   }
 
+  /** Apply a very balanced simulation, probably no outlier in there */
   Yikes.ClusterSimulation simulation(Admin admin, List<String> topics) {
     var replicas = admin.replicas(Set.copyOf(topics));
     var simulation = new Yikes.ClusterSimulation(replicas);
@@ -130,6 +132,35 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
     });
 
     return simulation;
+  }
+
+  void identifyOutlier(Map<TopicPartition, DataSize> theMap) {
+    Map<String, List<DataSize>> topicLoadings = theMap.entrySet().stream()
+        .collect(Collectors.groupingBy(x -> x.getKey().topic(),
+            Collectors.mapping(Map.Entry::getValue,
+                Collectors.toUnmodifiableList())));
+    Map<String, LongSummaryStatistics> loadingSummary = topicLoadings.entrySet().stream()
+        .collect(Collectors.toMap(
+            Map.Entry::getKey,
+            entry -> entry.getValue().stream()
+                .mapToLong(x -> x.measurement(DataUnit.Byte).longValue())
+                .summaryStatistics()));
+    System.out.println("Print Outlier");
+    loadingSummary.entrySet()
+        .stream()
+        .filter(x -> x.getValue().getMin() != x.getValue().getMax())
+        .sorted(Comparator.comparing((Map.Entry<String, LongSummaryStatistics> x) -> (double)x.getValue().getMin() / x.getValue().getMax()).reversed())
+        .forEach(entry -> {
+          var topic = entry.getKey();
+          var summary = entry.getValue();
+          System.out.printf("[%s] Max: %d, Min: %d, Avg: %.3f, Imf: %.3f%n",
+              topic,
+              summary.getMax(),
+              summary.getMin(),
+              summary.getAverage(),
+              1 - (double)summary.getMin() / summary.getMax());
+        });
+    System.out.println();
   }
 
   @RepeatedTest(value = 300)
@@ -167,6 +198,8 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
       if(!Files.exists(store))
         Utils.packException(() -> Files.createFile(store));
       Utils.packException(() -> Files.writeString(store, imbalanceFactorString, StandardOpenOption.APPEND));
+
+      identifyOutlier(simulation.produceLoading);
 
       admin.deleteTopics(Set.copyOf(topics));
       Utils.packException(()->TimeUnit.SECONDS.sleep(10));
