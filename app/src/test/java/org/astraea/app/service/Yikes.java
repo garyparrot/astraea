@@ -775,9 +775,9 @@ class Yikes extends RequireManyBrokerCluster {
 
   static class ClusterSimulation {
 
-    private final Map<TopicPartition, List<Replica>> relationship;
-    private final Map<TopicPartition, DataSize> produceLoading;
-    private final Map<TopicPartition, DataSize> consumeLoading;
+    final Map<TopicPartition, List<Replica>> relationship;
+    final Map<TopicPartition, DataSize> produceLoading;
+    final Map<TopicPartition, DataSize> consumeLoading;
 
     public ClusterSimulation(Map<TopicPartition, List<Replica>> map) {
       this.relationship = map;
@@ -908,6 +908,12 @@ class Yikes extends RequireManyBrokerCluster {
     enum Operation {
       CREATE, DELETE;
     }
+
+  }
+
+  @Test
+  void doIt() {
+    distributionVisualizer(30000, () -> Math.abs(ThreadLocalRandom.current().nextGaussian()));
   }
 
 }
