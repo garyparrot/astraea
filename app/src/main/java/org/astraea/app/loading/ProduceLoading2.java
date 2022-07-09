@@ -70,7 +70,7 @@ public class ProduceLoading2 extends Argument {
         ProducerConfig.LINGER_MS_CONFIG, 1000,
         ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 20,
         ProducerConfig.ACKS_CONFIG, "0",
-        ProducerConfig.BUFFER_MEMORY_CONFIG, DataUnit.MiB.of(300).measurement(DataUnit.Byte).longValue(),
+        ProducerConfig.BUFFER_MEMORY_CONFIG, DataUnit.MiB.of(100).measurement(DataUnit.Byte).longValue(),
         ProducerConfig.BATCH_SIZE_CONFIG, batchSize.measurement(DataUnit.Byte).intValue()));
 
     var theValue = new byte[(int)recordBytes];
