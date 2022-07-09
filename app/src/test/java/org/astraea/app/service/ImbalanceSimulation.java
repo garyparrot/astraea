@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -134,6 +135,50 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
     return simulation;
   }
 
+  /** Apply a very imbalanced simulation */
+  Yikes.ClusterSimulation imbalanceSimulation(Admin admin, List<String> topics) {
+    var replicas = admin.replicas(Set.copyOf(topics));
+    var simulation = new Yikes.ClusterSimulation(replicas);
+
+    Map<String, Long> topicPartitionCount = replicas.keySet().stream()
+        .map(TopicPartition::topic)
+        .collect(Collectors.groupingBy(x -> x, Collectors.counting()));
+    Map<String, DataSize> topicProduceRate = topics.stream()
+        .collect(Collectors.toMap(
+            topic -> topic,
+            topic -> patterns.stream()
+                .filter(p -> p.owned(topic))
+                .findFirst()
+                .orElseThrow()
+                .nextProduceRate()));
+    Map<String, Integer> fanoutMap = topics.stream()
+        .collect(Collectors.toMap(
+            topic -> topic,
+            topic -> patterns.stream()
+                .filter(p -> p.owned(topic))
+                .findFirst()
+                .orElseThrow()
+                .consumerFanout()));
+
+    // 1
+    // Supplier<Double> skewFactor = () ->
+    //     Math.pow(ThreadLocalRandom.current().nextDouble(0.75, 1.25), 2);
+    Supplier<Double> skewFactor = () ->
+        Math.pow(ThreadLocalRandom.current().nextDouble(0.75, 3.00), 2);
+
+    replicas.keySet().forEach(tp -> {
+      long partitions = topicPartitionCount.get(tp.topic());
+      int fanout = fanoutMap.get(tp.topic());
+      double rate = topicProduceRate.get(tp.topic()).divide(partitions).measurement(DataUnit.Byte).doubleValue();
+      double skewRate = rate * skewFactor.get();
+      DataSize skew = DataUnit.Byte.of((long) skewRate);
+      simulation.applyProducerLoading(tp, skew);
+      simulation.applyConsumerLoading(tp, skew, fanout);
+    });
+
+    return simulation;
+  }
+
   void identifyOutlier(Map<TopicPartition, DataSize> theMap) {
     Map<String, List<DataSize>> topicLoadings = theMap.entrySet().stream()
         .collect(Collectors.groupingBy(x -> x.getKey().topic(),
@@ -153,11 +198,11 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
         .forEach(entry -> {
           var topic = entry.getKey();
           var summary = entry.getValue();
-          System.out.printf("[%s] Max: %d, Min: %d, Avg: %.3f, Imf: %.3f%n",
+          System.out.printf("[%s] Max: %s, Min: %s, Avg: %s, Imf: %.3f%n",
               topic,
-              summary.getMax(),
-              summary.getMin(),
-              summary.getAverage(),
+              DataUnit.Byte.of(summary.getMax()),
+              DataUnit.Byte.of(summary.getMin()),
+              DataUnit.Byte.of((long)summary.getAverage()),
               1 - (double)summary.getMin() / summary.getMax());
         });
     System.out.println();
@@ -167,14 +212,9 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
   void testImbalanceDistribution() {
     try (Admin admin = Admin.of(bootstrapServers())) {
       var topics = fuzzyCluster(admin);
-      var simulation = simulation(admin, topics);
+      var simulation = imbalanceSimulation(admin, topics);
 
-      simulation.produceLoading.entrySet()
-          .stream()
-          .sorted(Map.Entry.comparingByKey())
-          .forEach((entry) -> {
-            System.out.println(entry.getKey() + ": " + entry.getValue());
-          });
+      identifyOutlier(simulation.produceLoading);
 
       System.out.println("Remaining topics: " + topics.size());
       brokerIds().stream()
@@ -198,8 +238,6 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
       if(!Files.exists(store))
         Utils.packException(() -> Files.createFile(store));
       Utils.packException(() -> Files.writeString(store, imbalanceFactorString, StandardOpenOption.APPEND));
-
-      identifyOutlier(simulation.produceLoading);
 
       admin.deleteTopics(Set.copyOf(topics));
       Utils.packException(()->TimeUnit.SECONDS.sleep(10));
