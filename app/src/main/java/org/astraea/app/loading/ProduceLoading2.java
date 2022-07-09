@@ -11,11 +11,14 @@ import org.astraea.app.common.DataSize;
 import org.astraea.app.common.DataUnit;
 import org.astraea.app.common.Utils;
 
+import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Consumer;
@@ -71,7 +74,7 @@ public class ProduceLoading2 extends Argument {
     Supplier<ProducerRecord<Bytes, Bytes>> nextRecord = () ->
         new ProducerRecord<>(topicName, null, System.nanoTime() + sendLimit, null, Bytes.wrap(theValue));
 
-    var recordQueue = new ConcurrentLinkedQueue<ProducerRecord<Bytes, Bytes>>();
+    var recordQueue = new ConcurrentLinkedDeque<ProducerRecord<Bytes, Bytes>>();
     ScheduledExecutorService executor = Executors.newScheduledThreadPool(16);
     ExecutorService workerPool = Executors.newCachedThreadPool();
 
@@ -90,9 +93,12 @@ public class ProduceLoading2 extends Argument {
       while (!Thread.currentThread().isInterrupted()) {
         for(int i = 0; i < 1000; i++) {
           ProducerRecord<Bytes, Bytes> poll = recordQueue.poll();
-          if(poll == null) continue;
+          if(poll == null) {
+            Utils.sleep(Duration.ofMillis(ThreadLocalRandom.current().nextInt(1, 8)));
+            continue;
+          }
           // stale record
-          if(System.nanoTime() > poll.timestamp()) {
+          if(isStaleRecord(poll)) {
             recordDropped.increment();
             continue;
           }
@@ -104,13 +110,22 @@ public class ProduceLoading2 extends Argument {
     // submit records every 100 ms
     executor.scheduleAtFixedRate(submitRecords, 0, 10, TimeUnit.MILLISECONDS);
     executor.scheduleAtFixedRate(() -> {
+      // remove stale records at the front
+      while (isStaleRecord(recordQueue.peekFirst())) {
+        var poll = recordQueue.pollFirst();
+        if(isStaleRecord(poll))
+          recordDropped.increment();
+        else
+          recordQueue.addFirst(poll);
+      }
+      // show dropped records
       long dropped = recordDropped.sumThenReset();
       System.out.println("Peek queue size: " + recordQueue.size() + ", total " + dropped + " record dropped due to stale.");
     }, 0, 1000, TimeUnit.MILLISECONDS);
 
     // auto produces, for every 50MiB, add one producer
     if(producers < 0)
-      producers = Math.max((int)(throttleBytes / 50 / 1024 / 1024), 1);
+      producers = (int)(throttleBytes / 50 / 1024 / 1024) + 2;
     System.out.println("Launch " + producers + " producers.");
 
     // launch threads to send data
@@ -121,6 +136,9 @@ public class ProduceLoading2 extends Argument {
     // wait
     executor.awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS);
     workerPool.awaitTermination(Long.MAX_VALUE, TimeUnit.SECONDS);
+  }
+  boolean isStaleRecord(ProducerRecord<?, ?> record) {
+    return record != null && System.nanoTime() > record.timestamp();
   }
 
 }
