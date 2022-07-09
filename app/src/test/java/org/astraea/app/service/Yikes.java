@@ -80,6 +80,8 @@ import org.astraea.app.cost.NodeInfo;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import scala.Int;
 
 import javax.xml.crypto.Data;
@@ -130,7 +132,7 @@ class Yikes extends RequireManyBrokerCluster {
         .collect(Collectors.groupingBy(x -> x, Collectors.counting()));
   }
 
-  Gson gson = new GsonBuilder()
+  static Gson gson = new GsonBuilder()
       .registerTypeAdapter(LogPlacement.of(0).getClass(), new LogPlacementSerializer())
       .registerTypeAdapter(LogPlacement.class, new LogPlacementSerializer())
       .registerTypeHierarchyAdapter(LogPlacement.class, new LogPlacementSerializer())
@@ -216,7 +218,7 @@ class Yikes extends RequireManyBrokerCluster {
             });
   }
 
-  void virtualize(Map<? extends Number, Long> map) {
+  static void virtualize(Map<? extends Number, Long> map) {
     var barCount = 50;
     var valueSummary = map.values().stream().mapToLong(x -> x).summaryStatistics();
     var barSize = (valueSummary.getMax() / barCount) + 1;
@@ -576,7 +578,7 @@ class Yikes extends RequireManyBrokerCluster {
     }
   }
 
-  void writeAnsibleLoading(Path path, String type, Map<String, DataSize> loading, Map<String, DataSize> hostAndResourceLimit) {
+  static void writeAnsibleLoading(Path path, String type, Map<String, DataSize> loading, Map<String, DataSize> hostAndResourceLimit) {
     AtomicInteger loadingNumber = new AtomicInteger();
     List<Map.Entry<String, DataSize>> listOfLoading = loading.entrySet().stream()
         .sorted(Map.Entry.comparingByValue())
@@ -648,8 +650,9 @@ class Yikes extends RequireManyBrokerCluster {
     }
   }
 
-  @Test
-  void applyCluster() {
+  @ParameterizedTest
+  @ValueSource(strings = "/home/garyparrot/clusters/cluster_15%")
+  void applyCluster(String thePlan) {
     // var bootstrap = bootstrapServers();
     var bootstrap = "192.168.103.177:25655,192.168.103.178:25655,192.168.103.179:25655,192.168.103.180:25655";
     try (Admin admin = Admin.of(bootstrap)) {
@@ -661,7 +664,7 @@ class Yikes extends RequireManyBrokerCluster {
       Type type = new TypeToken<Map<String, List<LogPlacement>>>() {}.getType();
       Type type1 = new TypeToken<Map<String, DataSize>>() {}.getType();
 
-      Path path = Path.of("/home/garyparrot/cluster-allocation.json");
+      Path path = Path.of(thePlan);
       JsonObject object = gson.fromJson(Files.newBufferedReader(path), JsonObject.class);
       Map<TopicPartition, List<LogPlacement>> allocation = ((Map<String, List<LogPlacement>>)gson.fromJson(object.get("allocation"), type))
           .entrySet().stream()
