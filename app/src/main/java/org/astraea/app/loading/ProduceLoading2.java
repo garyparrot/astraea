@@ -27,14 +27,8 @@ public class ProduceLoading2 extends Argument {
   @Parameter(names =  "--topic")
   public String topicName = Utils.randomString();
 
-  @Parameter(names = "--partitions")
-  public int partitionSize = 16;
-
-  @Parameter(names = "--replicas")
-  public short replicaSize = 1;
-
-  @Parameter(names = "--producers")
-  public int produces = 16;
+  @Parameter(names = "--producers", description = "-1 for auto")
+  public int producers = -1;
 
   @Parameter(names = "--record.size", converter = DataSize.Field.class)
   public DataSize recordSize = DataUnit.KiB.of(10);
@@ -44,8 +38,6 @@ public class ProduceLoading2 extends Argument {
 
   @Parameter(names = "--batch.size", converter = DataSize.Field.class)
   public DataSize batchSize = DataUnit.MiB.of(10);
-
-  public KafkaProducer<Bytes, Bytes> producer;
 
   public static void main(String[] args) throws Exception {
     ProduceLoading2 app = Argument.parse(new ProduceLoading2(), args);
@@ -116,8 +108,13 @@ public class ProduceLoading2 extends Argument {
       System.out.println("Peek queue size: " + recordQueue.size() + ", total " + dropped + " record dropped due to stale.");
     }, 0, 1000, TimeUnit.MILLISECONDS);
 
+    // auto produces, for every 50MiB, add one producer
+    if(producers < 0)
+      producers = Math.max((int)(throttleBytes / 50 / 1024 / 1024), 1);
+    System.out.println("Launch " + producers + " producers.");
+
     // launch threads to send data
-    IntStream.range(0, produces)
+    IntStream.range(0, producers)
         .mapToObj(x -> nextProducer.get())
         .forEach(x -> workerPool.execute(() -> sendRecords.accept(x)));
 
