@@ -633,6 +633,16 @@ class Yikes extends RequireManyBrokerCluster {
       jsonLoading.getAsJsonObject("hosts").add("loading" + num, theLoad);
     });
 
+    System.out.println("Remaining resource at each worker");
+    System.out.println(remainResources);
+    System.out.println("Used resource at each worker");
+    System.out.println(hostAndResourceLimit.entrySet()
+        .stream()
+        .collect(Collectors.toMap(
+            Map.Entry::getKey,
+            x -> x.getValue().subtract(DataUnit.Byte.of(remainResources.get(x.getKey()))))));
+    System.out.println();
+
     JsonObject all = new JsonObject();
     all.add("loading-" + type.toLowerCase() + "-hosts", allLoadingHost);
     all.add("loading-" + type.toLowerCase(), jsonLoading);
@@ -707,6 +717,8 @@ class Yikes extends RequireManyBrokerCluster {
                       .collect(Collectors.toUnmodifiableList()));
             });
           });
+      Utils.sleep(Duration.ofSeconds(5));
+      allocation.keySet().forEach(admin::preferredLeaderElection);
 
     } catch (IOException e) {
       throw new RuntimeException(e);
