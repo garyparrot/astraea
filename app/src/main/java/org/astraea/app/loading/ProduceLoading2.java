@@ -165,17 +165,15 @@ public class ProduceLoading2 extends Argument {
     else
       executor.scheduleAtFixedRate(submitRecordByLoadingMap, 0, 10, TimeUnit.MILLISECONDS);
     executor.scheduleAtFixedRate(() -> {
-      // remove stale records at the front
-      while (isStaleRecord(recordQueue.peekLast())) {
-        var poll = recordQueue.pollLast();
-        if(isStaleRecord(poll))
-          recordDropped.increment();
-        else
-          recordQueue.addLast(poll);
-      }
-      // show dropped records
       long dropped = recordDropped.sumThenReset();
       System.out.println("Peek queue size: " + recordQueue.size() + ", total " + dropped + " record dropped due to stale.");
+
+      // if the queue size too large, shutdown immediately
+      if(recordQueue.size() > 100_000) {
+        System.out.println("Record Queue growth too much, shutdown now.");
+        workerPool.shutdownNow();
+        executor.shutdownNow();
+      }
     }, 0, 1000, TimeUnit.MILLISECONDS);
 
     // auto produces, for every 100MiB, add one producer
