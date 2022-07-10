@@ -173,7 +173,10 @@ public class ProduceLoading2 extends Argument {
       executor.scheduleAtFixedRate(submitRecordByLoadingMap, 0, 100, TimeUnit.MILLISECONDS);
     executor.scheduleAtFixedRate(() -> {
       long dropped = recordDropped.sumThenReset();
-      System.out.println("Peek queue size: " + recordQueue.size() + ", total " + dropped + " record dropped due to stale.");
+      if(dropped > 0)
+        System.out.println("Peek queue size: " + recordQueue.size() + ", total " + dropped + " record dropped due to stale.");
+      else
+        System.out.println("Peek queue size: " + recordQueue.size());
 
       // if the queue size too large, shutdown immediately
       if(recordQueue.size() > 100_000) {
