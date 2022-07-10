@@ -89,7 +89,7 @@ public class ProduceLoading2 extends Argument {
           .longValue();
     var recordInterval10Ms = throttleBytes / recordBytes / 100;
     System.out.println("Topic name: " + topicName);
-    System.out.printf("Throttle: %s%n", throttle);
+    System.out.printf("Throttle: %s%n", DataUnit.Byte.of(throttleBytes));
     System.out.printf("Record size: %s%n", recordSize);
     System.out.printf("Estimate to send %d records per 100 ms%n", recordInterval10Ms);
     System.out.println("Load fraction: ");
