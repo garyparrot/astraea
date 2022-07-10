@@ -427,6 +427,9 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
     var produce = recoverProduce(path);
     var consume = recoverConsume(path);
 
+    System.out.println("Produce contribution");
+    patternContribution(produce);
+
     Map<Integer, Long> aggregatedBrokerIngress = allocation.entrySet().stream()
         .flatMap(entry -> entry.getValue().stream().map(x -> Map.entry(x.broker(), entry.getKey())))
         .map(entry -> Map.entry(entry.getKey(), produce.get(entry.getValue())))
@@ -439,6 +442,7 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
         .collect(Collectors.groupingBy(Map.Entry::getKey,
             Collectors.mapping(x -> x.getValue().measurement(DataUnit.Byte).longValue(),
                 Collectors.reducing(0L, Long::sum))));
+
 
     aggregatedBrokerIngress.keySet().stream()
         .sorted()
