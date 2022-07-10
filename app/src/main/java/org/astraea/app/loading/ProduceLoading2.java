@@ -110,7 +110,7 @@ public class ProduceLoading2 extends Argument {
     if(!loadMap.isEmpty()) {
       recordPer10Ms = loadMap.entrySet().stream()
           .sorted(Map.Entry.comparingByKey())
-          .map(x -> Map.entry(x.getKey(), x.getValue().measurement(DataUnit.Byte).longValue() / recordBytes))
+          .map(x -> Map.entry(x.getKey(), Math.max(1, x.getValue().measurement(DataUnit.Byte).longValue() / recordBytes)))
           .peek(x -> System.out.printf("%s: %s%n", x.getKey(), x.getValue()))
           .collect(Collectors.toMap(
               Map.Entry::getKey,
