@@ -15,7 +15,6 @@ import org.astraea.app.common.Utils;
 
 import java.time.Duration;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.ExecutorService;
@@ -55,10 +54,13 @@ public class ProduceLoading2 extends Argument {
   @Parameter(names = "--load.fraction", converter = LoadFractionConvertor.class)
   public Map<TopicPartition, DataSize> loadMap = Map.of();
 
-  @Parameter(names = "--buffer.memory")
+  @Parameter(names = "--buffer.memory", converter = DataSize.Field.class)
   public DataSize bufferMemory = DataUnit.MiB.of(30);
 
-  public Map<TopicPartition, Long> recordPer10Ms = Map.of();
+  @Parameter(names = "--send.limit")
+  public int sendLimit = 1_000_000;
+
+  public Map<TopicPartition, Long> recordPerSecond = Map.of();
 
   static class LoadFractionConvertor extends Field<Map<TopicPartition, DataSize>> {
     @Override
@@ -80,6 +82,11 @@ public class ProduceLoading2 extends Argument {
   public void run() throws InterruptedException {
     long recordBytes = recordSize.measurement(DataUnit.Byte).longValue();
     long throttleBytes = throttle.measurement(DataUnit.Byte).longValue();
+    if(!loadMap.isEmpty())
+      throttleBytes = loadMap.values().stream()
+          .reduce(DataUnit.Byte.of(0), DataSize::add)
+          .measurement(DataUnit.Byte)
+          .longValue();
     var recordInterval10Ms = throttleBytes / recordBytes / 100;
     System.out.println("Topic name: " + topicName);
     System.out.printf("Throttle: %s%n", throttle);
@@ -100,18 +107,18 @@ public class ProduceLoading2 extends Argument {
 
     var theValue = new byte[(int)recordBytes];
     var recordDropped = new LongAdder();
-    var sendLimit = 100_000_000;
+    var sendLimitMs = sendLimit;
     Supplier<ProducerRecord<Bytes, Bytes>> nextRecord = () ->
-        new ProducerRecord<>(topicName, null, System.nanoTime() + sendLimit, null, Bytes.wrap(theValue));
+        new ProducerRecord<>(topicName, null, System.nanoTime() + sendLimitMs, null, Bytes.wrap(theValue));
     Function<TopicPartition, ProducerRecord<Bytes, Bytes>> nextRecord2 = (tp) ->
-        new ProducerRecord<>(tp.topic(), tp.partition(), System.nanoTime() + sendLimit, null, Bytes.wrap(theValue));
+        new ProducerRecord<>(tp.topic(), tp.partition(), System.nanoTime() + sendLimitMs, null, Bytes.wrap(theValue));
 
     var recordQueue = new ConcurrentLinkedDeque<ProducerRecord<Bytes, Bytes>>();
     ScheduledExecutorService executor = Executors.newScheduledThreadPool(16);
     ExecutorService workerPool = Executors.newCachedThreadPool();
 
     if(!loadMap.isEmpty()) {
-      recordPer10Ms = loadMap.entrySet().stream()
+      recordPerSecond = loadMap.entrySet().stream()
           .sorted(Map.Entry.comparingByKey())
           .map(x -> Map.entry(x.getKey(), Math.max(1, x.getValue().measurement(DataUnit.Byte).longValue() / recordBytes)))
           .peek(x -> System.out.printf("%s: %s%n", x.getKey(), x.getValue()))
@@ -122,13 +129,13 @@ public class ProduceLoading2 extends Argument {
 
     Runnable submitRecordByLoadingMap = () -> {
       long a = System.nanoTime();
-      recordPer10Ms.forEach((tp, records) -> {
-        for(int i = 0;i < records; i++)
+      recordPerSecond.forEach((tp, records) -> {
+        for(int i = 0;i < records / 10; i++)
           recordQueue.addFirst(nextRecord2.apply(tp));
       });
       long b = System.nanoTime();
       long passed = (b - a) / 1_000_000;
-      if(passed >= 10)
+      if(passed >= 100)
         System.out.println("Record too slow :p " + passed + " ms");
     };
     Runnable submitRecords = () -> {
@@ -163,7 +170,7 @@ public class ProduceLoading2 extends Argument {
     if(loadMap.isEmpty())
       executor.scheduleAtFixedRate(submitRecords, 0, 10, TimeUnit.MILLISECONDS);
     else
-      executor.scheduleAtFixedRate(submitRecordByLoadingMap, 0, 10, TimeUnit.MILLISECONDS);
+      executor.scheduleAtFixedRate(submitRecordByLoadingMap, 0, 100, TimeUnit.MILLISECONDS);
     executor.scheduleAtFixedRate(() -> {
       long dropped = recordDropped.sumThenReset();
       System.out.println("Peek queue size: " + recordQueue.size() + ", total " + dropped + " record dropped due to stale.");
@@ -176,7 +183,7 @@ public class ProduceLoading2 extends Argument {
       }
     }, 0, 1000, TimeUnit.MILLISECONDS);
 
-    // auto produces, for every 100MiB, add one producer
+    // auto produces, for every 50MiB, add one producer
     if(producers < 0)
       producers = (int)(throttleBytes / 100 / 1024 / 1024) + 2;
     System.out.println("Launch " + producers + " producers.");
