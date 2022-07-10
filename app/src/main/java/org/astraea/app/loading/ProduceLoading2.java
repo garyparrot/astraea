@@ -94,7 +94,7 @@ public class ProduceLoading2 extends Argument {
         for(int i = 0; i < 1000; i++) {
           ProducerRecord<Bytes, Bytes> poll = recordQueue.poll();
           if(poll == null) {
-            Utils.sleep(Duration.ofMillis(ThreadLocalRandom.current().nextInt(1, 8)));
+            Utils.sleep(Duration.ofMillis(1));
             continue;
           }
           // stale record
