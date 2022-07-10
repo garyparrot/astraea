@@ -670,7 +670,7 @@ class Yikes extends RequireManyBrokerCluster {
                 Map.Entry::getValue)))
         .entrySet()
         .stream()
-        .sorted(Comparator.comparing((x) -> x.getValue().values().stream().reduce(DataUnit.Byte.of(0), DataSize::add).bits().doubleValue() * -1))
+        .sorted(Comparator.comparing((x) -> x.getValue().values().stream().reduce(DataUnit.Byte.of(0), DataSize::add).bits().doubleValue()))
         .collect(Collectors.toUnmodifiableList());
     Map<String, Long> remainResources = hostAndResourceLimit.entrySet()
         .stream()
