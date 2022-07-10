@@ -124,7 +124,7 @@ public class ProduceLoading2 extends Argument {
       long a = System.nanoTime();
       recordPer10Ms.forEach((tp, records) -> {
         for(int i = 0;i < records; i++)
-          recordQueue.add(nextRecord2.apply(tp));
+          recordQueue.addFirst(nextRecord2.apply(tp));
       });
       long b = System.nanoTime();
       long passed = (b - a) / 1_000_000;
@@ -134,7 +134,7 @@ public class ProduceLoading2 extends Argument {
     Runnable submitRecords = () -> {
       long a = System.nanoTime();
       for(int i = 0; i < recordInterval10Ms; i++)
-        recordQueue.add(nextRecord.get());
+        recordQueue.addFirst(nextRecord.get());
       long b = System.nanoTime();
       long passed = (b - a) / 1_000_000;
       if(passed >= 10)
@@ -144,7 +144,7 @@ public class ProduceLoading2 extends Argument {
     Consumer<KafkaProducer<Bytes, Bytes>> sendRecords = (producer) -> {
       while (!Thread.currentThread().isInterrupted()) {
         for(int i = 0; i < 1000; i++) {
-          ProducerRecord<Bytes, Bytes> poll = recordQueue.poll();
+          ProducerRecord<Bytes, Bytes> poll = recordQueue.pollLast();
           if(poll == null) {
             Utils.sleep(Duration.ofMillis(1));
             continue;
@@ -166,12 +166,12 @@ public class ProduceLoading2 extends Argument {
       executor.scheduleAtFixedRate(submitRecordByLoadingMap, 0, 10, TimeUnit.MILLISECONDS);
     executor.scheduleAtFixedRate(() -> {
       // remove stale records at the front
-      while (isStaleRecord(recordQueue.peekFirst())) {
-        var poll = recordQueue.pollFirst();
+      while (isStaleRecord(recordQueue.peekLast())) {
+        var poll = recordQueue.pollLast();
         if(isStaleRecord(poll))
           recordDropped.increment();
         else
-          recordQueue.addFirst(poll);
+          recordQueue.addLast(poll);
       }
       // show dropped records
       long dropped = recordDropped.sumThenReset();
