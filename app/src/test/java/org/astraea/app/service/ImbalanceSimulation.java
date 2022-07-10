@@ -360,19 +360,19 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
     Path produceLoading = Path.of("/home/garyparrot/Programming/ansible/producer-inventory.json");
     Path consumeLoading = Path.of("/home/garyparrot/Programming/ansible/consumer-inventory.json");
 
-    var produce = recoverProduce(path).entrySet().stream()
-        .collect(Collectors.groupingBy(x -> x.getKey().topic(),
-            Collectors.mapping(Map.Entry::getValue,
-                Collectors.reducing(DataUnit.Byte.of(0), DataSize::add))));
-    var consume = recoverConsume(path).entrySet().stream()
-        .collect(Collectors.groupingBy(x -> x.getKey().topic(),
-            Collectors.mapping(Map.Entry::getValue,
-                Collectors.reducing(DataUnit.Byte.of(0), DataSize::add))));
+    // var produce = recoverProduce(path).entrySet().stream()
+    //     .collect(Collectors.groupingBy(x -> x.getKey().topic(),
+    //         Collectors.mapping(Map.Entry::getValue,
+    //             Collectors.reducing(DataUnit.Byte.of(0), DataSize::add))));
+    // var consume = recoverConsume(path).entrySet().stream()
+    //     .collect(Collectors.groupingBy(x -> x.getKey().topic(),
+    //         Collectors.mapping(Map.Entry::getValue,
+    //             Collectors.reducing(DataUnit.Byte.of(0), DataSize::add))));
     var hosts = Map.of(
         "192.168.103.181", DataUnit.Gib.of(10),
         "192.168.103.182", DataUnit.Gib.of(10));
-    Yikes.writeAnsibleLoading(produceLoading, "Producer", produce, hosts);
-    Yikes.writeAnsibleLoading(consumeLoading, "Consumer", consume, hosts);
+    Yikes.writeAnsibleLoadingByTp(produceLoading, "Producer", recoverProduce(path), hosts);
+    // Yikes.writeAnsibleLoading(consumeLoading, "Consumer", consume, hosts);
   }
 
   static Map<TopicPartition, List<LogPlacement>> recoverAllocation(Path path) {

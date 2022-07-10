@@ -137,6 +137,7 @@ class Yikes extends RequireManyBrokerCluster {
       .registerTypeAdapter(LogPlacement.class, new LogPlacementSerializer())
       .registerTypeHierarchyAdapter(LogPlacement.class, new LogPlacementSerializer())
       .registerTypeAdapter(DataSize.class, new DataSizeTypeAdapter())
+      .disableHtmlEscaping()
       .setPrettyPrinting()
       .create();
 
@@ -629,6 +630,98 @@ class Yikes extends RequireManyBrokerCluster {
       theLoad.addProperty("ansible_host", targetHost);
       theLoad.addProperty("topic_name", topic);
       theLoad.addProperty("throttle", bytes + "Byte");
+      int num = loadingNumber.getAndIncrement();
+      jsonLoading.getAsJsonObject("hosts").add("loading" + num, theLoad);
+    });
+
+    System.out.println("Remaining resource at each worker");
+    System.out.println(remainResources);
+    System.out.println("Used resource at each worker");
+    System.out.println(hostAndResourceLimit.entrySet()
+        .stream()
+        .collect(Collectors.toMap(
+            Map.Entry::getKey,
+            x -> x.getValue().subtract(DataUnit.Byte.of(remainResources.get(x.getKey()))))));
+    System.out.println();
+
+    JsonObject all = new JsonObject();
+    all.add("loading-" + type.toLowerCase() + "-hosts", allLoadingHost);
+    all.add("loading-" + type.toLowerCase(), jsonLoading);
+
+    try {
+      System.out.println("Write file " + path);
+      System.out.println(all);
+      if(Files.exists(path))
+        Files.delete(path);
+      try (BufferedWriter bufferedWriter = Files.newBufferedWriter(path, StandardOpenOption.CREATE)) {
+        gson.toJson(all, bufferedWriter);
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  static void writeAnsibleLoadingByTp(Path path, String type, Map<TopicPartition, DataSize> loading, Map<String, DataSize> hostAndResourceLimit) {
+    AtomicInteger loadingNumber = new AtomicInteger();
+    List<Map.Entry<String, Map<Integer, DataSize>>> listOfLoading = loading.entrySet().stream()
+        .collect(Collectors.groupingBy(x -> x.getKey().topic(),
+            Collectors.toMap(
+                x -> x.getKey().partition(),
+                Map.Entry::getValue)))
+        .entrySet()
+        .stream()
+        .sorted(Comparator.comparing((x) -> x.getValue().values().stream().reduce(DataUnit.Byte.of(0), DataSize::add).bits().doubleValue() * -1))
+        .collect(Collectors.toUnmodifiableList());
+    Map<String, Long> remainResources = hostAndResourceLimit.entrySet()
+        .stream()
+        .collect(Collectors.toMap(
+            Map.Entry::getKey,
+            x -> x.getValue().measurement(DataUnit.Byte).longValue()));
+
+    JsonObject allLoadingHost = new JsonObject();
+    allLoadingHost.add("hosts", new JsonObject());
+    AtomicInteger a = new AtomicInteger();
+    hostAndResourceLimit.forEach((host, dataLoad) -> {
+      int index = a.getAndIncrement();
+      JsonObject theHost = new JsonObject();
+      theHost.addProperty("ansible_user", "kafka");
+      theHost.addProperty("ansible_host", host);
+      allLoadingHost.getAsJsonObject("hosts").add("host" + index , theHost);
+    });
+    JsonObject jsonLoading = new JsonObject();
+    jsonLoading.add("hosts", new JsonObject());
+
+    // start allocation algorithm
+    listOfLoading.forEach((entry) -> {
+      String topic = entry.getKey();
+      var totalLoad = entry.getValue().values().stream().reduce(DataUnit.Byte.of(0), DataSize::add).measurement(DataUnit.Byte).longValueExact();
+      var loadMap = entry.getValue().entrySet().stream()
+          .map(e -> String.format("%s-%d=%dByte", topic, e.getKey(), e.getValue().measurement(DataUnit.Byte).longValueExact()))
+          .collect(Collectors.joining(","));
+
+      var targetHost = remainResources.entrySet().stream()
+          .filter(x -> x.getValue() >= totalLoad)
+          .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+          .findAny()
+          .map(Map.Entry::getKey)
+          .orElse(null);
+      if(targetHost == null) {
+        System.out.println("Current Allocation");
+        System.out.println(remainResources);
+        System.out.println(listOfLoading);
+        throw new IllegalStateException("No suitable host can meet resource constraint");
+      }
+
+      long now = remainResources.get(targetHost);
+      long next = now - totalLoad;
+      remainResources.put(targetHost, next);
+
+      JsonObject theLoad = new JsonObject();
+      theLoad.addProperty("ansible_user", "kafka");
+      theLoad.addProperty("ansible_host", targetHost);
+      // theLoad.addProperty("topic_name", topic);
+      // theLoad.addProperty("throttle", bytes + "Byte");
+      theLoad.addProperty("load_map", loadMap);
       int num = loadingNumber.getAndIncrement();
       jsonLoading.getAsJsonObject("hosts").add("loading" + num, theLoad);
     });
