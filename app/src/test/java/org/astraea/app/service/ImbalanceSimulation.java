@@ -375,6 +375,17 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
     // Yikes.writeAnsibleLoading(consumeLoading, "Consumer", consume, hosts);
   }
 
+  @Test
+  void WAT(){
+    Path path = Path.of("/home/garyparrot/clusters/cluster_39%");
+    Path produceLoading = Path.of("/tmp/aaa" + Utils.randomString());
+    var hosts = Map.of(
+        "192.168.103.181", DataUnit.Gib.of(10),
+        "192.168.103.182", DataUnit.Gib.of(10));
+    Yikes.writeAnsibleLoadingByTp(produceLoading, "Producer", recoverProduce(path), hosts);
+
+  }
+
   static Map<TopicPartition, List<LogPlacement>> recoverAllocation(Path path) {
     Type type0 = new TypeToken<Map<String, List<LogPlacement>>>() {}.getType();
     Type type1 = new TypeToken<Map<String, DataSize>>() {}.getType();
