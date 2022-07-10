@@ -55,6 +55,9 @@ public class ProduceLoading2 extends Argument {
   @Parameter(names = "--load.fraction", converter = LoadFractionConvertor.class)
   public Map<TopicPartition, DataSize> loadMap = Map.of();
 
+  @Parameter(names = "--buffer.memory")
+  public DataSize bufferMemory = DataUnit.MiB.of(30);
+
   public Map<TopicPartition, Long> recordPer10Ms = Map.of();
 
   static class LoadFractionConvertor extends Field<Map<TopicPartition, DataSize>> {
@@ -92,7 +95,7 @@ public class ProduceLoading2 extends Argument {
         ProducerConfig.LINGER_MS_CONFIG, lingerMs,
         ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, maxInFlight,
         ProducerConfig.ACKS_CONFIG, "0",
-        ProducerConfig.BUFFER_MEMORY_CONFIG, DataUnit.MiB.of(100).measurement(DataUnit.Byte).longValue(),
+        ProducerConfig.BUFFER_MEMORY_CONFIG, bufferMemory.measurement(DataUnit.Byte).longValue(),
         ProducerConfig.BATCH_SIZE_CONFIG, batchSize.measurement(DataUnit.Byte).intValue()));
 
     var theValue = new byte[(int)recordBytes];
