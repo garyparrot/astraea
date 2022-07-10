@@ -719,8 +719,8 @@ class Yikes extends RequireManyBrokerCluster {
       JsonObject theLoad = new JsonObject();
       theLoad.addProperty("ansible_user", "kafka");
       theLoad.addProperty("ansible_host", targetHost);
-      // theLoad.addProperty("topic_name", topic);
-      // theLoad.addProperty("throttle", bytes + "Byte");
+      theLoad.addProperty("topic_name", topic);
+      theLoad.addProperty("throttle", totalLoad + "Byte");
       theLoad.addProperty("load_map", loadMap);
       int num = loadingNumber.getAndIncrement();
       jsonLoading.getAsJsonObject("hosts").add("loading" + num, theLoad);
