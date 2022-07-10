@@ -349,13 +349,13 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
 
   @Test
   void applyPlan() {
-    Path path = Path.of("/home/garyparrot/clusters/cluster_19%");
+    Path path = Path.of("/home/garyparrot/clusters/cluster_39%");
     new Yikes().applyCluster(path.toString());
   }
 
   @Test
   void generateLoadFiles() throws IOException {
-    Path path = Path.of("/home/garyparrot/clusters/cluster_19%");
+    Path path = Path.of("/home/garyparrot/clusters/cluster_39%");
     describePlan(path.toString());
     Path produceLoading = Path.of("/home/garyparrot/Programming/ansible/producer-inventory.json");
     Path consumeLoading = Path.of("/home/garyparrot/Programming/ansible/consumer-inventory.json");
@@ -419,7 +419,7 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = "/home/garyparrot/clusters/cluster_19%")
+  @ValueSource(strings = "/home/garyparrot/clusters/cluster_39%")
   void describePlan(String p) throws IOException {
     Path path = Path.of(p);
 
