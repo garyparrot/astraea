@@ -70,7 +70,7 @@ public class ProduceLoading2 extends Argument {
 
     var theValue = new byte[(int)recordBytes];
     var recordDropped = new LongAdder();
-    var sendLimit = 10_000_000;
+    var sendLimit = 100_000_000;
     Supplier<ProducerRecord<Bytes, Bytes>> nextRecord = () ->
         new ProducerRecord<>(topicName, null, System.nanoTime() + sendLimit, null, Bytes.wrap(theValue));
 
