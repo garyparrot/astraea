@@ -27,8 +27,6 @@ import org.astraea.app.admin.TopicExplorer;
 import org.astraea.app.automation.Automation;
 import org.astraea.app.cost.topic.PartitionScore;
 import org.astraea.app.loading.ConsumeLoading;
-import org.astraea.app.loading.ProduceLoading;
-import org.astraea.app.loading.ProduceLoading2;
 import org.astraea.app.loading.ProduceLoading3;
 import org.astraea.app.metrics.MetricExplorer;
 import org.astraea.app.performance.Performance;
