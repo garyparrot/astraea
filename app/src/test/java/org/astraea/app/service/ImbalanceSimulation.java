@@ -354,6 +354,53 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
   }
 
   @Test
+  void aaa() throws IOException {
+    Path path = Path.of("/home/garyparrot/clusters/cluster_39%");
+    describePlan(path.toString());
+
+    var allocation = recoverAllocation(path);
+    var produce = recoverProduce(path);
+
+    var map = new HashMap<Integer, DataSize>();
+
+    allocation.forEach((tp, logs) -> {
+      var leader = logs.get(0).broker();
+      var followers = logs.subList(1, logs.size()).stream()
+          .map(LogPlacement::broker)
+          .collect(Collectors.toUnmodifiableList());
+      followers.forEach(id -> {
+        map.computeIfAbsent(id, (i) -> DataUnit.Byte.of(0));
+        map.put(id, map.get(id).add(produce.get(tp)));
+      });
+    });
+
+    map.forEach((broker, rate) -> {
+      System.out.printf("[broker %d]: %s%n", broker, rate);
+    });
+  }
+
+  @Test
+  void aaa2() throws IOException {
+    Path path = Path.of("/home/garyparrot/clusters/cluster_39%");
+    describePlan(path.toString());
+
+    var allocation = recoverAllocation(path);
+    var produce = recoverProduce(path);
+
+    var map = new HashMap<Integer, DataSize>();
+
+    allocation.forEach((tp, logs) -> {
+      var leader = logs.get(0).broker();
+      map.computeIfAbsent(leader, (i) -> DataUnit.Byte.of(0));
+      map.put(leader, map.get(leader).add(produce.get(tp)));
+    });
+
+    map.forEach((broker, rate) -> {
+      System.out.printf("[broker %d]: %s%n", broker, rate);
+    });
+  }
+
+  @Test
   void generateLoadFiles() throws IOException {
     Path path = Path.of("/home/garyparrot/clusters/cluster_39%");
     describePlan(path.toString());
