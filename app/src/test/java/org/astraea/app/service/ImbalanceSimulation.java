@@ -359,7 +359,7 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
     try (Admin admin = Admin.of(bootstrap)) {
       for(int i = 0; i < 4;i++) {
         var configResource = new ConfigResource(ConfigResource.Type.BROKER, "" + i);
-        var configEntry = new ConfigEntry("log.retention.bytes", Long.toString(DataUnit.MB.of(300).measurement(DataUnit.Byte).longValue()));
+        var configEntry = new ConfigEntry("log.retention.bytes", Long.toString(DataUnit.GB.of(5).measurement(DataUnit.Byte).longValue()));
         var alterOp = new AlterConfigOp(configEntry, AlterConfigOp.OpType.SET);
         admin.config(Map.of(configResource, List.of(alterOp)));
       }
