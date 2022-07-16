@@ -367,6 +367,22 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
   }
 
   @Test
+  void shit() {
+    var bootstrap = "192.168.103.177:25655,192.168.103.178:25655,192.168.103.179:25655,192.168.103.180:25655";
+    try (Admin admin = Admin.of(bootstrap)) {
+      admin.topicNames().stream()
+          .filter(x -> !x.startsWith("_"))
+          .forEach(topic -> {
+            System.out.println(topic);
+            var configResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
+            var configEntry = new ConfigEntry("retention.bytes", Long.toString(DataUnit.MiB.of(512).measurement(DataUnit.Byte).longValue()));
+            var alterOp = new AlterConfigOp(configEntry, AlterConfigOp.OpType.SET);
+            admin.config(Map.of(configResource, List.of(alterOp)));
+          });
+    }
+  }
+
+  @Test
   void aaa() throws IOException {
     Path path = Path.of("/home/garyparrot/clusters/cluster_39%");
     describePlan(path.toString());
