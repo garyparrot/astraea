@@ -32,6 +32,7 @@ import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.AlterConfigOp;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.ConsumerGroupListing;
 import org.apache.kafka.clients.admin.ListTopicsOptions;
@@ -654,6 +655,11 @@ public class Builder {
     @Override
     public void deleteTopics(Set<String> topics) {
       Utils.packException(() -> admin.deleteTopics(topics).all().get());
+    }
+
+    @Override
+    public void config(Map<ConfigResource, Collection<AlterConfigOp>> map) {
+      Utils.packException(() -> admin.incrementalAlterConfigs(map).all().get());
     }
   }
 

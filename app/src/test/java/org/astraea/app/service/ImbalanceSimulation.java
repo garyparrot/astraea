@@ -11,6 +11,9 @@ import org.apache.commons.math3.distribution.IntegerDistribution;
 import org.apache.commons.math3.distribution.LogNormalDistribution;
 import org.apache.commons.math3.distribution.NormalDistribution;
 import org.apache.commons.math3.distribution.RealDistribution;
+import org.apache.kafka.clients.admin.AlterConfigOp;
+import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.common.config.ConfigResource;
 import org.astraea.app.admin.Admin;
 import org.astraea.app.admin.Replica;
 import org.astraea.app.admin.TopicPartition;
@@ -351,6 +354,16 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
   void applyPlan() {
     Path path = Path.of("/home/garyparrot/clusters/cluster_39%");
     new Yikes().applyCluster(path.toString());
+
+    var bootstrap = "192.168.103.177:25655,192.168.103.178:25655,192.168.103.179:25655,192.168.103.180:25655";
+    try (Admin admin = Admin.of(bootstrap)) {
+      for(int i = 0; i < 4;i++) {
+        var configResource = new ConfigResource(ConfigResource.Type.BROKER, "" + i);
+        var configEntry = new ConfigEntry("log.retention.bytes", Long.toString(DataUnit.MB.of(300).measurement(DataUnit.Byte).longValue()));
+        var alterOp = new AlterConfigOp(configEntry, AlterConfigOp.OpType.SET);
+        admin.config(Map.of(configResource, List.of(alterOp)));
+      }
+    }
   }
 
   @Test

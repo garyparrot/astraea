@@ -22,6 +22,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import org.apache.kafka.clients.admin.AlterConfigOp;
+import org.apache.kafka.common.config.ConfigResource;
 import org.astraea.app.cost.ClusterInfo;
 import org.astraea.app.cost.NodeInfo;
 
@@ -255,6 +258,8 @@ public interface Admin extends Closeable {
    * @param topics topics to delete.
    */
   void deleteTopics(Set<String> topics);
+
+  void config(Map<ConfigResource, Collection<AlterConfigOp>> map);
 
   @Override
   void close();
