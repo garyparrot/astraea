@@ -355,15 +355,15 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
     Path path = Path.of("/home/garyparrot/clusters/cluster_39%");
     new Yikes().applyCluster(path.toString());
 
-    var bootstrap = "192.168.103.177:25655,192.168.103.178:25655,192.168.103.179:25655,192.168.103.180:25655";
-    try (Admin admin = Admin.of(bootstrap)) {
-      for(int i = 0; i < 4;i++) {
-        var configResource = new ConfigResource(ConfigResource.Type.BROKER, "" + i);
-        var configEntry = new ConfigEntry("log.retention.bytes", Long.toString(DataUnit.MiB.of(256).measurement(DataUnit.Byte).longValue()));
-        var alterOp = new AlterConfigOp(configEntry, AlterConfigOp.OpType.SET);
-        admin.config(Map.of(configResource, List.of(alterOp)));
-      }
-    }
+    // var bootstrap = "192.168.103.177:25655,192.168.103.178:25655,192.168.103.179:25655,192.168.103.180:25655";
+    // try (Admin admin = Admin.of(bootstrap)) {
+    //   for(int i = 0; i < 4;i++) {
+    //     var configResource = new ConfigResource(ConfigResource.Type.BROKER, "" + i);
+    //     var configEntry = new ConfigEntry("log.retention.bytes", Long.toString(DataUnit.MiB.of(256).measurement(DataUnit.Byte).longValue()));
+    //     var alterOp = new AlterConfigOp(configEntry, AlterConfigOp.OpType.SET);
+    //     admin.config(Map.of(configResource, List.of(alterOp)));
+    //   }
+    // }
   }
 
   @Test
@@ -398,6 +398,8 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
         .forEach((entry) -> {
           System.out.printf("[%s] %s%n", entry.getKey(), entry.getValue());
     });
+
+    describePlan(path.toString());
 
     if(true)
       return;
