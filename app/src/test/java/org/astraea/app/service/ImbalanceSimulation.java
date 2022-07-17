@@ -392,6 +392,16 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
 
     var map = new HashMap<Integer, DataSize>();
 
+    produce.entrySet()
+        .stream()
+        .sorted(Map.Entry.comparingByValue())
+        .forEach((entry) -> {
+          System.out.printf("[%s] %s%n", entry.getKey(), entry.getValue());
+    });
+
+    if(true)
+      return;
+
     allocation.forEach((tp, logs) -> {
       var leader = logs.get(0).broker();
       var followers = logs.subList(1, logs.size()).stream()
