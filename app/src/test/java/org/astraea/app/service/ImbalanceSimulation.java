@@ -396,10 +396,16 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
         .stream()
         .sorted(Map.Entry.comparingByValue())
         .forEach((entry) -> {
-          System.out.printf("[%s] %s%n", entry.getKey(), entry.getValue());
+          // System.out.printf("[%s] %s%n", entry.getKey(), entry.getValue());
     });
 
-    describePlan(path.toString());
+    produce.values().stream()
+            .sorted()
+            .mapToLong(rate -> rate.measurement(DataUnit.KB).longValue())
+            .boxed()
+            .forEach((e) -> System.out.printf("%d%n", e));
+
+    // describePlan(path.toString());
 
     if(true)
       return;
@@ -525,6 +531,10 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
     var allocation = recoverAllocation(path);
     var produce = recoverProduce(path);
     var consume = recoverConsume(path);
+
+    System.out.println("topic size: " + allocation.keySet().stream().map(x -> x.topic()).distinct().count());
+    System.out.println("partition size: " + allocation.keySet().size());
+    System.out.println("log size: " + allocation.values().stream().flatMap(x -> x.stream()).count());
 
     System.out.println("Produce contribution");
     patternContribution(produce);
