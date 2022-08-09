@@ -258,6 +258,14 @@ public interface Admin extends Closeable {
    */
   Map<TopicPartition, DeletedRecord> deleteRecords(Map<TopicPartition, Long> recordsToDelete);
 
+  ReplicationThrottler replicationThrottler();
+
+  void clearReplicationThrottle(String topic);
+
+  void clearReplicationThrottle(TopicPartition topicPartition);
+
+  void clearReplicationThrottle(TopicPartitionReplica log);
+
   @Override
   void close();
 }
