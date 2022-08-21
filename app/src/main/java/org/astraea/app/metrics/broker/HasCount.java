@@ -16,10 +16,15 @@
  */
 package org.astraea.app.metrics.broker;
 
+import org.astraea.app.metrics.BeanObject;
 import org.astraea.app.metrics.HasBeanObject;
 
 public interface HasCount extends HasBeanObject {
   default long count() {
     return (long) beanObject().attributes().getOrDefault("Count", 0);
+  }
+
+  static HasCount of(BeanObject beanObject) {
+    return () -> beanObject;
   }
 }

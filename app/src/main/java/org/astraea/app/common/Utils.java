@@ -34,6 +34,10 @@ import java.util.function.Supplier;
 import java.util.stream.Collector;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.astraea.app.balancer.executor.RebalancePlanExecutor;
+import org.astraea.app.balancer.generator.RebalancePlanGenerator;
+import org.astraea.app.balancer.metrics.IdentifiedFetcher;
+import org.astraea.app.balancer.metrics.MetricSource;
 import org.astraea.app.cost.CostFunction;
 import org.astraea.app.partitioner.Configuration;
 
@@ -249,8 +253,7 @@ public final class Utils {
         .thenApply(f -> futures.stream().map(CompletableFuture::join).collect(Collectors.toList()));
   }
 
-  public static <T extends CostFunction> T constructCostFunction(
-      Class<T> costClass, Configuration configuration) {
+  private static <T> T constructModule(Class<T> costClass, Configuration configuration) {
     try {
       // case 0: create cost function by configuration
       var constructor = costClass.getConstructor(Configuration.class);
@@ -258,6 +261,35 @@ public final class Utils {
     } catch (NoSuchMethodException e) {
       // case 1: create cost function by empty constructor
       return Utils.packException(() -> costClass.getConstructor().newInstance());
+    }
+  }
+
+  public static <T extends CostFunction> T constructCostFunction(
+      Class<T> costClass, Configuration configuration) {
+    return constructModule(costClass, configuration);
+  }
+
+  public static <T extends RebalancePlanGenerator> T constructPlanGenerator(
+      Class<T> generatorClass, Configuration configuration) {
+    return constructModule(generatorClass, configuration);
+  }
+
+  public static <T extends RebalancePlanExecutor> T constructPlanExecutor(
+      Class<T> executorClass, Configuration configuration) {
+    return constructModule(executorClass, configuration);
+  }
+
+  public static <T extends MetricSource> T constructMetricSource(
+      Class<T> metricSourceClass,
+      Configuration configuration,
+      Collection<IdentifiedFetcher> metricOwnership) {
+    try {
+      // case 0: create cost function by configuration
+      var constructor = metricSourceClass.getConstructor(Configuration.class, Collection.class);
+      return Utils.packException(() -> constructor.newInstance(configuration, metricOwnership));
+    } catch (NoSuchMethodException e) {
+      // case 1: create cost function by empty constructor
+      return Utils.packException(() -> metricSourceClass.getConstructor().newInstance());
     }
   }
 
