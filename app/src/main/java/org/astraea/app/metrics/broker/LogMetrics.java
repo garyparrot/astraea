@@ -20,10 +20,10 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
+import org.astraea.app.metrics.BeanObject;
+import org.astraea.app.metrics.BeanQuery;
 import org.astraea.app.metrics.HasBeanObject;
-import org.astraea.app.metrics.jmx.BeanObject;
-import org.astraea.app.metrics.jmx.BeanQuery;
-import org.astraea.app.metrics.jmx.MBeanClient;
+import org.astraea.app.metrics.MBeanClient;
 
 public final class LogMetrics {
 
@@ -49,15 +49,15 @@ public final class LogMetrics {
           .orElseThrow(() -> new IllegalArgumentException("No such metric: " + metricName));
     }
 
-    public static Collection<Meter> meters(Collection<HasBeanObject> beans, Log type) {
+    public static Collection<Gauge> gauges(Collection<HasBeanObject> beans, Log type) {
       return beans.stream()
-          .filter(m -> m instanceof Meter)
-          .map(m -> (Meter) m)
+          .filter(m -> m instanceof Gauge)
+          .map(m -> (Gauge) m)
           .filter(m -> m.type() == type)
           .collect(Collectors.toUnmodifiableList());
     }
 
-    public List<Meter> fetch(MBeanClient mBeanClient) {
+    public List<Gauge> fetch(MBeanClient mBeanClient) {
       return mBeanClient
           .queryBeans(
               BeanQuery.builder()
@@ -68,14 +68,14 @@ public final class LogMetrics {
                   .property("name", metricName)
                   .build())
           .stream()
-          .map(Meter::new)
+          .map(Gauge::new)
           .collect(Collectors.toUnmodifiableList());
     }
 
-    public static class Meter implements HasValue {
+    public static class Gauge implements HasGauge {
       private final BeanObject beanObject;
 
-      public Meter(BeanObject beanObject) {
+      public Gauge(BeanObject beanObject) {
         this.beanObject = beanObject;
       }
 

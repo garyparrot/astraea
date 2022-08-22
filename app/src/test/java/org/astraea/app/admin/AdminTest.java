@@ -21,30 +21,40 @@ import static org.junit.jupiter.api.condition.OS.WINDOWS;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
+import org.apache.kafka.clients.admin.AdminClient;
+import org.apache.kafka.clients.admin.AdminClientConfig;
+import org.apache.kafka.clients.admin.AlterConfigOp;
+import org.apache.kafka.clients.admin.ConfigEntry;
+import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.config.TopicConfig;
 import org.apache.kafka.common.errors.GroupNotEmptyException;
 import org.astraea.app.common.DataRate;
+import org.astraea.app.common.DataSize;
+import org.astraea.app.common.ExecutionRuntimeException;
 import org.astraea.app.common.Utils;
-import org.astraea.app.concurrent.State;
-import org.astraea.app.concurrent.ThreadPool;
 import org.astraea.app.consumer.Consumer;
 import org.astraea.app.consumer.Deserializer;
 import org.astraea.app.producer.Producer;
 import org.astraea.app.producer.Serializer;
 import org.astraea.app.service.RequireBrokerCluster;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnOs;
@@ -703,10 +713,6 @@ public class AdminTest extends RequireBrokerCluster {
       Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.replicas(topic0).size());
       Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.replicas(topic1).size());
       Assertions.assertEquals(partitionCount * replicaCount, clusterInfo.replicas(topic2).size());
-      // ClusterInfo#dataDirectories
-      brokerIds()
-          .forEach(
-              id -> Assertions.assertEquals(logFolders().get(id), clusterInfo.dataDirectories(id)));
       // ClusterInfo#availableReplicas
       Assertions.assertEquals(
           partitionCount * replicaCount, clusterInfo.availableReplicas(topic0).size());
@@ -719,16 +725,10 @@ public class AdminTest extends RequireBrokerCluster {
       Assertions.assertEquals(partitionCount, clusterInfo.availableReplicaLeaders(topic1).size());
       Assertions.assertEquals(partitionCount, clusterInfo.availableReplicaLeaders(topic2).size());
       // No resource match found will raise exception
-      Assertions.assertThrows(
-          NoSuchElementException.class, () -> clusterInfo.replicas("Unknown Topic"));
-      Assertions.assertThrows(
-          NoSuchElementException.class, () -> clusterInfo.availableReplicas("Unknown Topic"));
-      Assertions.assertThrows(
-          NoSuchElementException.class, () -> clusterInfo.availableReplicaLeaders("Unknown Topic"));
-      Assertions.assertThrows(NoSuchElementException.class, () -> clusterInfo.dataDirectories(-1));
+      Assertions.assertEquals(List.of(), clusterInfo.replicas("Unknown Topic"));
+      Assertions.assertEquals(List.of(), clusterInfo.availableReplicas("Unknown Topic"));
+      Assertions.assertEquals(List.of(), clusterInfo.availableReplicaLeaders("Unknown Topic"));
       Assertions.assertThrows(NoSuchElementException.class, () -> clusterInfo.node(-1));
-      Assertions.assertThrows(
-          NoSuchElementException.class, () -> clusterInfo.node("unknown", 1024));
     }
   }
 
@@ -892,6 +892,28 @@ public class AdminTest extends RequireBrokerCluster {
   }
 
   @Test
+  void testRemoveEmptyMember() {
+    var topicName = Utils.randomString(10);
+    var groupId = Utils.randomString(10);
+    try (var admin = Admin.of(bootstrapServers())) {
+      try (var consumer =
+          Consumer.forTopics(Set.of(topicName))
+              .bootstrapServers(bootstrapServers())
+              .groupId(groupId)
+              .groupInstanceId(Utils.randomString(10))
+              .build()) {
+        Assertions.assertEquals(0, consumer.poll(Duration.ofSeconds(3)).size());
+      }
+      Assertions.assertEquals(
+          1, admin.consumerGroups(Set.of(groupId)).get(groupId).activeMembers().size());
+      admin.removeAllMembers(groupId);
+      Assertions.assertEquals(
+          0, admin.consumerGroups(Set.of(groupId)).get(groupId).activeMembers().size());
+      admin.removeAllMembers(groupId);
+    }
+  }
+
+  @Test
   void testRemoveStaticMembers() {
     var topicName = Utils.randomString(10);
     var staticId = Utils.randomString(10);
@@ -954,7 +976,11 @@ public class AdminTest extends RequireBrokerCluster {
     try (var admin = Admin.of(bootstrapServers())) {
       Assertions.assertTrue(admin.consumerGroupIds().contains(groupId));
       // the static member is existent
-      Assertions.assertThrows(GroupNotEmptyException.class, () -> admin.removeGroup(groupId));
+      var astraeaExecutionRuntimeException =
+          Assertions.assertThrows(
+              ExecutionRuntimeException.class, () -> admin.removeGroup(groupId));
+      Assertions.assertEquals(
+          GroupNotEmptyException.class, astraeaExecutionRuntimeException.getRootCause().getClass());
       // cleanup members
       admin.removeAllMembers(groupId);
       admin.removeGroup(groupId);
@@ -976,32 +1002,29 @@ public class AdminTest extends RequireBrokerCluster {
       try (var producer = Producer.of(bootstrapServers())) {
         var done = new AtomicBoolean(false);
         var data = new byte[1000];
-        try (var pool =
-            ThreadPool.builder()
-                .executor(
-                    () -> {
-                      producer.sender().topic(topicName).key(data).value(data).run();
-                      return done.get() ? State.DONE : State.RUNNING;
-                    })
-                .build()) {
+        var f =
+            CompletableFuture.runAsync(
+                () -> {
+                  while (!done.get())
+                    producer.sender().topic(topicName).key(data).value(data).run();
+                });
+        try {
+          admin.migrator().topic(topicName).moveTo(List.of(nextBroker));
+          var reassignment =
+              admin.reassignments(Set.of(topicName)).get(TopicPartition.of(topicName, 0));
 
-          try {
-            admin.migrator().topic(topicName).moveTo(List.of(nextBroker));
-            var reassignment =
-                admin.reassignments(Set.of(topicName)).get(TopicPartition.of(topicName, 0));
-
-            // Don't verify the result if the migration is done
-            if (reassignment != null) {
-              Assertions.assertEquals(1, reassignment.from().size());
-              var from = reassignment.from().iterator().next();
-              Assertions.assertEquals(currentBroker, from.broker());
-              Assertions.assertEquals(1, reassignment.to().size());
-              var to = reassignment.to().iterator().next();
-              Assertions.assertEquals(nextBroker, to.broker());
-            }
-          } finally {
-            done.set(true);
+          // Don't verify the result if the migration is done
+          if (reassignment != null) {
+            Assertions.assertEquals(1, reassignment.from().size());
+            var from = reassignment.from().iterator().next();
+            Assertions.assertEquals(currentBroker, from.broker());
+            Assertions.assertEquals(1, reassignment.to().size());
+            var to = reassignment.to().iterator().next();
+            Assertions.assertEquals(nextBroker, to.broker());
           }
+        } finally {
+          done.set(true);
+          Utils.swallowException(f::get);
         }
       }
     }
@@ -1027,33 +1050,31 @@ public class AdminTest extends RequireBrokerCluster {
       try (var producer = Producer.of(bootstrapServers())) {
         var done = new AtomicBoolean(false);
         var data = new byte[1000];
-        try (var pool =
-            ThreadPool.builder()
-                .executor(
-                    () -> {
-                      producer.sender().topic(topicName).key(data).value(data).run();
-                      return done.get() ? State.DONE : State.RUNNING;
-                    })
-                .build()) {
+        var f =
+            CompletableFuture.runAsync(
+                () -> {
+                  while (!done.get())
+                    producer.sender().topic(topicName).key(data).value(data).run();
+                });
 
-          try {
-            admin.migrator().topic(topicName).moveTo(Map.of(currentReplica.broker(), nextPath));
-            var reassignment =
-                admin.reassignments(Set.of(topicName)).get(TopicPartition.of(topicName, 0));
-            // Don't verify the result if the migration is done
-            if (reassignment != null) {
-              Assertions.assertEquals(1, reassignment.from().size());
-              var from = reassignment.from().iterator().next();
-              Assertions.assertEquals(currentBroker, from.broker());
-              Assertions.assertEquals(currentPath, from.path());
-              Assertions.assertEquals(1, reassignment.to().size());
-              var to = reassignment.to().iterator().next();
-              Assertions.assertEquals(currentBroker, to.broker());
-              Assertions.assertEquals(nextPath, to.path());
-            }
-          } finally {
-            done.set(true);
+        try {
+          admin.migrator().topic(topicName).moveTo(Map.of(currentReplica.broker(), nextPath));
+          var reassignment =
+              admin.reassignments(Set.of(topicName)).get(TopicPartition.of(topicName, 0));
+          // Don't verify the result if the migration is done
+          if (reassignment != null) {
+            Assertions.assertEquals(1, reassignment.from().size());
+            var from = reassignment.from().iterator().next();
+            Assertions.assertEquals(currentBroker, from.broker());
+            Assertions.assertEquals(currentPath, from.path());
+            Assertions.assertEquals(1, reassignment.to().size());
+            var to = reassignment.to().iterator().next();
+            Assertions.assertEquals(currentBroker, to.broker());
+            Assertions.assertEquals(nextPath, to.path());
           }
+        } finally {
+          done.set(true);
+          Utils.swallowException(f::get);
         }
       }
     }
@@ -1070,27 +1091,24 @@ public class AdminTest extends RequireBrokerCluster {
       try (var producer = Producer.of(bootstrapServers())) {
         var done = new AtomicBoolean(false);
         var data = new byte[1000];
-        try (var pool =
-            ThreadPool.builder()
-                .executor(
-                    () -> {
-                      producer.sender().topic(topicName).key(data).value(data).run();
-                      return done.get() ? State.DONE : State.RUNNING;
-                    })
-                .build()) {
-
-          try {
-            admin.migrator().topic(topicName).moveTo(brokers);
-            var reassignment =
-                admin.reassignments(Set.of(topicName)).get(TopicPartition.of(topicName, 0));
-            // Don't verify the result if the migration is done
-            if (reassignment != null) {
-              Assertions.assertEquals(3, reassignment.from().size());
-              Assertions.assertEquals(2, reassignment.to().size());
-            }
-          } finally {
-            done.set(true);
+        var f =
+            CompletableFuture.runAsync(
+                () -> {
+                  while (!done.get())
+                    producer.sender().topic(topicName).key(data).value(data).run();
+                });
+        try {
+          admin.migrator().topic(topicName).moveTo(brokers);
+          var reassignment =
+              admin.reassignments(Set.of(topicName)).get(TopicPartition.of(topicName, 0));
+          // Don't verify the result if the migration is done
+          if (reassignment != null) {
+            Assertions.assertEquals(3, reassignment.from().size());
+            Assertions.assertEquals(2, reassignment.to().size());
           }
+        } finally {
+          done.set(true);
+          Utils.swallowException(f::get);
         }
       }
     }
@@ -1115,6 +1133,7 @@ public class AdminTest extends RequireBrokerCluster {
     var topicName = Utils.randomString(10);
     try (var admin = Admin.of(bootstrapServers())) {
       admin.creator().topic(topicName).numberOfPartitions(3).numberOfReplicas((short) 3).create();
+      Utils.sleep(Duration.ofSeconds(2));
       var deleteRecords = admin.deleteRecords(Map.of(TopicPartition.of(topicName, 0), 0L));
 
       Assertions.assertEquals(1, deleteRecords.size());
@@ -1140,6 +1159,397 @@ public class AdminTest extends RequireBrokerCluster {
       Assertions.assertEquals(2, offsets.get(TopicPartition.of(topicName, 0)).earliest());
       Assertions.assertEquals(1, offsets.get(TopicPartition.of(topicName, 1)).earliest());
       Assertions.assertEquals(0, offsets.get(TopicPartition.of(topicName, 2)).earliest());
+    }
+  }
+
+  @Test
+  void testDeleteTopic() {
+    var topicNames =
+        IntStream.range(0, 4).mapToObj(x -> Utils.randomString(10)).collect(Collectors.toList());
+
+    try (var admin = Admin.of(bootstrapServers())) {
+      topicNames.forEach(
+          x -> admin.creator().topic(x).numberOfPartitions(3).numberOfReplicas((short) 3).create());
+      Utils.sleep(Duration.ofSeconds(2));
+
+      admin.deleteTopics(Set.of(topicNames.get(0), topicNames.get(1)));
+      Utils.sleep(Duration.ofSeconds(2));
+
+      var latestTopicNames = admin.topicNames();
+      Assertions.assertFalse(latestTopicNames.contains(topicNames.get(0)));
+      Assertions.assertFalse(latestTopicNames.contains(topicNames.get(1)));
+      Assertions.assertTrue(latestTopicNames.contains(topicNames.get(2)));
+      Assertions.assertTrue(latestTopicNames.contains(topicNames.get(3)));
+
+      admin.deleteTopics(Set.of(topicNames.get(3)));
+      Utils.sleep(Duration.ofSeconds(2));
+
+      latestTopicNames = admin.topicNames();
+      Assertions.assertFalse(latestTopicNames.contains(topicNames.get(3)));
+      Assertions.assertTrue(latestTopicNames.contains(topicNames.get(2)));
+    }
+  }
+
+  private String fetchBrokerConfig(int brokerId, String configKey) {
+    try (AdminClient adminClient =
+        AdminClient.create(
+            Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers()))) {
+      var resource = new ConfigResource(ConfigResource.Type.BROKER, String.valueOf(brokerId));
+      return Utils.packException(() -> adminClient.describeConfigs(List.of(resource)).all().get())
+          .get(resource)
+          .get(configKey)
+          .value();
+    }
+  }
+
+  @Test
+  void testReplicationThrottler$egress$ingress$dataRate() {
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      admin
+          .replicationThrottler()
+          .egress(DataRate.MiB.of(72).perSecond())
+          .ingress(DataRate.MiB.of(32).perSecond())
+          .apply();
+      Utils.sleep(Duration.ofMillis(100));
+      brokerIds()
+          .forEach(
+              id -> {
+                var leaderValue = fetchBrokerConfig(id, "leader.replication.throttled.rate");
+                var followerValue = fetchBrokerConfig(id, "follower.replication.throttled.rate");
+
+                Assertions.assertEquals(
+                    DataSize.MiB.of(72), DataSize.Byte.of(Long.parseLong(leaderValue)));
+                Assertions.assertEquals(
+                    DataSize.MiB.of(32), DataSize.Byte.of(Long.parseLong(followerValue)));
+              });
+    }
+  }
+
+  @Test
+  void testReplicationThrottler$egress$ingress$map() {
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      var rate0 = DataRate.MiB.of(29).perSecond();
+      var rate1 = DataRate.MiB.of(61).perSecond();
+      var rate2 = DataRate.MiB.of(97).perSecond();
+      admin
+          .replicationThrottler()
+          .egress(rate0)
+          .ingress(rate0)
+          .egress(Map.of(1, rate1, 2, rate2))
+          .ingress(Map.of(1, rate1, 2, rate2))
+          .apply();
+      Utils.sleep(Duration.ofMillis(100));
+      Map.of(0, rate0, 1, rate1, 2, rate2)
+          .forEach(
+              (id, rate) -> {
+                var leaderValue = fetchBrokerConfig(id, "leader.replication.throttled.rate");
+                var followerValue = fetchBrokerConfig(id, "follower.replication.throttled.rate");
+
+                Assertions.assertEquals(
+                    rate.dataSize(), DataSize.Byte.of(Long.parseLong(leaderValue)));
+                Assertions.assertEquals(
+                    rate.dataSize(), DataSize.Byte.of(Long.parseLong(followerValue)));
+              });
+    }
+  }
+
+  private Set<TopicPartitionReplica> currentLeaderLogs(Admin admin, String topic) {
+    return admin.replicas(Set.of(topic)).entrySet().stream()
+        .flatMap(
+            entry ->
+                entry.getValue().stream()
+                    .filter(Replica::leader)
+                    .map(
+                        replica ->
+                            TopicPartitionReplica.of(
+                                entry.getKey().topic(),
+                                entry.getKey().partition(),
+                                replica.broker())))
+        .collect(Collectors.toUnmodifiableSet());
+  }
+
+  private Set<TopicPartitionReplica> currentFollowerLogs(Admin admin, String topic) {
+    return admin.replicas(Set.of(topic)).entrySet().stream()
+        .flatMap(
+            entry ->
+                entry.getValue().stream()
+                    .filter(replica -> !replica.leader())
+                    .map(
+                        replica ->
+                            TopicPartitionReplica.of(
+                                entry.getKey().topic(),
+                                entry.getKey().partition(),
+                                replica.broker())))
+        .collect(Collectors.toUnmodifiableSet());
+  }
+
+  @Test
+  void testReplicationThrottler$throttle$topic() {
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      var topic = Utils.randomString();
+      var partitions = ThreadLocalRandom.current().nextInt(5, 20);
+      admin
+          .creator()
+          .topic(topic)
+          .numberOfPartitions(partitions)
+          .numberOfReplicas((short) 3)
+          .create();
+      Utils.sleep(Duration.ofSeconds(1));
+      admin.replicationThrottler().throttle(topic).apply();
+      Utils.sleep(Duration.ofSeconds(1));
+
+      Assertions.assertEquals(currentLeaderLogs(admin, topic), fetchLeaderThrottle(topic));
+      Assertions.assertEquals(currentFollowerLogs(admin, topic), fetchFollowerThrottle(topic));
+    }
+  }
+
+  @Test
+  void testReplicationThrottler$throttle$partition() {
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      var topic = Utils.randomString();
+      var partitions = ThreadLocalRandom.current().nextInt(5, 20);
+      var selectedPartition = ThreadLocalRandom.current().nextInt(0, partitions);
+      admin
+          .creator()
+          .topic(topic)
+          .numberOfPartitions(partitions)
+          .numberOfReplicas((short) 3)
+          .create();
+      Utils.sleep(Duration.ofSeconds(1));
+      admin.replicationThrottler().throttle(TopicPartition.of(topic, selectedPartition)).apply();
+      Utils.sleep(Duration.ofSeconds(1));
+
+      var expectedLeaderLogs =
+          currentLeaderLogs(admin, topic).stream()
+              .filter(x -> x.partition() == selectedPartition)
+              .collect(Collectors.toUnmodifiableSet());
+      var expectedFollowerLogs =
+          currentFollowerLogs(admin, topic).stream()
+              .filter(x -> x.partition() == selectedPartition)
+              .collect(Collectors.toUnmodifiableSet());
+
+      Assertions.assertEquals(expectedLeaderLogs, fetchLeaderThrottle(topic));
+      Assertions.assertEquals(expectedFollowerLogs, fetchFollowerThrottle(topic));
+    }
+  }
+
+  @Test
+  void testReplicationThrottler$throttle$replica() {
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      var topic = Utils.randomString();
+      var partitions = 20;
+      admin
+          .creator()
+          .topic(topic)
+          .numberOfPartitions(partitions)
+          .numberOfReplicas((short) 3)
+          .create();
+      Utils.sleep(Duration.ofSeconds(1));
+
+      var selectedLeader =
+          currentLeaderLogs(admin, topic).stream()
+              .sorted(Comparator.comparing(TopicPartitionReplica::hashCode))
+              .limit(10)
+              .collect(Collectors.toUnmodifiableSet());
+      var selectedFollower =
+          currentFollowerLogs(admin, topic).stream()
+              .sorted(Comparator.comparing(TopicPartitionReplica::hashCode))
+              .limit(25)
+              .collect(Collectors.toUnmodifiableSet());
+      var allTargetLog =
+          Stream.concat(selectedLeader.stream(), selectedFollower.stream())
+              .collect(Collectors.toUnmodifiableSet());
+
+      var replicationThrottler = admin.replicationThrottler();
+      allTargetLog.forEach(replicationThrottler::throttle);
+      replicationThrottler.apply();
+      Utils.sleep(Duration.ofSeconds(1));
+
+      Assertions.assertEquals(allTargetLog, fetchLeaderThrottle(topic));
+      Assertions.assertEquals(allTargetLog, fetchFollowerThrottle(topic));
+    }
+  }
+
+  @Test
+  void testReplicationThrottler$throttle$Leader$Follower() {
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      var topic = Utils.randomString();
+      var partitions = 20;
+      admin
+          .creator()
+          .topic(topic)
+          .numberOfPartitions(partitions)
+          .numberOfReplicas((short) 3)
+          .create();
+      Utils.sleep(Duration.ofSeconds(1));
+
+      var selectedLeader =
+          IntStream.range(0, 10)
+              .mapToObj(
+                  i ->
+                      TopicPartitionReplica.of(
+                          topic,
+                          ThreadLocalRandom.current().nextInt(0, 20),
+                          ThreadLocalRandom.current().nextInt(0, 3)))
+              .collect(Collectors.toUnmodifiableSet());
+      var selectedFollower =
+          IntStream.range(0, 25)
+              .mapToObj(
+                  i ->
+                      TopicPartitionReplica.of(
+                          topic,
+                          ThreadLocalRandom.current().nextInt(0, 20),
+                          ThreadLocalRandom.current().nextInt(0, 3)))
+              .collect(Collectors.toUnmodifiableSet());
+
+      var replicationThrottler = admin.replicationThrottler();
+      selectedLeader.forEach(replicationThrottler::throttleLeader);
+      selectedFollower.forEach(replicationThrottler::throttleFollower);
+      replicationThrottler.apply();
+      Utils.sleep(Duration.ofSeconds(1));
+
+      Assertions.assertEquals(selectedLeader, fetchLeaderThrottle(topic));
+      Assertions.assertEquals(selectedFollower, fetchFollowerThrottle(topic));
+    }
+  }
+
+  @Test
+  @DisplayName("Append works")
+  void testReplicationThrottler$throttle$append$config() {
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      var topic = Utils.randomString();
+      admin.creator().topic(topic).numberOfPartitions(3).numberOfReplicas((short) 3).create();
+      Utils.sleep(Duration.ofSeconds(1));
+
+      var log0 = TopicPartitionReplica.of(topic, 0, 0);
+      var log1 = TopicPartitionReplica.of(topic, 1, 1);
+      var log2 = TopicPartitionReplica.of(topic, 2, 2);
+
+      admin.replicationThrottler().throttle(log0).apply();
+      admin.replicationThrottler().throttle(log1).apply();
+      admin.replicationThrottler().throttle(log2).apply();
+      Assertions.assertEquals(Set.of(log0, log1, log2), fetchLeaderThrottle(topic));
+      Assertions.assertEquals(Set.of(log0, log1, log2), fetchFollowerThrottle(topic));
+    }
+  }
+
+  @Test
+  @DisplayName("The API can't be use in conjunction with wildcard throttle")
+  void testReplicationThrottler$throttle$wildcard() {
+    try (AdminClient adminClient =
+        AdminClient.create(
+            Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers()))) {
+      try (Admin admin = Admin.of(bootstrapServers())) {
+        var topic = Utils.randomString();
+        admin.creator().topic(topic).numberOfPartitions(10).numberOfReplicas((short) 3).create();
+        Utils.sleep(Duration.ofSeconds(1));
+
+        var configEntry0 = new ConfigEntry("leader.replication.throttled.replicas", "*");
+        var configEntry1 = new ConfigEntry("follower.replication.throttled.replicas", "*");
+        var alter0 = new AlterConfigOp(configEntry0, AlterConfigOp.OpType.SET);
+        var alter1 = new AlterConfigOp(configEntry1, AlterConfigOp.OpType.SET);
+        var configResource = new ConfigResource(ConfigResource.Type.TOPIC, topic);
+        adminClient.incrementalAlterConfigs(Map.of(configResource, List.of(alter0, alter1)));
+        Utils.sleep(Duration.ofSeconds(1));
+
+        var topicPartition = TopicPartition.of(topic, 0);
+        var topicPartitionReplica = TopicPartitionReplica.of(topic, 0, 0);
+        Assertions.assertThrows(
+            UnsupportedOperationException.class,
+            () -> admin.replicationThrottler().throttle(topic).apply());
+        Assertions.assertThrows(
+            UnsupportedOperationException.class,
+            () -> admin.replicationThrottler().throttle(topicPartition).apply());
+        Assertions.assertThrows(
+            UnsupportedOperationException.class,
+            () -> admin.replicationThrottler().throttle(topicPartitionReplica).apply());
+      }
+    }
+  }
+
+  private Set<TopicPartitionReplica> fetchLogThrottleConfig(String configKey, String topicName) {
+    try (AdminClient adminClient =
+        AdminClient.create(
+            Map.of(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers()))) {
+      var resource = new ConfigResource(ConfigResource.Type.TOPIC, topicName);
+      var stringValue =
+          Utils.packException(() -> adminClient.describeConfigs(List.of(resource)).all().get())
+              .get(resource)
+              .get(configKey)
+              .value();
+      if (stringValue.isEmpty()) return Set.of();
+      return Arrays.stream(stringValue.split(","))
+          .map(x -> x.split(":"))
+          .map(
+              x ->
+                  TopicPartitionReplica.of(
+                      topicName, Integer.parseInt(x[0]), Integer.parseInt(x[1])))
+          .collect(Collectors.toUnmodifiableSet());
+    }
+  }
+
+  private Set<TopicPartitionReplica> fetchLeaderThrottle(String topicName) {
+    return fetchLogThrottleConfig("leader.replication.throttled.replicas", topicName);
+  }
+
+  private Set<TopicPartitionReplica> fetchFollowerThrottle(String topicName) {
+    return fetchLogThrottleConfig("follower.replication.throttled.replicas", topicName);
+  }
+
+  @Test
+  void testClearTopicReplicationThrottle() {
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      var topic = Utils.randomString();
+      admin.creator().topic(topic).numberOfPartitions(10).numberOfReplicas((short) 3).create();
+      Utils.sleep(Duration.ofSeconds(1));
+      admin.replicationThrottler().throttle(topic).apply();
+      Utils.sleep(Duration.ofSeconds(1));
+
+      admin.clearReplicationThrottle(topic);
+      Utils.sleep(Duration.ofSeconds(1));
+
+      Assertions.assertEquals(Set.of(), fetchLeaderThrottle(topic));
+      Assertions.assertEquals(Set.of(), fetchFollowerThrottle(topic));
+    }
+  }
+
+  @Test
+  void testClearPartitionReplicationThrottle() {
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      var topic = Utils.randomString();
+      admin.creator().topic(topic).numberOfPartitions(10).numberOfReplicas((short) 3).create();
+      Utils.sleep(Duration.ofSeconds(1));
+      admin.replicationThrottler().throttle(topic).apply();
+      Utils.sleep(Duration.ofSeconds(1));
+
+      admin.clearReplicationThrottle(TopicPartition.of(topic, 0));
+      Utils.sleep(Duration.ofSeconds(1));
+
+      Assertions.assertTrue(
+          fetchLeaderThrottle(topic).stream().allMatch(log -> log.partition() != 0));
+      Assertions.assertTrue(
+          fetchFollowerThrottle(topic).stream().allMatch(log -> log.partition() != 0));
+    }
+  }
+
+  @Test
+  void testClearReplicaReplicationThrottle() {
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      var topic = Utils.randomString();
+      admin.creator().topic(topic).numberOfPartitions(10).numberOfReplicas((short) 3).create();
+      Utils.sleep(Duration.ofMillis(100));
+      admin.replicationThrottler().throttle(topic).apply();
+      Utils.sleep(Duration.ofMillis(100));
+
+      admin.clearReplicationThrottle(TopicPartitionReplica.of(topic, 0, 0));
+      Utils.sleep(Duration.ofMillis(500));
+
+      Assertions.assertTrue(
+          fetchLeaderThrottle(topic).stream()
+              .noneMatch(log -> log.partition() == 0 && log.brokerId() == 0));
+      Assertions.assertTrue(
+          fetchFollowerThrottle(topic).stream()
+              .noneMatch(log -> log.partition() == 0 && log.brokerId() == 0));
     }
   }
 }

@@ -16,175 +16,120 @@
  */
 package org.astraea.app.balancer;
 
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
+import java.util.Set;
+import org.apache.kafka.common.Cluster;
+import org.apache.kafka.common.Node;
+import org.apache.kafka.common.PartitionInfo;
+import org.astraea.app.admin.ClusterInfo;
 import org.astraea.app.admin.TopicPartition;
-import org.astraea.app.balancer.generator.ShufflePlanGenerator;
-import org.astraea.app.balancer.log.LayeredClusterLogAllocation;
+import org.astraea.app.balancer.log.ClusterLogAllocation;
 import org.astraea.app.balancer.log.LogPlacement;
-import org.astraea.app.balancer.metrics.IdentifiedFetcher;
-import org.astraea.app.balancer.metrics.MetricSource;
-import org.astraea.app.balancer.utils.DummyCostFunction;
-import org.astraea.app.balancer.utils.DummyExecutor;
-import org.astraea.app.balancer.utils.DummyGenerator;
-import org.astraea.app.balancer.utils.DummyMetricSource;
-import org.astraea.app.cost.ClusterInfoProvider;
+import org.astraea.app.cost.ReplicaDiskInCost;
+import org.astraea.app.cost.ReplicaLeaderCost;
+import org.astraea.app.metrics.BeanObject;
+import org.astraea.app.metrics.HasBeanObject;
+import org.astraea.app.metrics.broker.HasGauge;
+import org.astraea.app.metrics.broker.LogMetrics;
+import org.astraea.app.metrics.broker.ServerMetrics;
 import org.astraea.app.partitioner.Configuration;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 
 class BalancerUtilsTest {
+  private static final HasGauge OLD_TP1_0 =
+      fakePartitionBeanObject("Log", LogMetrics.Log.SIZE.metricName(), "test-1", "0", 1000, 1000L);
+  private static final HasGauge NEW_TP1_0 =
+      fakePartitionBeanObject(
+          "Log", LogMetrics.Log.SIZE.metricName(), "test-1", "0", 500000, 10000L);
+  private static final HasGauge OLD_TP1_1 =
+      fakePartitionBeanObject("Log", LogMetrics.Log.SIZE.metricName(), "test-1", "1", 500, 1000L);
+  private static final HasGauge NEW_TP1_1 =
+      fakePartitionBeanObject(
+          "Log", LogMetrics.Log.SIZE.metricName(), "test-1", "1", 100000000, 10000L);
+  private static final HasGauge LEADER_BROKER1 =
+      fakeBrokerBeanObject(
+          "ReplicaManager", ServerMetrics.ReplicaManager.LEADER_COUNT.metricName(), 2, 10000L);
+  private static final HasGauge LEADER_BROKER2 =
+      fakeBrokerBeanObject(
+          "ReplicaManager", ServerMetrics.ReplicaManager.LEADER_COUNT.metricName(), 4, 10000L);
+  private static final Collection<HasBeanObject> broker1 =
+      List.of(OLD_TP1_0, NEW_TP1_0, LEADER_BROKER1);
+  private static final Collection<HasBeanObject> broker2 =
+      List.of(OLD_TP1_1, NEW_TP1_1, LEADER_BROKER2);
+  private static final Map<Integer, Collection<HasBeanObject>> beanObjects =
+      Map.of(0, broker1, 1, broker2);
 
-  private static final Configuration emptyConfig = Configuration.of(Map.of());
-
-  static class DummyConfigMetricSource extends DummyMetricSource {
-    public DummyConfigMetricSource(Configuration c, Collection<IdentifiedFetcher> something) {
-      super(c, something);
-    }
-  }
-
-  static class DummyConfigCostFunction extends DummyCostFunction {
-    public DummyConfigCostFunction(Configuration configuration) {}
-  }
-
-  static class DummyConfigGenerator extends DummyGenerator {
-    public DummyConfigGenerator(Configuration configuration) {}
-  }
-
-  static class DummyConfigExecutor extends DummyExecutor {
-    public DummyConfigExecutor(Configuration configuration) {}
-  }
-
-  @ParameterizedTest
-  @ValueSource(ints = {0, 1, 2, 3, 4})
-  void testMockClusterInfo(int gotoBroker) {
-    // arrange
-    var nodeCount = 5;
-    var topicCount = 3;
-    var partitionCount = 5;
-    var replicaCount = 1;
-    var logCount = topicCount * partitionCount * replicaCount;
-    var dir = "/path/to/somewhere";
-    var topicNames =
-        IntStream.range(0, topicCount)
-            .mapToObj(i -> "Topic_" + i)
-            .collect(Collectors.toUnmodifiableSet());
+  @Test
+  void testMockClusterInfoAllocation() {
+    var tp1 = TopicPartition.of("testMockCluster", 1);
+    var tp2 = TopicPartition.of("testMockCluster", 0);
+    var logPlacement1 = List.of(LogPlacement.of(0), LogPlacement.of(1));
+    var logPlacement2 = List.of(LogPlacement.of(1), LogPlacement.of(2));
+    var nodes =
+        new Node[] {
+          new Node(0, "localhost", 9092),
+          new Node(1, "localhost", 9092),
+          new Node(2, "localhost", 9092)
+        };
+    var partitionInfo = new PartitionInfo("test-1", 1, nodes[0], nodes, nodes);
     var clusterInfo =
-        ClusterInfoProvider.fakeClusterInfo(
-            nodeCount, topicCount, partitionCount, replicaCount, (ignore) -> topicNames);
-    var mockedAllocationMap =
-        topicNames.stream()
-            .flatMap(
-                topicName ->
-                    IntStream.range(0, partitionCount)
-                        .mapToObj(p -> new TopicPartition(topicName, p)))
-            .collect(
-                Collectors.toUnmodifiableMap(
-                    i -> i, i -> List.of(LogPlacement.of(gotoBroker, dir))));
-    var mockedAllocation = LayeredClusterLogAllocation.of(mockedAllocationMap);
-
-    // act, declare every log should locate at specific broker -> gotoBroker
-    var mockedClusterInfo = BalancerUtils.mockClusterInfoAllocation(clusterInfo, mockedAllocation);
-
-    // assert, expected every log in the mocked ClusterInfo locate at that broker
-    Assertions.assertEquals(
-        Collections.nCopies(logCount, gotoBroker),
-        topicNames.stream()
-            .flatMap(name -> mockedClusterInfo.replicas(name).stream())
-            .map(replica -> replica.nodeInfo().id())
-            .collect(Collectors.toUnmodifiableList()));
-
-    // assert, expected every log in the mocked ClusterInfo locate at that dir
-    Assertions.assertEquals(
-        Collections.nCopies(logCount, dir),
-        topicNames.stream()
-            .flatMap(name -> mockedClusterInfo.replicas(name).stream())
-            .map(replica -> replica.dataFolder().orElseThrow())
-            .collect(Collectors.toUnmodifiableList()));
+        ClusterInfo.of(
+            new Cluster(
+                "",
+                List.of(nodes[0], nodes[1], nodes[2]),
+                List.of(partitionInfo),
+                Set.of(),
+                Set.of(),
+                Node.noNode()));
+    var cla = ClusterLogAllocation.of(Map.of(tp1, logPlacement1, tp2, logPlacement2));
+    var mockClusterInfo = BalancerUtils.merge(clusterInfo, cla);
+    Assertions.assertEquals(mockClusterInfo.replicas("testMockCluster").size(), 4);
+    Assertions.assertEquals(mockClusterInfo.nodes().size(), 3);
+    Assertions.assertEquals(mockClusterInfo.topics().size(), 1);
+    Assertions.assertTrue(mockClusterInfo.topics().contains("testMockCluster"));
   }
 
   @Test
-  void testNewInstance() {
-    // Object
-    Assertions.assertEquals(
-        Object.class, BalancerUtils.newInstance(Object.class).orElseThrow().getClass());
-    // AtomicBoolean
-    Assertions.assertEquals(
-        AtomicBoolean.class,
-        BalancerUtils.newInstance(AtomicBoolean.class).orElseThrow().getClass());
-    // ArrayList
-    Assertions.assertEquals(
-        ArrayList.class, BalancerUtils.newInstance(ArrayList.class).orElseThrow().getClass());
+  void testEvaluateCost() {
+    var node1 = new Node(0, "localhost", 9092);
+    var node2 = new Node(1, "localhost", 9092);
+    var partitionInfo1 =
+        new PartitionInfo("test-1", 0, node1, new Node[] {node1}, new Node[] {node1});
+    var partitionInfo2 =
+        new PartitionInfo("test-1", 1, node2, new Node[] {node2}, new Node[] {node2});
+    var clusterInfo =
+        ClusterInfo.of(
+            new Cluster(
+                "",
+                List.of(node1, node2),
+                List.of(partitionInfo1, partitionInfo2),
+                Set.of(),
+                Set.of(),
+                Node.noNode()));
 
-    // ShufflePlanGenerator
-    Assertions.assertEquals(
-        ShufflePlanGenerator.class,
-        BalancerUtils.newInstance(ShufflePlanGenerator.class, Configuration.of(Map.of()))
-            .orElseThrow()
-            .getClass());
-    // AtomicInteger
-    Assertions.assertEquals(
-        5566, BalancerUtils.newInstance(AtomicInteger.class, 5566).orElseThrow().get());
-    Assertions.assertEquals(
-        new TopicPartition("topic", 32),
-        BalancerUtils.newInstance(TopicPartition.class, "topic", 32).orElseThrow());
+    var cf1 = new ReplicaLeaderCost();
+    var cf2 = new ReplicaDiskInCost(Configuration.of(Map.of("metrics.duration", "5")));
+    var cost = BalancerUtils.evaluateCost(clusterInfo, Map.of(cf1, beanObjects, cf2, beanObjects));
+    Assertions.assertEquals(1.3234028368582615, cost);
   }
 
-  @Test
-  void testConstructMetricSource() {
-    // two arg constructor
-    try (MetricSource metricSource =
-        BalancerUtils.constructMetricSource(
-            DummyConfigMetricSource.class, emptyConfig, List.of())) {
-      Assertions.assertEquals(DummyConfigMetricSource.class, metricSource.getClass());
-    }
+  private static LogMetrics.Log.Gauge fakePartitionBeanObject(
+      String type, String name, String topic, String partition, long size, long time) {
+    return new LogMetrics.Log.Gauge(
+        new BeanObject(
+            "kafka.log",
+            Map.of("name", name, "type", type, "topic", topic, "partition", partition),
+            Map.of("Value", size),
+            time));
   }
 
-  @Test
-  void testConstructCostFunction() {
-    // test no arg constructor
-    Assertions.assertEquals(
-        DummyCostFunction.class,
-        BalancerUtils.constructCostFunction(DummyCostFunction.class, emptyConfig).getClass());
-
-    // test config arg constructor
-    Assertions.assertEquals(
-        DummyConfigCostFunction.class,
-        BalancerUtils.constructCostFunction(DummyConfigCostFunction.class, emptyConfig).getClass());
-  }
-
-  @Test
-  void testConstructGenerator() {
-    // test no arg constructor
-    Assertions.assertEquals(
-        DummyGenerator.class,
-        BalancerUtils.constructGenerator(DummyGenerator.class, emptyConfig).getClass());
-
-    // test config arg constructor
-    Assertions.assertEquals(
-        DummyConfigGenerator.class,
-        BalancerUtils.constructGenerator(DummyConfigGenerator.class, emptyConfig).getClass());
-  }
-
-  @Test
-  void testConstructExecutor() {
-    // test no arg constructor
-    Assertions.assertEquals(
-        DummyExecutor.class,
-        BalancerUtils.constructExecutor(DummyExecutor.class, emptyConfig).getClass());
-
-    // test config arg constructor
-    Assertions.assertEquals(
-        DummyConfigExecutor.class,
-        BalancerUtils.constructExecutor(DummyConfigExecutor.class, emptyConfig).getClass());
+  private static ServerMetrics.ReplicaManager.Gauge fakeBrokerBeanObject(
+      String type, String name, long value, long time) {
+    return new ServerMetrics.ReplicaManager.Gauge(
+        new BeanObject(
+            "kafka.server", Map.of("type", type, "name", name), Map.of("Value", value), time));
   }
 }

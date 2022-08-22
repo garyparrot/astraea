@@ -23,6 +23,7 @@ import java.nio.file.Files;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
@@ -33,20 +34,19 @@ import java.util.function.Supplier;
 import java.util.stream.Collector;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.astraea.app.balancer.executor.RebalancePlanExecutor;
+import org.astraea.app.balancer.generator.RebalancePlanGenerator;
+import org.astraea.app.balancer.metrics.IdentifiedFetcher;
+import org.astraea.app.balancer.metrics.MetricSource;
+import org.astraea.app.cost.CostFunction;
+import org.astraea.app.partitioner.Configuration;
 
 public final class Utils {
 
-  private static Throwable unpack(Throwable exception) {
-    Throwable current = exception;
-    while (current instanceof ExecutionException) {
-      current = current.getCause();
-    }
-    return current;
-  }
-
   /**
-   * Convert the exception thrown by getter to RuntimeException. This method can eliminate the
-   * exception from Java signature.
+   * Convert the exception thrown by getter to RuntimeException, except ExecutionException.
+   * ExecutionException will be converted to ExecutionRuntimeException , in order to preserve the
+   * stacktrace of ExecutionException. This method can eliminate the exception from Java signature.
    *
    * @param getter to execute
    * @param <R> type of returned object
@@ -55,11 +55,12 @@ public final class Utils {
   public static <R> R packException(Getter<R> getter) {
     try {
       return getter.get();
+    } catch (RuntimeException exception) {
+      throw exception;
+    } catch (ExecutionException exception) {
+      throw new ExecutionRuntimeException(exception);
     } catch (Throwable exception) {
-      var current = unpack(exception);
-      if (current instanceof RuntimeException) throw (RuntimeException) current;
-      if (current == null) throw new RuntimeException("unknown error");
-      throw new RuntimeException(current);
+      throw new RuntimeException(exception);
     }
   }
 
@@ -83,11 +84,11 @@ public final class Utils {
    * @param runner to execute
    */
   public static void swallowException(Runner runner) {
-    Utils.packException(
-        () -> {
-          runner.run();
-          return null;
-        });
+    try {
+      runner.run();
+    } catch (Exception ex) {
+      ex.printStackTrace();
+    }
   }
 
   public interface Getter<R> {
@@ -170,6 +171,19 @@ public final class Utils {
   }
 
   /**
+   * check the content of string
+   *
+   * @param value to check
+   * @return input string if the string is not empty. Otherwise, it throws NPE or
+   *     IllegalArgumentException
+   */
+  public static String requireNonEmpty(String value) {
+    if (Objects.requireNonNull(value).isEmpty())
+      throw new IllegalArgumentException("the value: " + value + " can't be empty");
+    return value;
+  }
+
+  /**
    * Check if the time is expired.
    *
    * @param lastTime Check time.
@@ -237,6 +251,54 @@ public final class Utils {
   public static <T> CompletableFuture<List<T>> sequence(Collection<CompletableFuture<T>> futures) {
     return CompletableFuture.allOf(futures.toArray(new CompletableFuture<?>[0]))
         .thenApply(f -> futures.stream().map(CompletableFuture::join).collect(Collectors.toList()));
+  }
+
+  public static <T> T constructModule(Class<T> costClass, Configuration configuration) {
+    try {
+      // case 0: create cost function by configuration
+      var constructor = costClass.getConstructor(Configuration.class);
+      return Utils.packException(() -> constructor.newInstance(configuration));
+    } catch (NoSuchMethodException e) {
+      // case 1: create cost function by empty constructor
+      return Utils.packException(() -> costClass.getConstructor().newInstance());
+    }
+  }
+
+  public static <T extends CostFunction> T constructCostFunction(
+      Class<T> costClass, Configuration configuration) {
+    return constructModule(costClass, configuration);
+  }
+
+  public static <T extends RebalancePlanGenerator> T constructGenerator(
+      Class<T> costClass, Configuration configuration) {
+    return constructModule(costClass, configuration);
+  }
+
+  public static <T extends RebalancePlanExecutor> T constructExecutor(
+      Class<T> costClass, Configuration configuration) {
+    return constructModule(costClass, configuration);
+  }
+
+  public static <T extends MetricSource> T constructMetricSource(
+      Class<T> costClass, Configuration configuration, Collection<IdentifiedFetcher> fetchers) {
+    try {
+      // case 0: create cost function by configuration
+      var constructor = costClass.getConstructor(Configuration.class, Collection.class);
+      return Utils.packException(() -> constructor.newInstance(configuration, fetchers));
+    } catch (NoSuchMethodException e) {
+      // case 1: create cost function by empty constructor
+      return Utils.packException(() -> costClass.getConstructor().newInstance());
+    }
+  }
+
+  public static double averageMB(Duration duration, long value) {
+    return average(duration, value) / 1024D / 1024D;
+  }
+
+  public static double average(Duration duration, long value) {
+    if (duration.toSeconds() > 0) return ((double) (value / duration.toSeconds()));
+    if (duration.toMillis() > 0) return (double) (value / duration.toMillis()) * 1000;
+    return (double) (value / duration.toNanos()) * 1000000000L;
   }
 
   private Utils() {}

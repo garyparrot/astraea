@@ -24,17 +24,18 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
-import java.util.function.BiConsumer;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
-import org.apache.kafka.common.errors.WakeupException;
 import org.astraea.app.admin.Admin;
 import org.astraea.app.admin.Compression;
 import org.astraea.app.admin.TopicPartition;
 import org.astraea.app.argument.CompressionField;
+import org.astraea.app.argument.DurationField;
 import org.astraea.app.argument.NonEmptyStringField;
 import org.astraea.app.argument.NonNegativeShortField;
 import org.astraea.app.argument.PathField;
@@ -44,9 +45,6 @@ import org.astraea.app.argument.PositiveShortField;
 import org.astraea.app.common.DataSize;
 import org.astraea.app.common.DataUnit;
 import org.astraea.app.common.Utils;
-import org.astraea.app.concurrent.Executor;
-import org.astraea.app.concurrent.State;
-import org.astraea.app.concurrent.ThreadPool;
 import org.astraea.app.consumer.Consumer;
 import org.astraea.app.consumer.Isolation;
 import org.astraea.app.producer.Producer;
@@ -79,7 +77,8 @@ import org.astraea.app.producer.Producer;
  */
 public class Performance {
   /** Used in Automation, to achieve the end of one Performance and then start another. */
-  public static void main(String[] args) throws InterruptedException, IOException {
+  public static void main(String[] args)
+      throws InterruptedException, IOException, ExecutionException {
     execute(org.astraea.app.argument.Argument.parse(new Argument(), args));
   }
 
@@ -94,39 +93,9 @@ public class Performance {
         argument.throughput);
   }
 
-  static List<ProducerExecutor> producerExecutors(
-      Performance.Argument argument,
-      List<? extends BiConsumer<Long, Integer>> observers,
-      DataSupplier dataSupplier,
-      Supplier<Integer> partitionSupplier) {
-    return IntStream.range(0, argument.producers)
-        .mapToObj(
-            index ->
-                ProducerExecutor.of(
-                    argument.topic,
-                    // Only transactional producer needs to process batch data
-                    argument.isolation() == Isolation.READ_COMMITTED ? argument.transactionSize : 1,
-                    argument.isolation() == Isolation.READ_COMMITTED
-                        ? Producer.builder()
-                            .configs(argument.configs())
-                            .bootstrapServers(argument.bootstrapServers())
-                            .compression(argument.compression)
-                            .partitionClassName(argument.partitioner)
-                            .buildTransactional()
-                        : Producer.builder()
-                            .configs(argument.configs())
-                            .bootstrapServers(argument.bootstrapServers())
-                            .compression(argument.compression)
-                            .partitionClassName(argument.partitioner)
-                            .build(),
-                    observers.get(index),
-                    partitionSupplier,
-                    dataSupplier))
-        .collect(Collectors.toUnmodifiableList());
-  }
-
-  public static Result execute(final Argument param) throws InterruptedException, IOException {
+  public static String execute(final Argument param) throws InterruptedException, IOException {
     List<Integer> partitions;
+    Map<TopicPartition, Long> latestOffsets;
     try (var topicAdmin = Admin.of(param.configs())) {
       topicAdmin
           .creator()
@@ -137,112 +106,104 @@ public class Performance {
 
       Utils.waitFor(() -> topicAdmin.topicNames().contains(param.topic));
       partitions = new ArrayList<>(partition(param, topicAdmin));
+      latestOffsets =
+          topicAdmin.offsets(Set.of(param.topic)).entrySet().stream()
+              .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().latest()));
     }
 
-    var consumerMetrics =
-        IntStream.range(0, param.consumers)
-            .mapToObj(i -> new Metrics())
-            .collect(Collectors.toUnmodifiableList());
-    var producerMetrics =
-        IntStream.range(0, param.producers)
-            .mapToObj(i -> new Metrics())
-            .collect(Collectors.toUnmodifiableList());
-
-    var manager = new Manager(param, producerMetrics, consumerMetrics);
     var groupId = "groupId-" + System.currentTimeMillis();
-    var consumerBalancerLatch = new CountDownLatch(param.consumers);
-    var dataSupplier = dataSupplier(param);
+
     Supplier<Integer> partitionSupplier =
         () -> partitions.isEmpty() ? -1 : partitions.get((int) (Math.random() * partitions.size()));
 
-    var producerExecutors =
-        producerExecutors(param, producerMetrics, dataSupplier, partitionSupplier);
+    var producerThreads =
+        ProducerThread.create(
+            param.topic,
+            param.transactionSize,
+            dataSupplier(param),
+            partitionSupplier,
+            param.producers,
+            param::createProducer);
+    var consumerThreads =
+        ConsumerThread.create(
+            param.consumers,
+            listener ->
+                Consumer.forTopics(Set.of(param.topic))
+                    .bootstrapServers(param.bootstrapServers())
+                    .groupId(groupId)
+                    .configs(param.configs())
+                    .isolation(param.isolation())
+                    .seek(latestOffsets)
+                    .consumerRebalanceListener(listener)
+                    .build());
 
-    Supplier<Boolean> producerDone =
-        () -> producerExecutors.stream().allMatch(ProducerExecutor::closed);
+    Supplier<List<ProducerThread.Report>> producerReporter =
+        () ->
+            producerThreads.stream()
+                .map(ProducerThread::report)
+                .collect(Collectors.toUnmodifiableList());
+    Supplier<List<ConsumerThread.Report>> consumerReporter =
+        () ->
+            consumerThreads.stream()
+                .map(ConsumerThread::report)
+                .collect(Collectors.toUnmodifiableList());
 
-    var tracker = new Tracker(producerMetrics, consumerMetrics, manager, producerDone);
+    var tracker = TrackerThread.create(producerReporter, consumerReporter, param.exeTime);
 
-    Collection<Executor> fileWriter =
-        (param.CSVPath != null)
-            ? List.of(
+    Optional<Runnable> fileWriter =
+        param.CSVPath == null
+            ? Optional.empty()
+            : Optional.of(
                 ReportFormat.createFileWriter(
-                    param.reportFormat, param.CSVPath, manager, producerDone, tracker))
-            : List.of();
+                    param.reportFormat,
+                    param.CSVPath,
+                    () -> consumerThreads.stream().allMatch(AbstractThread::closed),
+                    () -> producerThreads.stream().allMatch(AbstractThread::closed),
+                    producerReporter,
+                    consumerReporter));
 
-    try (var consumersPool =
-        ThreadPool.builder()
-            .executors(
-                IntStream.range(0, param.consumers)
-                    .mapToObj(
-                        i ->
-                            consumerExecutor(
-                                Consumer.forTopics(Set.of(param.topic))
-                                    .bootstrapServers(param.bootstrapServers())
-                                    .groupId(groupId)
-                                    .configs(param.configs())
-                                    .isolation(param.isolation())
-                                    .consumerRebalanceListener(
-                                        ignore -> consumerBalancerLatch.countDown())
-                                    .build(),
-                                consumerMetrics.get(i),
-                                manager,
-                                producerDone))
-                    .collect(Collectors.toUnmodifiableList()))
-            .build()) {
-      // make sure all consumers get their partition assignment
-      consumerBalancerLatch.await();
+    var fileWriterFuture =
+        fileWriter.map(CompletableFuture::runAsync).orElse(CompletableFuture.completedFuture(null));
 
-      try (var threadPool =
-          ThreadPool.builder()
-              .executors(producerExecutors)
-              .executor(tracker)
-              .executors(fileWriter)
-              .build()) {
-        threadPool.waitAll();
-        consumersPool.waitAll();
-        return new Result(param.topic);
-      }
-    }
-  }
+    var chaos =
+        param.chaosDuration == null
+            ? CompletableFuture.completedFuture(null)
+            : CompletableFuture.runAsync(
+                () -> {
+                  while (!consumerThreads.stream().allMatch(AbstractThread::closed)) {
+                    var thread =
+                        consumerThreads.get((int) (Math.random() * consumerThreads.size()));
+                    thread.unsubscribe();
+                    Utils.sleep(param.chaosDuration);
+                    thread.resubscribe();
+                  }
+                });
 
-  static Executor consumerExecutor(
-      Consumer<byte[], byte[]> consumer,
-      BiConsumer<Long, Integer> observer,
-      Manager manager,
-      Supplier<Boolean> producerDone) {
-    return new Executor() {
-      @Override
-      public State execute() {
-        try {
-          consumer
-              .poll(Duration.ofSeconds(10))
-              .forEach(
-                  record -> {
-                    // record ene-to-end latency, and record input byte (header and timestamp size
-                    // excluded)
-                    observer.accept(
-                        System.currentTimeMillis() - record.timestamp(),
-                        record.serializedKeySize() + record.serializedValueSize());
-                  });
-          // Consumer reached the record upperbound or consumed all the record producer produced.
-          return producerDone.get() && manager.consumedDone() ? State.DONE : State.RUNNING;
-        } catch (WakeupException ignore) {
-          // Stop polling and being ready to clean up
-          return State.DONE;
-        }
-      }
+    CompletableFuture.runAsync(
+        () -> {
+          producerThreads.forEach(AbstractThread::waitForDone);
+          // wait until all records are read already
+          while (true) {
+            var offsets =
+                Report.maxOffsets(
+                    producerThreads.stream()
+                        .map(ProducerThread::report)
+                        .collect(Collectors.toUnmodifiableList()));
+            if (offsets.entrySet().stream()
+                .allMatch(
+                    e ->
+                        consumerReporter.get().stream()
+                            .anyMatch(r -> r.offset(e.getKey()) >= e.getValue()))) break;
+            Utils.sleep(Duration.ofSeconds(2));
+          }
+          consumerThreads.forEach(AbstractThread::close);
+        });
 
-      @Override
-      public void wakeup() {
-        consumer.wakeup();
-      }
-
-      @Override
-      public void close() {
-        consumer.close();
-      }
-    };
+    consumerThreads.forEach(AbstractThread::waitForDone);
+    tracker.waitForDone();
+    fileWriterFuture.join();
+    chaos.join();
+    return param.topic;
   }
 
   // visible for test
@@ -332,6 +293,22 @@ public class Performance {
       return transactionSize > 1 ? Isolation.READ_COMMITTED : Isolation.READ_UNCOMMITTED;
     }
 
+    Producer<byte[], byte[]> createProducer() {
+      return transactionSize > 1
+          ? Producer.builder()
+              .configs(configs())
+              .bootstrapServers(bootstrapServers())
+              .compression(compression)
+              .partitionClassName(partitioner)
+              .buildTransactional()
+          : Producer.builder()
+              .configs(configs())
+              .bootstrapServers(bootstrapServers())
+              .compression(compression)
+              .partitionClassName(partitioner)
+              .build();
+    }
+
     @Parameter(
         names = {"--key.size"},
         description = "DataSize of the key. Default: 4Byte",
@@ -383,17 +360,13 @@ public class Performance {
         description = "Output format for the report",
         converter = ReportFormat.ReportFormatConverter.class)
     ReportFormat reportFormat = ReportFormat.CSV;
-  }
 
-  public static class Result {
-    private final String topicName;
-
-    private Result(String topicName) {
-      this.topicName = topicName;
-    }
-
-    public String topicName() {
-      return topicName;
-    }
+    @Parameter(
+        names = {"--chaos.frequency"},
+        description =
+            "time to run the chaos monkey. It will kill consumer arbitrarily. There is no monkey by default",
+        validateWith = DurationField.class,
+        converter = DurationField.class)
+    Duration chaosDuration = null;
   }
 }

@@ -37,7 +37,7 @@ import javax.management.remote.JMXServiceURL;
 import org.astraea.app.balancer.BalancerConfigs;
 import org.astraea.app.common.Utils;
 import org.astraea.app.metrics.HasBeanObject;
-import org.astraea.app.metrics.jmx.MBeanClient;
+import org.astraea.app.metrics.MBeanClient;
 import org.astraea.app.partitioner.Configuration;
 
 public class JmxMetricSampler implements MetricSource {

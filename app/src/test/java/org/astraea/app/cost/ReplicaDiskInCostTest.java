@@ -24,33 +24,29 @@ import org.astraea.app.admin.ClusterBean;
 import org.astraea.app.admin.ClusterInfo;
 import org.astraea.app.admin.NodeInfo;
 import org.astraea.app.admin.ReplicaInfo;
+import org.astraea.app.admin.TopicPartition;
+import org.astraea.app.metrics.BeanObject;
 import org.astraea.app.metrics.HasBeanObject;
-import org.astraea.app.metrics.broker.HasValue;
+import org.astraea.app.metrics.broker.HasGauge;
 import org.astraea.app.metrics.broker.LogMetrics;
-import org.astraea.app.metrics.jmx.BeanObject;
 import org.astraea.app.partitioner.Configuration;
 import org.astraea.app.service.RequireBrokerCluster;
-<<<<<<< HEAD
-
-class ReplicaDiskInCostTest extends RequireBrokerCluster {
-  /*
-=======
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class ReplicaDiskInCostTest extends RequireBrokerCluster {
-  private static final HasValue OLD_TP1_0 =
+  private static final HasGauge OLD_TP1_0 =
       fakeBeanObject("Log", LogMetrics.Log.SIZE.metricName(), "test-1", "0", 1000, 1000L);
-  private static final HasValue NEW_TP1_0 =
+  private static final HasGauge NEW_TP1_0 =
       fakeBeanObject("Log", LogMetrics.Log.SIZE.metricName(), "test-1", "0", 50000000, 5000L);
-  private static final HasValue OLD_TP1_1 =
+  private static final HasGauge OLD_TP1_1 =
       fakeBeanObject("Log", LogMetrics.Log.SIZE.metricName(), "test-1", "1", 500, 1000L);
-  private static final HasValue NEW_TP1_1 =
+  private static final HasGauge NEW_TP1_1 =
       fakeBeanObject("Log", LogMetrics.Log.SIZE.metricName(), "test-1", "1", 100000000, 5000L);
-  private static final HasValue OLD_TP2_0 =
+  private static final HasGauge OLD_TP2_0 =
       fakeBeanObject("Log", LogMetrics.Log.SIZE.metricName(), "test-2", "0", 200, 1000L);
-  private static final HasValue NEW_TP2_0 =
+  private static final HasGauge NEW_TP2_0 =
       fakeBeanObject("Log", LogMetrics.Log.SIZE.metricName(), "test-2", "0", 40000000, 5000L);
 
   /*
@@ -65,7 +61,6 @@ class ReplicaDiskInCostTest extends RequireBrokerCluster {
       List.of(OLD_TP1_0, NEW_TP1_0, OLD_TP1_1, NEW_TP1_1);
   private static final Collection<HasBeanObject> broker3 =
       List.of(OLD_TP1_1, NEW_TP1_1, OLD_TP2_0, NEW_TP2_0);
->>>>>>> 05941c6f9683ea9834bafe421d4bb5a4d2e89ded
 
   @Test
   void testPartitionCost() {
@@ -75,72 +70,41 @@ class ReplicaDiskInCostTest extends RequireBrokerCluster {
     var broker2ReplicaLoad = loadCostFunction.partitionCost(clusterInfo(), clusterBean()).value(2);
     var broker3ReplicaLoad = loadCostFunction.partitionCost(clusterInfo(), clusterBean()).value(3);
     // broker1
-    Assertions.assertEquals(0.45, broker1ReplicaLoad.get(TopicPartition.of("test-1", 0)));
-    Assertions.assertEquals(0.41, broker1ReplicaLoad.get(TopicPartition.of("test-2", 0)));
+    Assertions.assertEquals(
+        11.920690536499023, broker1ReplicaLoad.get(TopicPartition.of("test-1", 0)));
+    Assertions.assertEquals(
+        9.53669548034668, broker1ReplicaLoad.get(TopicPartition.of("test-2", 0)));
     // broker2
-    Assertions.assertEquals(0.45, broker2ReplicaLoad.get(TopicPartition.of("test-1", 0)));
-    Assertions.assertEquals(0.64, broker2ReplicaLoad.get(TopicPartition.of("test-1", 1)));
+    Assertions.assertEquals(
+        11.920690536499023, broker2ReplicaLoad.get(TopicPartition.of("test-1", 0)));
+    Assertions.assertEquals(
+        23.8417387008667, broker2ReplicaLoad.get(TopicPartition.of("test-1", 1)));
     // broker3
-    Assertions.assertEquals(0.64, broker3ReplicaLoad.get(TopicPartition.of("test-1", 1)));
-    Assertions.assertEquals(0.41, broker3ReplicaLoad.get(TopicPartition.of("test-2", 0)));
+    Assertions.assertEquals(
+        23.8417387008667, broker3ReplicaLoad.get(TopicPartition.of("test-1", 1)));
+    Assertions.assertEquals(
+        9.53669548034668, broker3ReplicaLoad.get(TopicPartition.of("test-2", 0)));
   }
-   */
-  /*
+
   @Test
   void testBrokerCost() {
     var configuration = Configuration.of(Map.of("metrics.duration", "3"));
     var loadCostFunction = new ReplicaDiskInCost(configuration);
     var brokerLoad = loadCostFunction.brokerCost(clusterInfo(), clusterBean()).value();
-    Assertions.assertEquals(0.36, brokerLoad.get(1));
-    Assertions.assertEquals(0.59, brokerLoad.get(2));
-    Assertions.assertEquals(0.55, brokerLoad.get(3));
+    Assertions.assertEquals(21.457386016845703, brokerLoad.get(1));
+    Assertions.assertEquals(35.76242923736572, brokerLoad.get(2));
+    Assertions.assertEquals(33.37843418121338, brokerLoad.get(3));
   }
 
-<<<<<<< HEAD
-   */
+  @Test
+  void testClusterCost() {
+    var configuration = Configuration.of(Map.of("metrics.duration", "3"));
+    var loadCostFunction = new ReplicaDiskInCost(configuration);
+    var brokerLoad = loadCostFunction.clusterCost(clusterInfo(), clusterBean()).value();
+    Assertions.assertEquals(0.20721255412897746, brokerLoad);
+  }
 
-  private ClusterInfo exampleClusterInfo() {
-    var oldTP1_0 =
-        fakeBeanObject(
-            "Log", KafkaMetrics.TopicPartition.Size.metricName(), "test-1", "0", 1000, 1000L);
-    var newTP1_0 =
-        fakeBeanObject(
-            "Log", KafkaMetrics.TopicPartition.Size.metricName(), "test-1", "0", 50000000, 5000L);
-    var oldTP1_1 =
-        fakeBeanObject(
-            "Log", KafkaMetrics.TopicPartition.Size.metricName(), "test-1", "1", 500, 1000L);
-    var newTP1_1 =
-        fakeBeanObject(
-            "Log", KafkaMetrics.TopicPartition.Size.metricName(), "test-1", "1", 100000000, 5000L);
-    var oldTP2_0 =
-        fakeBeanObject(
-            "Log", KafkaMetrics.TopicPartition.Size.metricName(), "test-2", "0", 200, 1000L);
-    var newTP2_0 =
-        fakeBeanObject(
-            "Log", KafkaMetrics.TopicPartition.Size.metricName(), "test-2", "0", 40000000, 5000L);
-    /*
-    test replica distribution :
-        broker1 : test-1-0,test-2-0
-        broker2 : test-1-0,test-1-1
-        broker1 : test-1-1,test-2-0
-     */
-    Collection<HasBeanObject> broker1 = List.of(oldTP1_0, newTP1_0, oldTP2_0, newTP2_0);
-    Collection<HasBeanObject> broker2 = List.of(oldTP1_0, newTP1_0, oldTP1_1, newTP1_1);
-    Collection<HasBeanObject> broker3 = List.of(oldTP1_1, newTP1_1, oldTP2_0, newTP2_0);
-    return new FakeClusterInfo() {
-      @Override
-      public List<NodeInfo> nodes() {
-        return List.of(NodeInfo.of(1, "", -1), NodeInfo.of(2, "", -1), NodeInfo.of(3, "", -1));
-      }
-
-      @Override
-      public Set<String> topics() {
-        return Set.of("test-1", "test-2");
-      }
-=======
   private ClusterInfo clusterInfo() {
->>>>>>> 05941c6f9683ea9834bafe421d4bb5a4d2e89ded
-
     ClusterInfo clusterInfo = Mockito.mock(ClusterInfo.class);
     Mockito.when(clusterInfo.nodes())
         .thenReturn(
@@ -165,14 +129,13 @@ class ReplicaDiskInCostTest extends RequireBrokerCluster {
     return ClusterBean.of(Map.of(1, broker1, 2, broker2, 3, broker3));
   }
 
-  private static HasValue fakeBeanObject(
+  private static LogMetrics.Log.Gauge fakeBeanObject(
       String type, String name, String topic, String partition, long size, long time) {
-    BeanObject beanObject =
+    return new LogMetrics.Log.Gauge(
         new BeanObject(
-            "",
+            "kafka.log",
             Map.of("name", name, "type", type, "topic", topic, "partition", partition),
             Map.of("Value", size),
-            time);
-    return HasValue.of(beanObject);
+            time));
   }
 }

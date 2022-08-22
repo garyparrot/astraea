@@ -67,14 +67,12 @@ public class Balancer implements AutoCloseable {
     this.balancerConfigs.sanityCheck();
     this.costFunctions =
         balancerConfigs.costFunctionClasses().stream()
-            .map(x -> BalancerUtils.constructCostFunction(x, configuration))
+            .map(x -> Utils.constructCostFunction(x, configuration))
             .collect(Collectors.toUnmodifiableList());
     this.planGenerator =
-        BalancerUtils.constructGenerator(
-            balancerConfigs.rebalancePlanGeneratorClass(), configuration);
+        Utils.constructGenerator(balancerConfigs.rebalancePlanGeneratorClass(), configuration);
     this.planExecutor =
-        BalancerUtils.constructExecutor(
-            balancerConfigs.rebalancePlanExecutorClass(), configuration);
+        Utils.constructExecutor(balancerConfigs.rebalancePlanExecutorClass(), configuration);
     this.topicFilter =
         (topic) -> {
           if (!balancerConfigs.allowedTopics().isEmpty())
@@ -93,7 +91,7 @@ public class Balancer implements AutoCloseable {
                     cf -> cf, cf -> new IdentifiedFetcher(cf.fetcher().orElseThrow())));
 
     this.metricSource =
-        BalancerUtils.constructMetricSource(
+        Utils.constructMetricSource(
             balancerConfigs.metricSourceClass(),
             balancerConfigs.asConfiguration(),
             fetcherOwnership.values());
@@ -152,19 +150,11 @@ public class Balancer implements AutoCloseable {
         var currentClusterScore = evaluateCost(clusterInfo, clusterMetrics);
         // TODO: find a way to show the progress, without pollute the logic
         System.out.println("Run " + planGenerator.getClass().getName());
-        if (currentClusterScore >= 1.0)
-            continue;
+        if (currentClusterScore >= 1.0) continue;
         var bestProposal = seekingRebalancePlan(currentClusterScore, clusterInfo, clusterMetrics);
         // TODO: find a way to show the progress, without pollute the logic
         System.out.println(bestProposal);
-        if (bestProposal.rebalancePlan().isEmpty()) {
-          // TODO: find a way to show the progress, without pollute the logic
-          System.out.println("No usable rebalance plan found");
-          continue;
-        }
-        var bestCluster =
-            BalancerUtils.mockClusterInfoAllocation(
-                clusterInfo, bestProposal.rebalancePlan().get());
+        var bestCluster = BalancerUtils.merge(clusterInfo, bestProposal.rebalancePlan());
         var bestScore = evaluateCost(bestCluster, clusterMetrics);
         System.out.printf(
             "Current cluster score: %.8f, Proposed cluster score: %.8f%n",
@@ -207,24 +197,18 @@ public class Balancer implements AutoCloseable {
       thread.start();
       var bestMigrationProposals =
           planGenerator
-              .generate(clusterInfo)
+              .generate(admin.brokerFolders(), ClusterLogAllocation.of(clusterInfo))
               .parallel()
               .limit(tries)
               .peek(ignore -> counter.increment())
               .map(
                   plan -> {
-                    if (plan.rebalancePlan().isPresent()) {
-                      var allocation = plan.rebalancePlan().get();
-                      var mockedCluster =
-                          BalancerUtils.mockClusterInfoAllocation(clusterInfo, allocation);
-                      var score = evaluateCost(mockedCluster, clusterMetrics);
-                      return Map.entry(score, plan);
-                    } else {
-                      return Map.entry(1.0, plan);
-                    }
+                    var allocation = plan.rebalancePlan();
+                    var mockedCluster = BalancerUtils.merge(clusterInfo, allocation);
+                    var score = evaluateCost(mockedCluster, clusterMetrics);
+                    return Map.entry(score, plan);
                   })
               .filter(x -> x.getKey() < currentScore)
-              .filter(x -> x.getValue().rebalancePlan().isPresent())
               .sorted(Map.Entry.comparingByKey())
               .limit(300)
               .collect(Collectors.toUnmodifiableList());
@@ -236,9 +220,8 @@ public class Balancer implements AutoCloseable {
                   Comparator.comparing(
                       entry -> {
                         var proposal = entry.getValue();
-                        var allocation = proposal.rebalancePlan().orElseThrow();
-                        var mockedCluster =
-                            BalancerUtils.mockClusterInfoAllocation(clusterInfo, allocation);
+                        var allocation = proposal.rebalancePlan();
+                        var mockedCluster = BalancerUtils.merge(clusterInfo, allocation);
                         return evaluateMoveCost(mockedCluster, clusterMetrics);
                       }));
 
@@ -254,8 +237,7 @@ public class Balancer implements AutoCloseable {
 
   private void executePlan(ClusterInfo clusterInfo, RebalancePlanProposal proposal) {
     // prepare context
-    var allocation =
-        proposal.rebalancePlan().orElseThrow(() -> new NoSuchElementException("No Proposal"));
+    var allocation = proposal.rebalancePlan();
     try (Admin newAdmin = Admin.of(balancerConfigs.bootstrapServers())) {
       var executorFetcher = this.fetcherOwnership.get(planExecutor);
       var metricSource =
@@ -292,7 +274,7 @@ public class Balancer implements AutoCloseable {
                   var fetcher = fetcherOwnership.get(cf);
                   var theMetrics = metrics.get(fetcher);
                   var clusterBean = ClusterBean.of(theMetrics);
-                  return Map.entry(cf, this.costFunctionScore(clusterInfo,clusterBean, cf));
+                  return Map.entry(cf, this.costFunctionScore(clusterInfo, clusterBean, cf));
                 })
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
     return aggregateFunction(scores);
@@ -307,8 +289,8 @@ public class Balancer implements AutoCloseable {
                 cf -> {
                   var fetcher = fetcherOwnership.get(cf);
                   var theMetrics = metrics.get(fetcher);
-                    var clusterBean = ClusterBean.of(theMetrics);
-                  return Map.entry(cf, this.moveCostScore(clusterInfo,clusterBean, cf));
+                  var clusterBean = ClusterBean.of(theMetrics);
+                  return Map.entry(cf, this.moveCostScore(clusterInfo, clusterBean, cf));
                 })
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
     return aggregateFunction(scores);
@@ -324,9 +306,10 @@ public class Balancer implements AutoCloseable {
     return scores.values().stream().mapToDouble(x -> x).sum();
   }
 
-  private double costFunctionScore(ClusterInfo clusterInfo,ClusterBean clusterBean, CostFunction costFunction) {
+  private double costFunctionScore(
+      ClusterInfo clusterInfo, ClusterBean clusterBean, CostFunction costFunction) {
     if (costFunction instanceof HasClusterCost) {
-      return ((HasClusterCost) costFunction).clusterCost(clusterInfo,clusterBean).value();
+      return ((HasClusterCost) costFunction).clusterCost(clusterInfo, clusterBean).value();
     } else if (costFunction instanceof HasBrokerCost) {
       return brokerCostScore(clusterInfo, (HasBrokerCost) costFunction);
     } else if (costFunction instanceof HasPartitionCost) {
@@ -339,12 +322,13 @@ public class Balancer implements AutoCloseable {
     }
   }
 
-  private double moveCostScore(ClusterInfo clusterInfo,ClusterBean clusterBean, CostFunction costFunction) {
+  private double moveCostScore(
+      ClusterInfo clusterInfo, ClusterBean clusterBean, CostFunction costFunction) {
     if (costFunction instanceof HasMoveCost) {
       var originalClusterInfo = newClusterInfo();
       var targetAllocation = ClusterLogAllocation.of(clusterInfo);
-      if (((HasMoveCost) costFunction).overflow(originalClusterInfo,clusterInfo,clusterBean))
-          return 999999.0;
+      if (((HasMoveCost) costFunction).overflow(originalClusterInfo, clusterInfo, clusterBean))
+        return 999999.0;
       return ((HasMoveCost) costFunction)
           .clusterCost(originalClusterInfo, clusterInfo, clusterBean)
           .value();
@@ -355,9 +339,9 @@ public class Balancer implements AutoCloseable {
   private <T extends HasBrokerCost> double brokerCostScore(
       ClusterInfo clusterInfo, T costFunction) {
     // TODO: revise the default usage
-      var metrics = metricSource.allBeans().get(fetcherOwnership.get(costFunction));
-      var clusterBean = ClusterBean.of(metrics);
-    return costFunction.brokerCost(clusterInfo,clusterBean).value().values().stream()
+    var metrics = metricSource.allBeans().get(fetcherOwnership.get(costFunction));
+    var clusterBean = ClusterBean.of(metrics);
+    return costFunction.brokerCost(clusterInfo, clusterBean).value().values().stream()
         .mapToDouble(x -> x)
         .max()
         .orElseThrow();

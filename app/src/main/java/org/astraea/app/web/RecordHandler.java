@@ -18,7 +18,6 @@ package org.astraea.app.web;
 
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
-import static org.astraea.app.web.PostRequest.handleDouble;
 
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonDeserializationContext;
@@ -136,34 +135,29 @@ public class RecordHandler implements Handler {
         .map(Long::parseLong)
         .ifPresent(
             distanceFromLatest ->
-                consumerBuilder.seekStrategy(
+                consumerBuilder.seek(
                     Builder.SeekStrategy.DISTANCE_FROM_LATEST, distanceFromLatest));
 
     Optional.ofNullable(queries.get(DISTANCE_FROM_BEGINNING))
         .map(Long::parseLong)
         .ifPresent(
             distanceFromBeginning ->
-                consumerBuilder.seekStrategy(
+                consumerBuilder.seek(
                     Builder.SeekStrategy.DISTANCE_FROM_BEGINNING, distanceFromBeginning));
 
     Optional.ofNullable(queries.get(SEEK_TO))
         .map(Long::parseLong)
-        .ifPresent(seekTo -> consumerBuilder.seekStrategy(Builder.SeekStrategy.SEEK_TO, seekTo));
+        .ifPresent(seekTo -> consumerBuilder.seek(Builder.SeekStrategy.SEEK_TO, seekTo));
 
     try (var consumer = consumerBuilder.build()) {
       var limit = Integer.parseInt(queries.getOrDefault(LIMIT, "1"));
-      return new Records(
-          consumer.poll(limit, timeout).stream()
-              .map(Record::new)
-              // TODO: remove limit here (https://github.com/skiptests/astraea/issues/441)
-              .limit(limit)
-              .collect(toList()));
+      return new Records(consumer.poll(limit, timeout).stream().map(Record::new).collect(toList()));
     }
   }
 
   @Override
   public Response post(PostRequest request) {
-    var async = request.booleanValue(ASYNC, false);
+    var async = request.getBoolean(ASYNC).orElse(false);
     var timeout = request.get(TIMEOUT).map(DurationField::toDuration).orElse(Duration.ofSeconds(5));
     var records = request.values(RECORDS, PostRecord.class);
     if (records.isEmpty()) {
@@ -305,9 +299,9 @@ public class RecordHandler implements Handler {
             .orElse(SerDe.STRING.serializer);
 
     Optional.ofNullable(postRecord.key)
-        .ifPresent(key -> sender.key(keySerializer.apply(topic, handleDouble(key))));
+        .ifPresent(key -> sender.key(keySerializer.apply(topic, PostRequest.handle(key))));
     Optional.ofNullable(postRecord.value)
-        .ifPresent(value -> sender.value(valueSerializer.apply(topic, handleDouble(value))));
+        .ifPresent(value -> sender.value(valueSerializer.apply(topic, PostRequest.handle(value))));
     Optional.ofNullable(postRecord.timestamp).ifPresent(sender::timestamp);
     Optional.ofNullable(postRecord.partition).ifPresent(sender::partition);
     return sender;

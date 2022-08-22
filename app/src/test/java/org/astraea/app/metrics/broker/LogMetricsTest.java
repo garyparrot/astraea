@@ -16,13 +16,16 @@
  */
 package org.astraea.app.metrics.broker;
 
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+
 import java.time.Duration;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.astraea.app.admin.Admin;
 import org.astraea.app.common.Utils;
 import org.astraea.app.metrics.HasBeanObject;
-import org.astraea.app.metrics.jmx.MBeanClient;
+import org.astraea.app.metrics.MBeanClient;
+import org.astraea.app.metrics.MetricsTestUtil;
 import org.astraea.app.service.RequireSingleBrokerCluster;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -46,7 +49,7 @@ public class LogMetricsTest extends RequireSingleBrokerCluster {
       Assertions.assertEquals(2, beans.size());
       Assertions.assertEquals(
           2,
-          beans.stream().map(LogMetrics.Log.Meter::partition).collect(Collectors.toSet()).size());
+          beans.stream().map(LogMetrics.Log.Gauge::partition).collect(Collectors.toSet()).size());
       beans.forEach(m -> Assertions.assertEquals(m.type(), log));
     }
   }
@@ -54,19 +57,44 @@ public class LogMetricsTest extends RequireSingleBrokerCluster {
   @ParameterizedTest
   @EnumSource(LogMetrics.Log.class)
   void testValue(LogMetrics.Log log) {
-    log.fetch(MBeanClient.local()).forEach(m -> Assertions.assertTrue(m.value() >= 0));
-    log.fetch(MBeanClient.local()).forEach(m -> Assertions.assertEquals(m.type(), log));
+    log.fetch(MBeanClient.local())
+        .forEach(
+            m -> {
+              MetricsTestUtil.validate(m);
+              Assertions.assertEquals(m.type(), log);
+            });
   }
 
   @Test
-  void testMeters() {
+  void testGauges() {
     var other = Mockito.mock(HasBeanObject.class);
-    var target = Mockito.mock(LogMetrics.Log.Meter.class);
+    var target = Mockito.mock(LogMetrics.Log.Gauge.class);
     Mockito.when(target.type()).thenReturn(LogMetrics.Log.LOG_END_OFFSET);
-    var result = LogMetrics.Log.meters(List.of(other, target), LogMetrics.Log.LOG_END_OFFSET);
+    var result = LogMetrics.Log.gauges(List.of(other, target), LogMetrics.Log.LOG_END_OFFSET);
     Assertions.assertEquals(1, result.size());
     Assertions.assertEquals(target, result.iterator().next());
     Assertions.assertEquals(
-        0, LogMetrics.Log.meters(List.of(other, target), LogMetrics.Log.SIZE).size());
+        0, LogMetrics.Log.gauges(List.of(other, target), LogMetrics.Log.SIZE).size());
+  }
+
+  @ParameterizedTest()
+  @EnumSource(value = LogMetrics.Log.class)
+  void testTopicPartitionMetrics(LogMetrics.Log request) {
+    try (var admin = Admin.of(bootstrapServers())) {
+      // there are only 3 brokers, so 10 partitions can make each broker has some partitions
+      admin.creator().topic(Utils.randomString(5)).numberOfPartitions(10).create();
+    }
+
+    // wait for topic creation
+    Utils.sleep(Duration.ofSeconds(2));
+
+    var beans = request.fetch(MBeanClient.local());
+    assertNotEquals(0, beans.size());
+  }
+
+  @Test
+  void testAllEnumNameUnique() {
+    Assertions.assertTrue(
+        MetricsTestUtil.metricDistinct(LogMetrics.Log.values(), LogMetrics.Log::metricName));
   }
 }

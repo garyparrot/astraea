@@ -28,6 +28,7 @@ import java.util.stream.StreamSupport;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.astraea.app.admin.Admin;
 import org.astraea.app.admin.Config;
+import org.astraea.app.common.ExecutionRuntimeException;
 
 class TopicHandler implements Handler {
 
@@ -85,7 +86,10 @@ class TopicHandler implements Handler {
   }
 
   static Map<String, String> remainingConfigs(PostRequest request) {
-    var configs = new HashMap<>(request.raw());
+    var configs =
+        new HashMap<>(
+            request.raw().entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().toString())));
     configs.remove(TOPIC_NAME_KEY);
     configs.remove(NUMBER_OF_PARTITIONS_KEY);
     configs.remove(NUMBER_OF_REPLICAS_KEY);
@@ -97,20 +101,29 @@ class TopicHandler implements Handler {
     admin
         .creator()
         .topic(request.value(TOPIC_NAME_KEY))
-        .numberOfPartitions(request.intValue(NUMBER_OF_PARTITIONS_KEY, 1))
-        .numberOfReplicas(request.shortValue(NUMBER_OF_REPLICAS_KEY, (short) 1))
+        .numberOfPartitions(request.getInt(NUMBER_OF_PARTITIONS_KEY).orElse(1))
+        .numberOfReplicas(request.getShort(NUMBER_OF_REPLICAS_KEY).orElse((short) 1))
         .configs(remainingConfigs(request))
         .create();
     if (admin.topicNames().contains(request.value(TOPIC_NAME_KEY))) {
       try {
         // if the topic creation is synced, we return the details.
         return get(Set.of(request.value(TOPIC_NAME_KEY)), ignored -> true);
-      } catch (UnknownTopicOrPartitionException e) {
-        // swallow
+      } catch (ExecutionRuntimeException executionRuntimeException) {
+        if (UnknownTopicOrPartitionException.class
+            != executionRuntimeException.getRootCause().getClass()) {
+          throw executionRuntimeException;
+        }
       }
     }
     // Otherwise, return only name
     return new TopicInfo(request.value(TOPIC_NAME_KEY), List.of(), Map.of());
+  }
+
+  @Override
+  public Response delete(String topic, Map<String, String> queries) {
+    admin.deleteTopics(Set.of(topic));
+    return Response.OK;
   }
 
   static class Topics implements Response {

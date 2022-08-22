@@ -24,8 +24,10 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.astraea.app.admin.TopicPartition;
 
 public abstract class Builder<Key, Value> {
   protected final Map<String, Object> configs = new HashMap<>();
@@ -33,7 +35,7 @@ public abstract class Builder<Key, Value> {
   protected Deserializer<?> valueDeserializer = Deserializer.BYTE_ARRAY;
 
   protected SeekStrategy seekStrategy = SeekStrategy.NONE;
-  protected long seekValue = -1;
+  protected Object seekValue = null;
 
   Builder() {}
 
@@ -73,12 +75,18 @@ public abstract class Builder<Key, Value> {
    *     IllegalArgumentException}
    * @return this builder
    */
-  public Builder<Key, Value> seekStrategy(SeekStrategy seekStrategy, long value) {
+  public Builder<Key, Value> seek(SeekStrategy seekStrategy, long value) {
     this.seekStrategy = requireNonNull(seekStrategy);
     if (value < 0) {
       throw new IllegalArgumentException("seek value should >= 0");
     }
     this.seekValue = value;
+    return this;
+  }
+
+  public Builder<Key, Value> seek(Map<TopicPartition, Long> offsets) {
+    this.seekStrategy = SeekStrategy.SEEK_TO;
+    this.seekValue = offsets;
     return this;
   }
 
@@ -108,8 +116,9 @@ public abstract class Builder<Key, Value> {
   /** @return consumer instance. The different builders may return inherited consumer interface. */
   public abstract Consumer<Key, Value> build();
 
-  protected static class BaseConsumer<Key, Value> implements Consumer<Key, Value> {
+  protected abstract static class BaseConsumer<Key, Value> implements Consumer<Key, Value> {
     protected final org.apache.kafka.clients.consumer.Consumer<Key, Value> kafkaConsumer;
+    private final AtomicBoolean subscribed = new AtomicBoolean(true);
 
     public BaseConsumer(org.apache.kafka.clients.consumer.Consumer<Key, Value> kafkaConsumer) {
       this.kafkaConsumer = kafkaConsumer;
@@ -136,6 +145,18 @@ public abstract class Builder<Key, Value> {
     public void close() {
       kafkaConsumer.close();
     }
+
+    @Override
+    public void resubscribe() {
+      if (subscribed.compareAndSet(false, true)) doResubscribe();
+    }
+
+    @Override
+    public void unsubscribe() {
+      if (subscribed.compareAndSet(true, false)) kafkaConsumer.unsubscribe();
+    }
+
+    protected abstract void doResubscribe();
   }
 
   public enum SeekStrategy {
@@ -143,44 +164,50 @@ public abstract class Builder<Key, Value> {
     DISTANCE_FROM_LATEST(
         (kafkaConsumer, distanceFromLatest) -> {
           // this mode is not supported by kafka, so we have to calculate the offset first
-          // 1) poll data until the assignment is completed
-          while (kafkaConsumer.assignment().isEmpty()) {
-            kafkaConsumer.poll(Duration.ofMillis(500));
-          }
           var partitions = kafkaConsumer.assignment();
-          // 2) get the end offsets from all subscribed partitions
+          // 1) get the end offsets from all subscribed partitions
           var endOffsets = kafkaConsumer.endOffsets(partitions);
-          // 3) calculate and then seek to the correct offset (end offset - recent offset)
+          // 2) calculate and then seek to the correct offset (end offset - recent offset)
           endOffsets.forEach(
-              (tp, latest) -> kafkaConsumer.seek(tp, Math.max(0, latest - distanceFromLatest)));
+              (tp, latest) ->
+                  kafkaConsumer.seek(tp, Math.max(0, latest - (long) distanceFromLatest)));
         }),
     DISTANCE_FROM_BEGINNING(
         (kafkaConsumer, distanceFromBeginning) -> {
-          while (kafkaConsumer.assignment().isEmpty()) {
-            kafkaConsumer.poll(Duration.ofMillis(500));
-          }
           var partitions = kafkaConsumer.assignment();
           var beginningOffsets = kafkaConsumer.beginningOffsets(partitions);
           beginningOffsets.forEach(
-              (tp, beginning) -> kafkaConsumer.seek(tp, beginning + distanceFromBeginning));
+              (tp, beginning) -> kafkaConsumer.seek(tp, beginning + (long) distanceFromBeginning));
         }),
+    @SuppressWarnings("unchecked")
     SEEK_TO(
         (kafkaConsumer, seekTo) -> {
-          while (kafkaConsumer.assignment().isEmpty()) {
-            kafkaConsumer.poll(Duration.ofMillis(500));
+          if (seekTo instanceof Long) {
+            var partitions = kafkaConsumer.assignment();
+            partitions.forEach(tp -> kafkaConsumer.seek(tp, (long) seekTo));
+            return;
           }
-          var partitions = kafkaConsumer.assignment();
-          partitions.forEach(tp -> kafkaConsumer.seek(tp, seekTo));
+          if (seekTo instanceof Map) {
+            var partitions = kafkaConsumer.assignment();
+            ((Map<TopicPartition, Long>) seekTo)
+                .entrySet().stream()
+                    // don't seek the partition which is not belonged to this consumer
+                    .filter(e -> partitions.contains(TopicPartition.to(e.getKey())))
+                    .forEach(e -> kafkaConsumer.seek(TopicPartition.to(e.getKey()), e.getValue()));
+            return;
+          }
+          throw new IllegalArgumentException(
+              seekTo.getClass().getSimpleName() + " is not correct type");
         });
 
-    private final BiConsumer<org.apache.kafka.clients.consumer.Consumer<?, ?>, Long> function;
+    private final BiConsumer<org.apache.kafka.clients.consumer.Consumer<?, ?>, Object> function;
 
-    SeekStrategy(BiConsumer<org.apache.kafka.clients.consumer.Consumer<?, ?>, Long> function) {
+    SeekStrategy(BiConsumer<org.apache.kafka.clients.consumer.Consumer<?, ?>, Object> function) {
       this.function = requireNonNull(function);
     }
 
-    void apply(org.apache.kafka.clients.consumer.Consumer<?, ?> kafkaConsumer, long seekValue) {
-      function.accept(kafkaConsumer, seekValue);
+    void apply(org.apache.kafka.clients.consumer.Consumer<?, ?> kafkaConsumer, Object seekValue) {
+      if (seekValue != null) function.accept(kafkaConsumer, seekValue);
     }
   }
 }

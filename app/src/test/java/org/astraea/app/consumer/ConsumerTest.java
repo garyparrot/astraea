@@ -26,9 +26,14 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.apache.kafka.common.errors.WakeupException;
@@ -172,7 +177,7 @@ public class ConsumerTest extends RequireBrokerCluster {
     try (var consumer =
         Consumer.forTopics(Set.of(topic))
             .bootstrapServers(bootstrapServers())
-            .seekStrategy(DISTANCE_FROM_LATEST, 3)
+            .seek(DISTANCE_FROM_LATEST, 3)
             .build()) {
       Assertions.assertEquals(3, consumer.poll(4, Duration.ofSeconds(5)).size());
     }
@@ -180,7 +185,7 @@ public class ConsumerTest extends RequireBrokerCluster {
     try (var consumer =
         Consumer.forTopics(Set.of(topic))
             .bootstrapServers(bootstrapServers())
-            .seekStrategy(DISTANCE_FROM_LATEST, 1000)
+            .seek(DISTANCE_FROM_LATEST, 1000)
             .build()) {
       Assertions.assertEquals(10, consumer.poll(11, Duration.ofSeconds(5)).size());
     }
@@ -228,7 +233,7 @@ public class ConsumerTest extends RequireBrokerCluster {
     try (var consumer =
         Consumer.forPartitions(Set.of(TopicPartition.of(topic, "1")))
             .bootstrapServers(bootstrapServers())
-            .seekStrategy(DISTANCE_FROM_LATEST, 20)
+            .seek(DISTANCE_FROM_LATEST, 20)
             .build()) {
       var records = consumer.poll(20, Duration.ofSeconds(5));
       Assertions.assertEquals(10, records.size());
@@ -239,7 +244,7 @@ public class ConsumerTest extends RequireBrokerCluster {
     try (var consumer =
         Consumer.forPartitions(Set.of(TopicPartition.of(topic, "0"), TopicPartition.of(topic, "1")))
             .bootstrapServers(bootstrapServers())
-            .seekStrategy(DISTANCE_FROM_LATEST, 20)
+            .seek(DISTANCE_FROM_LATEST, 20)
             .build()) {
       var records = consumer.poll(20, Duration.ofSeconds(5));
       Assertions.assertEquals(20, records.size());
@@ -306,7 +311,7 @@ public class ConsumerTest extends RequireBrokerCluster {
           try (var consumer =
               Consumer.forTopics(Set.of(topic))
                   .bootstrapServers(bootstrapServers())
-                  .seekStrategy(DISTANCE_FROM_BEGINNING, distanceFromBeginning)
+                  .seek(DISTANCE_FROM_BEGINNING, distanceFromBeginning)
                   .build()) {
             Assertions.assertEquals(expectedSize, consumer.poll(10, Duration.ofSeconds(5)).size());
           }
@@ -326,7 +331,7 @@ public class ConsumerTest extends RequireBrokerCluster {
           try (var consumer =
               Consumer.forTopics(Set.of(topic))
                   .bootstrapServers(bootstrapServers())
-                  .seekStrategy(SEEK_TO, seekTo)
+                  .seek(SEEK_TO, seekTo)
                   .build()) {
             Assertions.assertEquals(expectedSize, consumer.poll(10, Duration.ofSeconds(5)).size());
           }
@@ -343,8 +348,103 @@ public class ConsumerTest extends RequireBrokerCluster {
         () ->
             Consumer.forTopics(Set.of("test"))
                 .bootstrapServers(bootstrapServers())
-                .seekStrategy(SEEK_TO, -1)
+                .seek(SEEK_TO, -1)
                 .build(),
         "seek value should >= 0");
+  }
+
+  @Test
+  void testResubscribeTopics() {
+    var topic = Utils.randomString(10);
+    produceData(topic, 100);
+    try (var consumer =
+        Consumer.forTopics(Set.of(topic))
+            .bootstrapServers(bootstrapServers())
+            .fromBeginning()
+            .build()) {
+      Assertions.assertNotEquals(0, consumer.poll(Duration.ofSeconds(5)).size());
+      consumer.unsubscribe();
+      Assertions.assertThrows(
+          IllegalStateException.class, () -> consumer.poll(Duration.ofSeconds(2)));
+      // unsubscribe is idempotent op
+      consumer.unsubscribe();
+      consumer.unsubscribe();
+      consumer.unsubscribe();
+
+      consumer.resubscribe();
+      Assertions.assertNotEquals(0, consumer.poll(Duration.ofSeconds(5)).size());
+
+      // resubscribe is idempotent op
+      consumer.resubscribe();
+      consumer.resubscribe();
+      consumer.resubscribe();
+    }
+  }
+
+  @Test
+  void testResubscribePartitions() {
+    var topic = Utils.randomString(10);
+    produceData(topic, 100);
+    try (var consumer =
+        Consumer.forPartitions(Set.of(TopicPartition.of(topic, 0)))
+            .bootstrapServers(bootstrapServers())
+            .fromBeginning()
+            .build()) {
+      Assertions.assertNotEquals(0, consumer.poll(Duration.ofSeconds(5)).size());
+      consumer.unsubscribe();
+      Assertions.assertThrows(
+          IllegalStateException.class, () -> consumer.poll(Duration.ofSeconds(2)));
+      // unsubscribe is idempotent op
+      consumer.unsubscribe();
+      consumer.unsubscribe();
+      consumer.unsubscribe();
+
+      consumer.resubscribe();
+      Assertions.assertNotEquals(0, consumer.poll(Duration.ofSeconds(5)).size());
+
+      // resubscribe is idempotent op
+      consumer.resubscribe();
+      consumer.resubscribe();
+      consumer.resubscribe();
+    }
+  }
+
+  @Test
+  void testCreateConsumersConcurrent() throws ExecutionException, InterruptedException {
+    var partitions = 3;
+    var topic = Utils.randomString(10);
+    try (var admin = Admin.of(bootstrapServers())) {
+      admin.creator().topic(topic).numberOfPartitions(partitions).create();
+      Utils.sleep(Duration.ofSeconds(3));
+    }
+
+    // one consume is idle
+    var groupId = Utils.randomString(10);
+    var consumers = partitions + 1;
+    var log = new ConcurrentHashMap<Integer, Integer>();
+    var closed = new AtomicBoolean(false);
+    var fs =
+        Utils.sequence(
+            IntStream.range(0, consumers)
+                .mapToObj(
+                    index ->
+                        CompletableFuture.runAsync(
+                            () -> {
+                              try (var consumer =
+                                  Consumer.forTopics(Set.of(topic))
+                                      .groupId(groupId)
+                                      .bootstrapServers(bootstrapServers())
+                                      .seek(SEEK_TO, 0)
+                                      .consumerRebalanceListener(ps -> log.put(index, ps.size()))
+                                      .build()) {
+                                while (!closed.get()) consumer.poll(Duration.ofSeconds(2));
+                              }
+                            }))
+                .collect(Collectors.toUnmodifiableList()));
+    Utils.waitFor(() -> log.size() == consumers, Duration.ofSeconds(15));
+    Utils.waitFor(
+        () -> log.values().stream().filter(ps -> ps == 0).count() == 1, Duration.ofSeconds(15));
+    closed.set(true);
+    fs.get();
   }
 }

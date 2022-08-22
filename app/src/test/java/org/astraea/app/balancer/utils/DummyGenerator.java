@@ -16,8 +16,9 @@
  */
 package org.astraea.app.balancer.utils;
 
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
-import org.astraea.app.admin.ClusterInfo;
 import org.astraea.app.balancer.RebalancePlanProposal;
 import org.astraea.app.balancer.generator.RebalancePlanGenerator;
 import org.astraea.app.balancer.log.ClusterLogAllocation;
@@ -25,7 +26,7 @@ import org.astraea.app.balancer.log.ClusterLogAllocation;
 public class DummyGenerator implements RebalancePlanGenerator {
   @Override
   public Stream<RebalancePlanProposal> generate(
-      ClusterInfo clusterInfo, ClusterLogAllocation baseAllocation) {
-    return Stream.generate(() -> RebalancePlanProposal.builder().noRebalancePlan().build());
+      Map<Integer, Set<String>> brokerFolders, ClusterLogAllocation baseAllocation) {
+    return Stream.generate(() -> RebalancePlanProposal.builder().build());
   }
 }

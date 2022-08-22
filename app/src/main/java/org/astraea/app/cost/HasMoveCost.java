@@ -22,10 +22,10 @@ import org.astraea.app.admin.ClusterInfo;
 
 public interface HasMoveCost extends CostFunction {
   ClusterCost clusterCost(
-          ClusterInfo originClusterInfo, ClusterInfo newClusterInfo, ClusterBean clusterBean);
+      ClusterInfo originClusterInfo, ClusterInfo newClusterInfo, ClusterBean clusterBean);
 
   boolean overflow(
-          ClusterInfo originClusterInfo, ClusterInfo newClusterInfo, ClusterBean clusterBean);
+      ClusterInfo originClusterInfo, ClusterInfo newClusterInfo, ClusterBean clusterBean);
 
   List<String> totalMigrateSize();
 

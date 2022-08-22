@@ -20,8 +20,8 @@ import java.util.Collection;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.astraea.app.metrics.HasBeanObject;
+import org.astraea.app.metrics.MBeanClient;
 import org.astraea.app.metrics.collector.Fetcher;
-import org.astraea.app.metrics.jmx.MBeanClient;
 
 public class IdentifiedFetcher implements Fetcher {
 
