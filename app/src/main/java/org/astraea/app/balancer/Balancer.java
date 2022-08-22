@@ -20,6 +20,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.concurrent.TimeUnit;
@@ -80,7 +81,6 @@ public class Balancer implements AutoCloseable {
                 && !balancerConfigs.ignoredTopics().contains(topic);
           else return !balancerConfigs.ignoredTopics().contains(topic);
         };
-    // TODO: add support for security-enabled cluster
     this.admin = Admin.of(balancerConfigs.bootstrapServers());
 
     this.fetcherOwnership =
@@ -107,21 +107,10 @@ public class Balancer implements AutoCloseable {
     while (!Thread.currentThread().isInterrupted() && runCount.getAndIncrement() < maxRun) {
       boolean shouldDrainMetrics = false;
       // let metric warm up
-      // TODO: find a way to show the progress, without pollute the logic
       System.out.println("Warmup metrics");
-      var t = progressWatch("Warm Up Metrics", 1, metricSource::warmUpProgress);
+      var t = BalancerUtils.progressWatch("Warm Up Metrics", 1, metricSource::warmUpProgress);
       t.start();
       metricSource.awaitMetricReady();
-      metricSource.allBeans().entrySet().stream()
-          .collect(
-              Collectors.toMap(
-                  x -> x.getKey(),
-                  x -> x.getValue().values().stream().mapToInt(a -> a.size()).max()))
-          .forEach(
-              (g, d) -> {
-                System.out.println(d.orElse(0));
-              });
-      // TODO: find a way to show the progress, without pollute the logic
       t.interrupt();
       Utils.packException(() -> t.join());
       System.out.println("Metrics warmed");
@@ -139,8 +128,11 @@ public class Balancer implements AutoCloseable {
                           r.getKey().topic(), r.getKey().partition(), r.getValue().broker()))
               .collect(Collectors.toUnmodifiableList());
       if (!migrationInProgress.isEmpty()) {
-        throw new IllegalStateException(
-            "There are some migration in progress... " + migrationInProgress);
+        System.out.print("Some migrations aren't catch up. Proceed anyway? (y/N):");
+        if (!System.console().readLine().toLowerCase(Locale.ROOT).equals("y")) {
+          throw new IllegalStateException(
+              "There are some migration in progress... " + migrationInProgress);
+        }
       }
 
       try {
@@ -148,11 +140,9 @@ public class Balancer implements AutoCloseable {
         var clusterInfo = newClusterInfo();
         var clusterMetrics = metricSource.allBeans();
         var currentClusterScore = evaluateCost(clusterInfo, clusterMetrics);
-        // TODO: find a way to show the progress, without pollute the logic
         System.out.println("Run " + planGenerator.getClass().getName());
         if (currentClusterScore >= 1.0) continue;
         var bestProposal = seekingRebalancePlan(currentClusterScore, clusterInfo, clusterMetrics);
-        // TODO: find a way to show the progress, without pollute the logic
         System.out.println(bestProposal);
         var bestCluster = BalancerUtils.merge(clusterInfo, bestProposal.rebalancePlan());
         var bestScore = evaluateCost(bestCluster, clusterMetrics);
@@ -160,11 +150,9 @@ public class Balancer implements AutoCloseable {
             "Current cluster score: %.8f, Proposed cluster score: %.8f%n",
             currentClusterScore, bestScore);
         if (!isPlanExecutionWorth(clusterInfo, bestProposal, currentClusterScore, bestScore)) {
-          // TODO: find a way to show the progress, without pollute the logic
           System.out.println("The proposed plan is rejected due to no worth improvement");
           continue;
         }
-        // TODO: find a way to show the progress, without pollute the logic
         System.out.println("Run " + planExecutor.getClass().getName());
         shouldDrainMetrics = true;
         executePlan(clusterInfo, bestProposal);
@@ -192,7 +180,7 @@ public class Balancer implements AutoCloseable {
     var tries = balancerConfigs.rebalancePlanSearchingIteration();
     var counter = new LongAdder();
     // TODO: find a way to show the progress, without pollute the logic
-    var thread = progressWatch("Searching for Good Rebalance Plan", tries, counter::doubleValue);
+    var thread = BalancerUtils.progressWatch("Searching for Good Rebalance Plan", tries, counter::doubleValue);
     try {
       thread.start();
       var bestMigrationProposals =
@@ -351,49 +339,6 @@ public class Balancer implements AutoCloseable {
       ClusterInfo clusterInfo, T costFunction) {
     // TODO: support this
     throw new UnsupportedOperationException();
-  }
-
-  // TODO: this usage will be removed someday
-  @Deprecated
-  public static Thread progressWatch(String title, double totalTasks, Supplier<Double> accTasks) {
-    AtomicInteger counter = new AtomicInteger();
-
-    Supplier<String> nextProgressBar =
-        () -> {
-          int blockCount = 20;
-          double percentagePerBlock = 1.0 / blockCount;
-          double now = accTasks.get();
-          double currentProgress = now / totalTasks;
-          int fulfilled = Math.min((int) (currentProgress / percentagePerBlock), blockCount);
-          int rollingBlock = blockCount - fulfilled >= 1 ? 1 : 0;
-          int emptyBlocks = blockCount - rollingBlock - fulfilled;
-
-          String rollingText = "-\\|/";
-          String filled = String.join("", Collections.nCopies(fulfilled, "-"));
-          String rolling =
-              String.join(
-                  "",
-                  Collections.nCopies(
-                      rollingBlock, "" + rollingText.charAt(counter.getAndIncrement() % 4)));
-          String empty = String.join("", Collections.nCopies(emptyBlocks, " "));
-          return String.format("[%s%s%s] (%.2f/%.2f)", filled, rolling, empty, now, totalTasks);
-        };
-
-    Runnable progressWatch =
-        () -> {
-          while (!Thread.currentThread().isInterrupted()) {
-            System.out.print("[" + title + "] " + nextProgressBar.get() + '\r');
-            try {
-              TimeUnit.MILLISECONDS.sleep(500);
-            } catch (InterruptedException e) {
-              break;
-            }
-          }
-          System.out.println("[" + title + "] " + nextProgressBar.get() + '\r');
-          System.out.println();
-        };
-
-    return new Thread(progressWatch);
   }
 
   @Override
