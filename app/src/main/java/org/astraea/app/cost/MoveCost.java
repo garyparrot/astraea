@@ -258,7 +258,7 @@ public class MoveCost implements HasMoveCost {
                             ServerMetrics.Topic.BYTES_IN_PER_SEC.fetch(client12),
                             ServerMetrics.Topic.BYTES_OUT_PER_SEC.fetch(client12),
                             ServerMetrics.Topic.REPLICATION_BYTES_IN_PER_SEC.fetch(client12),
-                            ServerMetrics.Topic.REASSIGNMENT_BYTES_OUT_PER_SEC.fetch(client12)),
+                            ServerMetrics.Topic.REPLICATION_BYTES_OUT_PER_SEC.fetch(client12)),
                     (Fetcher) LogMetrics.Log.SIZE::fetch)
                 .flatMap(f -> f.fetch(client).stream())
                 .collect(Collectors.toUnmodifiableList()));
@@ -269,32 +269,32 @@ public class MoveCost implements HasMoveCost {
       ClusterInfo originClusterInfo, ClusterInfo newClusterInfo, ClusterBean clusterBean) {
     if (overflow(originClusterInfo, newClusterInfo, clusterBean)) return () -> 100.0;
     var migratedReplicas = getMigrateReplicas(originClusterInfo, newClusterInfo, true);
-    var replicaSize = getReplicaSize(clusterBean);
+    // var replicaSize = getReplicaSize(clusterBean);
     var replicaDataRate = replicaDataRate(clusterBean, duration);
-    var brokerBytesInPerSec = brokerTrafficMetrics(clusterBean, "BytesInPerSec", duration);
-    var brokerBytesOutPerSec = brokerTrafficMetrics(clusterBean, "BytesOutPerSec", duration);
-    var replicationBytesInPerSec =
-        brokerTrafficMetrics(clusterBean, "ReplicationBytesInPerSec", duration);
-    var replicationBytesOutPerSec =
-        brokerTrafficMetrics(clusterBean, "ReplicationBytesOutPerSec", duration);
-    var availableMigrateBandwidth =
-        brokerBandwidthCap.entrySet().stream()
-            .map(
-                brokerBandWidth ->
-                    Map.entry(
-                        brokerBandWidth.getKey(),
-                        brokerBandWidth.getValue()
-                            - brokerBytesInPerSec.get(brokerBandWidth.getKey())
-                            - replicationBytesInPerSec.get(brokerBandWidth.getKey())))
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-    var brokerMigrateInSize =
-        migratedReplicas.stream()
-            .map(
-                replicaMigrateInfo ->
-                    Map.entry(
-                        replicaMigrateInfo.brokerSink,
-                        (double) replicaSize.get(replicaMigrateInfo.sourceTPR())))
-            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, Double::sum));
+    // var brokerBytesInPerSec = brokerTrafficMetrics(clusterBean, "BytesInPerSec", duration);
+    // var brokerBytesOutPerSec = brokerTrafficMetrics(clusterBean, "BytesOutPerSec", duration);
+    // var replicationBytesInPerSec =
+    //    brokerTrafficMetrics(clusterBean, "ReplicationBytesInPerSec", duration);
+    // var replicationBytesOutPerSec =
+    //     brokerTrafficMetrics(clusterBean, "ReplicationBytesOutPerSec", duration);
+    // var availableMigrateBandwidth =
+    //     brokerBandwidthCap.entrySet().stream()
+    //         .map(
+    //             brokerBandWidth ->
+    //                 Map.entry(
+    //                     brokerBandWidth.getKey(),
+    //                     brokerBandWidth.getValue()
+    //                         - brokerBytesInPerSec.get(brokerBandWidth.getKey())
+    //                         - replicationBytesInPerSec.get(brokerBandWidth.getKey())))
+    //         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    // var brokerMigrateInSize =
+    //     migratedReplicas.stream()
+    //         .map(
+    //             replicaMigrateInfo ->
+    //                 Map.entry(
+    //                     replicaMigrateInfo.brokerSink,
+    //                     (double) replicaSize.get(replicaMigrateInfo.sourceTPR())))
+    //         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, Double::sum));
     var trafficSeries =
         migratedReplicas.stream()
             .map(x -> replicaDataRate.get(x.sourceTPR()))
@@ -309,28 +309,28 @@ public class MoveCost implements HasMoveCost {
                     .sum()
                 / trafficSeries.size());
 
-    var totalMigrateTraffic = trafficSeries.stream().mapToDouble(x -> x).sum();
-    var totalReplicaTrafficInSink =
-        replicaDataRate.entrySet().stream()
-            .filter(x -> brokerMigrateInSize.containsKey(x.getKey().brokerId()))
-            .mapToDouble(Map.Entry::getValue)
-            .sum();
-    var meanMigrateSize = trafficSeries.stream().mapToDouble(x -> x).sum() / trafficSeries.size();
-    var sdMigrateSize =
-        Math.sqrt(
-            trafficSeries.stream()
-                    .mapToDouble(score -> Math.pow((score - meanMigrateSize), 2))
-                    .sum()
-                / trafficSeries.size());
-    var totalMigrateSize =
-        brokerMigrateInSize.values().stream().mapToDouble(x -> x / 1024.0 / 1024.0).sum();
-    var total =
-        totalBrokerCapacity.values().stream()
-                .mapToDouble(x -> x.values().stream().mapToDouble(y -> y).sum())
-                .sum()
-            / 1024.0
-            / 1024.0;
-    var totalMigrateSizeScore = totalMigrateSize / total > 1 ? 1 : totalMigrateSize / total;
+    // var totalMigrateTraffic = trafficSeries.stream().mapToDouble(x -> x).sum();
+    // var totalReplicaTrafficInSink =
+    //     replicaDataRate.entrySet().stream()
+    //         .filter(x -> brokerMigrateInSize.containsKey(x.getKey().brokerId()))
+    //         .mapToDouble(Map.Entry::getValue)
+    //         .sum();
+    // var meanMigrateSize = trafficSeries.stream().mapToDouble(x -> x).sum() / trafficSeries.size();
+    // var sdMigrateSize =
+    //     Math.sqrt(
+    //         trafficSeries.stream()
+    //                 .mapToDouble(score -> Math.pow((score - meanMigrateSize), 2))
+    //                 .sum()
+    //             / trafficSeries.size());
+    // var totalMigrateSize =
+    //     brokerMigrateInSize.values().stream().mapToDouble(x -> x / 1024.0 / 1024.0).sum();
+    // var total =
+    //     totalBrokerCapacity.values().stream()
+    //             .mapToDouble(x -> x.values().stream().mapToDouble(y -> y).sum())
+    //             .sum()
+    //         / 1024.0
+    //         / 1024.0;
+    // var totalMigrateSizeScore = totalMigrateSize / total > 1 ? 1 : totalMigrateSize / total;
     if (replicaDataRate.containsValue(-1.0)) return () -> 999.0;
     return () -> SDTrafficSeries;
   }

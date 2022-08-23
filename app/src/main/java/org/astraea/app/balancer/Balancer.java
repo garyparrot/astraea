@@ -16,14 +16,13 @@
  */
 package org.astraea.app.balancer;
 
+import java.time.Duration;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.NoSuchElementException;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
@@ -43,10 +42,8 @@ import org.astraea.app.balancer.metrics.IdentifiedFetcher;
 import org.astraea.app.balancer.metrics.MetricSource;
 import org.astraea.app.common.Utils;
 import org.astraea.app.cost.CostFunction;
-import org.astraea.app.cost.HasBrokerCost;
 import org.astraea.app.cost.HasClusterCost;
 import org.astraea.app.cost.HasMoveCost;
-import org.astraea.app.cost.HasPartitionCost;
 import org.astraea.app.metrics.HasBeanObject;
 import org.astraea.app.partitioner.Configuration;
 
@@ -128,11 +125,8 @@ public class Balancer implements AutoCloseable {
                           r.getKey().topic(), r.getKey().partition(), r.getValue().broker()))
               .collect(Collectors.toUnmodifiableList());
       if (!migrationInProgress.isEmpty()) {
-        System.out.print("Some migrations aren't catch up. Proceed anyway? (y/N):");
-        if (!System.console().readLine().toLowerCase(Locale.ROOT).equals("y")) {
-          throw new IllegalStateException(
-              "There are some migration in progress... " + migrationInProgress);
-        }
+        throw new IllegalStateException(
+            "There are some migration in progress... " + migrationInProgress);
       }
 
       try {
@@ -155,9 +149,14 @@ public class Balancer implements AutoCloseable {
         }
         System.out.println("Run " + planExecutor.getClass().getName());
         shouldDrainMetrics = true;
-        executePlan(clusterInfo, bestProposal);
+        executePlan(bestProposal);
       } catch (Exception e) {
-        e.printStackTrace();
+        if(e.getMessage().contains("No sufficient")) {
+          System.out.println("[Metrics not ready] " + e.getClass().getSimpleName());
+          Utils.sleep(Duration.ofSeconds(1));
+        } else {
+          e.printStackTrace();
+        }
       } finally {
         // drain old metrics, these metrics is probably invalid after the rebalance operation
         // performed.
@@ -179,7 +178,6 @@ public class Balancer implements AutoCloseable {
       Map<IdentifiedFetcher, Map<Integer, Collection<HasBeanObject>>> clusterMetrics) {
     var tries = balancerConfigs.rebalancePlanSearchingIteration();
     var counter = new LongAdder();
-    // TODO: find a way to show the progress, without pollute the logic
     var thread = BalancerUtils.progressWatch("Searching for Good Rebalance Plan", tries, counter::doubleValue);
     try {
       thread.start();
@@ -198,10 +196,11 @@ public class Balancer implements AutoCloseable {
                   })
               .filter(x -> x.getKey() < currentScore)
               .sorted(Map.Entry.comparingByKey())
-              .limit(300)
+              .limit(100)
               .collect(Collectors.toUnmodifiableList());
 
-      // Find the plan with smallest move cost
+      // Find the plan with the smallest move cost
+      System.out.println("[Evaluate Movement Cost]");
       var bestMigrationProposal =
           bestMigrationProposals.stream()
               .min(
@@ -212,6 +211,7 @@ public class Balancer implements AutoCloseable {
                         var mockedCluster = BalancerUtils.merge(clusterInfo, allocation);
                         return evaluateMoveCost(mockedCluster, clusterMetrics);
                       }));
+      System.out.println("[Evaluate Movement Cost Done]");
 
       // find the target with the highest score, return it
       return bestMigrationProposal
@@ -223,19 +223,10 @@ public class Balancer implements AutoCloseable {
     }
   }
 
-  private void executePlan(ClusterInfo clusterInfo, RebalancePlanProposal proposal) {
+  private void executePlan(RebalancePlanProposal proposal) {
     // prepare context
     var allocation = proposal.rebalancePlan();
     try (Admin newAdmin = Admin.of(balancerConfigs.bootstrapServers())) {
-      var executorFetcher = this.fetcherOwnership.get(planExecutor);
-      var metricSource =
-          (Supplier<Map<Integer, Collection<HasBeanObject>>>)
-              () ->
-                  this.metricSource.metrics(
-                      clusterInfo.nodes().stream()
-                          .map(NodeInfo::id)
-                          .collect(Collectors.toUnmodifiableSet()),
-                      executorFetcher);
       var rebalanceAdmin = RebalanceAdmin.of(newAdmin, topicFilter);
 
       // execute
@@ -257,12 +248,15 @@ public class Balancer implements AutoCloseable {
       Map<IdentifiedFetcher, Map<Integer, Collection<HasBeanObject>>> metrics) {
     var scores =
         costFunctions.stream()
+            .filter(x -> !(x instanceof HasMoveCost))
+            .filter(x -> x instanceof HasClusterCost)
+            .map(x -> (HasClusterCost) x)
             .map(
                 cf -> {
                   var fetcher = fetcherOwnership.get(cf);
                   var theMetrics = metrics.get(fetcher);
                   var clusterBean = ClusterBean.of(theMetrics);
-                  return Map.entry(cf, this.costFunctionScore(clusterInfo, clusterBean, cf));
+                  return Map.entry(cf, this.costScore(clusterInfo, clusterBean, cf));
                 })
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
     return aggregateFunction(scores);
@@ -271,74 +265,41 @@ public class Balancer implements AutoCloseable {
   private double evaluateMoveCost(
       ClusterInfo clusterInfo,
       Map<IdentifiedFetcher, Map<Integer, Collection<HasBeanObject>>> metrics) {
+    var currentCluster = newClusterInfo();
     var scores =
         costFunctions.stream()
+            .filter(func -> func instanceof HasMoveCost)
+            .map(func -> (HasMoveCost) func)
             .map(
                 cf -> {
                   var fetcher = fetcherOwnership.get(cf);
                   var theMetrics = metrics.get(fetcher);
                   var clusterBean = ClusterBean.of(theMetrics);
-                  return Map.entry(cf, this.moveCostScore(clusterInfo, clusterBean, cf));
+                  return Map.entry(cf, this.moveCostScore(currentCluster, clusterInfo, clusterBean, cf));
                 })
             .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
     return aggregateFunction(scores);
   }
 
   /** the lower, the better. */
-  private double aggregateFunction(Map<CostFunction, Double> scores) {
-    scores.forEach(
-        (func, value) -> {
-          // System.out.printf("[%s] %.8f%n", func.getClass().getSimpleName(), value);
-        });
+  private <T extends CostFunction> double aggregateFunction(Map<T, Double> scores) {
     // use the simple summation result, treat every cost equally.
     return scores.values().stream().mapToDouble(x -> x).sum();
   }
 
-  private double costFunctionScore(
-      ClusterInfo clusterInfo, ClusterBean clusterBean, CostFunction costFunction) {
-    if (costFunction instanceof HasClusterCost) {
-      return ((HasClusterCost) costFunction).clusterCost(clusterInfo, clusterBean).value();
-    } else if (costFunction instanceof HasBrokerCost) {
-      return brokerCostScore(clusterInfo, (HasBrokerCost) costFunction);
-    } else if (costFunction instanceof HasPartitionCost) {
-      return partitionCostScore(clusterInfo, (HasPartitionCost) clusterInfo);
-    } else {
-      return 0.0;
-      /* throw new IllegalArgumentException(
-         "Unable to extract score from this cost function: " + costFunction.getClass().getName());
-      */
-    }
+  private <T extends HasClusterCost> double costScore(
+      ClusterInfo clusterInfo, ClusterBean clusterBean, T costFunction) {
+    return costFunction.clusterCost(clusterInfo, clusterBean).value();
   }
 
-  private double moveCostScore(
-      ClusterInfo clusterInfo, ClusterBean clusterBean, CostFunction costFunction) {
-    if (costFunction instanceof HasMoveCost) {
-      var originalClusterInfo = newClusterInfo();
-      var targetAllocation = ClusterLogAllocation.of(clusterInfo);
-      if (((HasMoveCost) costFunction).overflow(originalClusterInfo, clusterInfo, clusterBean))
-        return 999999.0;
-      return ((HasMoveCost) costFunction)
-          .clusterCost(originalClusterInfo, clusterInfo, clusterBean)
-          .value();
-    }
-    return 0.0;
-  }
+  private <T extends HasMoveCost> double moveCostScore(
+      ClusterInfo currentCluster, ClusterInfo clusterInfo, ClusterBean clusterBean, T movementCostFunction) {
+    if (movementCostFunction.overflow(currentCluster, clusterInfo, clusterBean))
+      return 99999999.0;
 
-  private <T extends HasBrokerCost> double brokerCostScore(
-      ClusterInfo clusterInfo, T costFunction) {
-    // TODO: revise the default usage
-    var metrics = metricSource.allBeans().get(fetcherOwnership.get(costFunction));
-    var clusterBean = ClusterBean.of(metrics);
-    return costFunction.brokerCost(clusterInfo, clusterBean).value().values().stream()
-        .mapToDouble(x -> x)
-        .max()
-        .orElseThrow();
-  }
-
-  private <T extends HasPartitionCost> double partitionCostScore(
-      ClusterInfo clusterInfo, T costFunction) {
-    // TODO: support this
-    throw new UnsupportedOperationException();
+    return movementCostFunction
+        .clusterCost(currentCluster, clusterInfo, clusterBean)
+        .value();
   }
 
   @Override
