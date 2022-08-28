@@ -28,6 +28,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.astraea.app.admin.Admin;
@@ -339,15 +340,26 @@ public class Performance {
         validateWith = NonEmptyStringField.class)
     List<Integer> specifyBroker = List.of();
 
+    @Parameter(
+        names = {"--specify.partition"},
+        validateWith = NonEmptyStringField.class)
+    List<Integer> specifyPartition = List.of();
+
     Supplier<Integer> partitionSupplier() {
-      if (specifyBroker.isEmpty()) return () -> -1;
-      try (var admin = Admin.of(configs())) {
-        var partitions =
-            admin.partitions(Set.of(topic), new HashSet<>(specifyBroker)).values().stream()
-                .flatMap(Collection::stream)
-                .map(TopicPartition::partition)
-                .collect(Collectors.toUnmodifiableList());
-        return () -> partitions.get((int) (Math.random() * partitions.size()));
+      if (!specifyBroker.isEmpty()) {
+        try (var admin = Admin.of(configs())) {
+          var partitions =
+              admin.partitions(Set.of(topic), new HashSet<>(specifyBroker)).values().stream()
+                  .flatMap(Collection::stream)
+                  .map(TopicPartition::partition)
+                  .collect(Collectors.toUnmodifiableList());
+          return () -> partitions.get((int) (Math.random() * partitions.size()));
+        }
+      } else if (!specifyPartition.isEmpty()) {
+        return () ->
+            specifyPartition.get(ThreadLocalRandom.current().nextInt(0, specifyPartition.size()));
+      } else {
+        return () -> -1;
       }
     }
 
