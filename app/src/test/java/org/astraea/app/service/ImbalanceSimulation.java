@@ -5,7 +5,6 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.reflect.TypeToken;
-import com.sun.jna.platform.win32.WinDef;
 import org.apache.commons.math3.distribution.BinomialDistribution;
 import org.apache.commons.math3.distribution.IntegerDistribution;
 import org.apache.commons.math3.distribution.LogNormalDistribution;
@@ -51,6 +50,7 @@ import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -379,6 +379,56 @@ public class ImbalanceSimulation extends RequireManyBrokerCluster {
             var alterOp = new AlterConfigOp(configEntry, AlterConfigOp.OpType.SET);
             admin.config(Map.of(configResource, List.of(alterOp)));
           });
+    }
+  }
+
+  @Test
+  void generatePerformanceLoadJson() {
+    Path path = Path.of("/home/garyparrot/clusters/cluster_39%");
+    Map<TopicPartition, List<LogPlacement>> topicPartitionListMap = recoverAllocation(path);
+    Map<String, Long> topicSize = topicPartitionListMap.keySet()
+        .stream()
+        .map(TopicPartition::topic)
+        .collect(Collectors.groupingBy(x -> x, Collectors.counting()));
+    Map<TopicPartition, DataSize> map = recoverProduce(path);
+
+    var cnt = new AtomicInteger();
+    var cnt0 = new AtomicInteger();
+    var nextHost = (Supplier<String>) () -> List.of("192.168.103.181", "192.168.103.182").get(cnt.getAndIncrement() % 2);
+    var facts = map.entrySet().stream()
+        .map(entry -> new PerformanceLoading(
+            "kafka",
+            nextHost.get(),
+            entry.getKey().topic(),
+            topicSize.get(entry.getKey().topic()).intValue(),
+            topicPartitionListMap.get(entry.getKey()).size(),
+            entry.getKey().partition(),
+            entry.getValue().measurement(DataUnit.Byte).longValue()))
+        .collect(Collectors.toMap(x -> "loading" + cnt0.getAndIncrement(), x -> x));
+
+    var json = new JsonObject();
+    json.add("loading-producer-hosts", new Gson().toJsonTree(Map.of("hosts", facts)));
+    String s = new Gson().toJson(json);
+    System.out.println(s);
+  }
+
+  static class PerformanceLoading {
+    final String ansible_user;
+    final String ansible_host;
+    final String topic;
+    final int partitions;
+    final int replicas;
+    final int target_partition;
+    final long throughput;
+
+    PerformanceLoading(String ansible_user, String ansible_host, String topic, int partitions, int replicas, int target_partition, long throughput) {
+      this.ansible_user = ansible_user;
+      this.ansible_host = ansible_host;
+      this.topic = topic;
+      this.partitions = partitions;
+      this.replicas = replicas;
+      this.target_partition = target_partition;
+      this.throughput = throughput;
     }
   }
 
