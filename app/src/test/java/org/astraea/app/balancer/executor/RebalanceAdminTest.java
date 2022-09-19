@@ -17,46 +17,41 @@
 package org.astraea.app.balancer.executor;
 
 import java.time.Duration;
-import java.time.temporal.ChronoUnit;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.BiFunction;
-import java.util.function.Function;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import org.astraea.app.admin.Admin;
-import org.astraea.app.admin.Replica;
-import org.astraea.app.admin.TopicPartition;
-import org.astraea.app.admin.TopicPartitionReplica;
 import org.astraea.app.balancer.log.LogPlacement;
-import org.astraea.app.common.DataSize;
-import org.astraea.app.common.DataUnit;
-import org.astraea.app.common.Utils;
-import org.astraea.app.cost.ClusterInfo;
-import org.astraea.app.metrics.HasBeanObject;
-import org.astraea.app.metrics.jmx.BeanObject;
-import org.astraea.app.producer.Producer;
-import org.astraea.app.service.RequireBrokerCluster;
+import org.astraea.common.DataSize;
+import org.astraea.common.DataUnit;
+import org.astraea.common.Utils;
+import org.astraea.common.admin.Admin;
+import org.astraea.common.admin.NodeInfo;
+import org.astraea.common.admin.Replica;
+import org.astraea.common.admin.TopicPartition;
+import org.astraea.common.admin.TopicPartitionReplica;
+import org.astraea.common.producer.Producer;
+import org.astraea.it.RequireBrokerCluster;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 
 class RebalanceAdminTest extends RequireBrokerCluster {
 
-  @Test
-  void alterReplicaPlacementByList() throws InterruptedException {
+  @RepeatedTest(value = 3)
+  void alterReplicaPlacementByList() {
     // arrange
     try (var admin = Admin.of(bootstrapServers())) {
       var topic = prepareTopic(admin, 1, (short) 1);
       var rebalanceAdmin = prepareRebalanceAdmin(admin);
-      RebalanceAdminImpl.changeDebounceTime(Duration.ofMillis(50));
 
       // scale the replica size from 1 to 3, to the following data dir
       var logFolder0 = randomElement(logFolders().get(0));
@@ -66,142 +61,99 @@ class RebalanceAdminTest extends RequireBrokerCluster {
       // act
       var tasks =
           rebalanceAdmin.alterReplicaPlacements(
-              new TopicPartition(topic, 0),
+              TopicPartition.of(topic, 0),
               List.of(
                   LogPlacement.of(0, logFolder0),
                   LogPlacement.of(1, logFolder1),
                   LogPlacement.of(2, logFolder2)));
-      tasks.forEach(task -> task.await(Duration.ofSeconds(5)));
+      tasks.forEach(
+          task -> Utils.packException(() -> task.completableFuture().get(5, TimeUnit.SECONDS)));
 
       // assert
-      var topicPartition = new TopicPartition(topic, 0);
+      var topicPartition = TopicPartition.of(topic, 0);
       var replicas = admin.replicas(Set.of(topic)).get(topicPartition);
 
       Assertions.assertEquals(
-          List.of(0, 1, 2), replicas.stream().map(Replica::broker).collect(Collectors.toList()));
-      Assertions.assertEquals(logFolder0, replicas.get(0).path());
-      Assertions.assertEquals(logFolder1, replicas.get(1).path());
-      Assertions.assertEquals(logFolder2, replicas.get(2).path());
-
-      for (int i = 0; i < 3; i++) {
-        var task = tasks.get(i);
-        Assertions.assertTrue(task.await());
-      }
+          List.of(0, 1, 2),
+          replicas.stream().map(Replica::nodeInfo).map(NodeInfo::id).collect(Collectors.toList()));
+      Assertions.assertEquals(logFolder0, replicas.get(0).dataFolder());
+      Assertions.assertEquals(logFolder1, replicas.get(1).dataFolder());
+      Assertions.assertEquals(logFolder2, replicas.get(2).dataFolder());
     }
   }
 
   // repeat the test so it has higher chance to fail
   @RepeatedTest(value = 3)
-  void alterReplicaPlacementByDirectory() throws InterruptedException {
+  void alterReplicaPlacementByDirectory() {
     // arrange
     try (Admin admin = Admin.of(bootstrapServers())) {
       var topic = prepareTopic(admin, 1, (short) 1);
-      var topicPartition = new TopicPartition(topic, 0);
+      var topicPartition = TopicPartition.of(topic, 0);
       var rebalanceAdmin = prepareRebalanceAdmin(admin);
       // decrease the debouncing time so the test has higher chance to fail
-      RebalanceAdminImpl.changeDebounceTime(Duration.ofMillis(150));
-      prepareData(topic, 0, DataUnit.MiB.of(256));
+      prepareData(topic, 0, DataSize.MiB.of(256));
       Supplier<Replica> replicaNow = () -> admin.replicas(Set.of(topic)).get(topicPartition).get(0);
       var originalReplica = replicaNow.get();
       var nextDir =
-          logFolders().get(originalReplica.broker()).stream()
-              .filter(name -> !name.equals(originalReplica.path()))
+          logFolders().get(originalReplica.nodeInfo().id()).stream()
+              .filter(name -> !name.equals(originalReplica.dataFolder()))
               .findAny()
               .orElseThrow();
-      var expectedPlacement = LogPlacement.of(originalReplica.broker(), nextDir);
+      var expectedPlacement = LogPlacement.of(originalReplica.nodeInfo().id(), nextDir);
 
       // act, change the dir of the only replica
       var task =
           rebalanceAdmin.alterReplicaPlacements(topicPartition, List.of(expectedPlacement)).get(0);
 
       // assert
-      Assertions.assertTrue(task.await());
+      task.completableFuture().join();
       var finalReplica = replicaNow.get();
       Assertions.assertTrue(finalReplica.inSync());
       Assertions.assertFalse(finalReplica.isFuture());
-      Assertions.assertEquals(originalReplica.broker(), finalReplica.broker());
+      Assertions.assertEquals(originalReplica.nodeInfo(), finalReplica.nodeInfo());
     }
   }
 
   @Test
-  void clusterInfo() throws InterruptedException {
+  void clusterInfo() {
     try (Admin admin = Admin.of(bootstrapServers())) {
       // test if all topics are covered
-      final var rebalanceAdmin = RebalanceAdmin.of(admin, Map::of, (ignore) -> true);
+      final var rebalanceAdmin = RebalanceAdmin.of(admin);
       final var clusterInfo = rebalanceAdmin.clusterInfo();
       Assertions.assertEquals(admin.topicNames(), clusterInfo.topics());
 
       // create topic
       final var topic = prepareTopic(admin, 3, (short) 1);
-
-      // test if topic filter works
-      final var rebalanceAdmin1 = RebalanceAdmin.of(admin, Map::of, topic::equals);
-      final var clusterInfo1 = rebalanceAdmin1.clusterInfo();
-      Assertions.assertEquals(Set.of(topic), clusterInfo1.topics());
     }
   }
 
   @Test
-  void refreshMetrics() {
-    try (Admin admin = Admin.of(bootstrapServers())) {
-      final var next = new AtomicInteger();
-      final var idBean =
-          (Function<Integer, BeanObject>)
-              (i) -> new BeanObject(Integer.toString(i), Map.of(), Map.of());
-      Supplier<Map<Integer, Collection<HasBeanObject>>> metricSource =
-          () ->
-              Map.of(
-                  0, List.of(() -> idBean.apply(next.get())),
-                  1, List.of(() -> idBean.apply(next.get())),
-                  2, List.of(() -> idBean.apply(next.get())));
-      BiFunction<ClusterInfo, Integer, BeanObject> firstBeanObject =
-          (clusterInfo, broker) ->
-              clusterInfo.clusterBean().all().get(broker).iterator().next().beanObject();
-
-      final var rebalanceAdmin = RebalanceAdmin.of(admin, metricSource, (ignore) -> true);
-
-      var clusterInfo = rebalanceAdmin.refreshMetrics(rebalanceAdmin.clusterInfo());
-      Assertions.assertEquals("0", firstBeanObject.apply(clusterInfo, 0).domainName());
-      Assertions.assertEquals("0", firstBeanObject.apply(clusterInfo, 1).domainName());
-      Assertions.assertEquals("0", firstBeanObject.apply(clusterInfo, 2).domainName());
-      next.incrementAndGet();
-      clusterInfo = rebalanceAdmin.refreshMetrics(rebalanceAdmin.clusterInfo());
-      Assertions.assertEquals("1", firstBeanObject.apply(clusterInfo, 0).domainName());
-      Assertions.assertEquals("1", firstBeanObject.apply(clusterInfo, 1).domainName());
-      Assertions.assertEquals("1", firstBeanObject.apply(clusterInfo, 2).domainName());
-      next.incrementAndGet();
-      clusterInfo = rebalanceAdmin.refreshMetrics(rebalanceAdmin.clusterInfo());
-      Assertions.assertEquals("2", firstBeanObject.apply(clusterInfo, 0).domainName());
-      Assertions.assertEquals("2", firstBeanObject.apply(clusterInfo, 1).domainName());
-      Assertions.assertEquals("2", firstBeanObject.apply(clusterInfo, 2).domainName());
-    }
-  }
-
-  @Test
-  void waitLogSynced() throws InterruptedException {
+  void checkLogSynced() throws InterruptedException, ExecutionException {
     // arrange
     try (var admin = Admin.of(bootstrapServers())) {
       var topic = prepareTopic(admin, 1, (short) 1);
-      var topicPartition = new TopicPartition(topic, 0);
+      var topicPartition = TopicPartition.of(topic, 0);
       var rebalanceAdmin = prepareRebalanceAdmin(admin);
       var beginReplica = admin.replicas().get(topicPartition).get(0);
       var otherDataDir =
-          admin.brokerFolders().get(beginReplica.broker()).stream()
-              .filter(dir -> !dir.equals(beginReplica.path()))
+          admin.brokerFolders().get(beginReplica.nodeInfo().id()).stream()
+              .filter(dir -> !dir.equals(beginReplica.dataFolder()))
               .findAny()
               .orElseThrow();
-      RebalanceAdminImpl.changeDebounceTime(Duration.ofMillis(150));
-      prepareData(topic, 0, DataUnit.MiB.of(32));
+      prepareData(topic, 0, DataSize.MiB.of(32));
       // let two brokers join the replica list
       admin.migrator().partition(topic, 0).moveTo(List.of(0, 1, 2));
       // let the existing replica change its directory
-      admin.migrator().partition(topic, 0).moveTo(Map.of(beginReplica.broker(), otherDataDir));
+      admin
+          .migrator()
+          .partition(topic, 0)
+          .moveTo(Map.of(beginReplica.nodeInfo().id(), otherDataDir));
 
       // act
       long time0 = System.currentTimeMillis();
-      rebalanceAdmin.waitLogSynced(new TopicPartitionReplica(topic, 0, 0));
-      rebalanceAdmin.waitLogSynced(new TopicPartitionReplica(topic, 0, 1));
-      rebalanceAdmin.waitLogSynced(new TopicPartitionReplica(topic, 0, 2));
+      rebalanceAdmin.waitLogSynced(TopicPartitionReplica.of(topic, 0, 0)).get();
+      rebalanceAdmin.waitLogSynced(TopicPartitionReplica.of(topic, 0, 1)).get();
+      rebalanceAdmin.waitLogSynced(TopicPartitionReplica.of(topic, 0, 2)).get();
       long time1 = System.currentTimeMillis();
 
       // assert all replica synced
@@ -219,11 +171,12 @@ class RebalanceAdminTest extends RequireBrokerCluster {
   }
 
   @Test
-  void waitPreferredLeaderSynced() throws InterruptedException {
+  void checkPreferredLeaderSynced()
+      throws InterruptedException, ExecutionException, TimeoutException {
     try (var admin = Admin.of(bootstrapServers())) {
       var topic = prepareTopic(admin, 1, (short) 3);
       var rebalanceAdmin = prepareRebalanceAdmin(admin);
-      var topicPartition = new TopicPartition(topic, 0);
+      var topicPartition = TopicPartition.of(topic, 0);
 
       var leaderNow =
           (Supplier<Integer>)
@@ -232,10 +185,11 @@ class RebalanceAdminTest extends RequireBrokerCluster {
                       .filter(x -> x.getKey().topic().equals(topic))
                       .filter(x -> x.getKey().partition() == 0)
                       .flatMap(x -> x.getValue().stream())
-                      .filter(Replica::leader)
+                      .filter(Replica::isLeader)
                       .findFirst()
                       .orElseThrow()
-                      .broker();
+                      .nodeInfo()
+                      .id();
 
       int oldLeader = leaderNow.get();
 
@@ -250,10 +204,10 @@ class RebalanceAdminTest extends RequireBrokerCluster {
       Assertions.assertNotEquals(newPreferredLeader, leaderNow.get());
 
       // do election
-      rebalanceAdmin.leaderElection(topicPartition);
+      rebalanceAdmin.leaderElection(topicPartition).completableFuture().get();
 
       // wait for this
-      Assertions.assertTrue(rebalanceAdmin.waitPreferredLeaderSynced(topicPartition));
+      rebalanceAdmin.waitPreferredLeaderSynced(topicPartition).get(5, TimeUnit.SECONDS);
 
       // assert it is the leader
       Assertions.assertEquals(newPreferredLeader, leaderNow.get());
@@ -261,11 +215,11 @@ class RebalanceAdminTest extends RequireBrokerCluster {
   }
 
   @Test
-  void leaderElection() throws InterruptedException {
+  void leaderElection() throws InterruptedException, ExecutionException, TimeoutException {
     try (var admin = Admin.of(bootstrapServers())) {
       var topic = prepareTopic(admin, 1, (short) 3);
       var rebalanceAdmin = prepareRebalanceAdmin(admin);
-      var topicPartition = new TopicPartition(topic, 0);
+      var topicPartition = TopicPartition.of(topic, 0);
 
       var leaderNow =
           (Supplier<Integer>)
@@ -274,10 +228,11 @@ class RebalanceAdminTest extends RequireBrokerCluster {
                       .filter(x -> x.getKey().topic().equals(topic))
                       .filter(x -> x.getKey().partition() == 0)
                       .flatMap(x -> x.getValue().stream())
-                      .filter(Replica::leader)
+                      .filter(Replica::isLeader)
                       .findFirst()
                       .orElseThrow()
-                      .broker();
+                      .nodeInfo()
+                      .id();
 
       int oldLeader = leaderNow.get();
 
@@ -295,89 +250,14 @@ class RebalanceAdminTest extends RequireBrokerCluster {
       var task = rebalanceAdmin.leaderElection(topicPartition);
 
       // wait for this
-      Assertions.assertTrue(rebalanceAdmin.waitPreferredLeaderSynced(topicPartition));
-
-      // the task object works
-      Assertions.assertTrue(task.await());
+      rebalanceAdmin.waitPreferredLeaderSynced(topicPartition).get(5, TimeUnit.SECONDS);
 
       // assert it is the leader now
       Assertions.assertEquals(newPreferredLeader, leaderNow.get());
     }
   }
 
-  @Test
-  void debouncedAwait() throws InterruptedException {
-    Assertions.assertTrue(
-        RebalanceAdminImpl.debouncedAwait(
-            () -> true, Duration.ofSeconds(1), Duration.ofSeconds(3)));
-    Assertions.assertFalse(
-        RebalanceAdminImpl.debouncedAwait(
-            () -> false, Duration.ofSeconds(1), Duration.ofSeconds(3)));
-
-    Assertions.assertTrue(
-        RebalanceAdminImpl.debouncedAwait(
-            new Supplier<>() {
-              final AtomicInteger i = new AtomicInteger(0);
-
-              @Override
-              public Boolean get() {
-                return i.getAndIncrement() > 0;
-              }
-            },
-            Duration.ofMillis(500),
-            Duration.ofSeconds(3)));
-  }
-
-  @Test
-  void await() throws InterruptedException {
-    // true
-    Assertions.assertTrue(RebalanceAdminImpl.await(() -> true, Duration.ofSeconds(1)));
-
-    // false
-    Assertions.assertFalse(RebalanceAdminImpl.await(() -> false, Duration.ofSeconds(1)));
-
-    // no matter what the timeout value is, it should try at least once.
-    Assertions.assertTrue(RebalanceAdminImpl.await(() -> true, Duration.ZERO));
-    Assertions.assertTrue(RebalanceAdminImpl.await(() -> true, Duration.ofSeconds(-1)));
-
-    // no exception swallow
-    Assertions.assertThrows(
-        AssertionError.class,
-        () ->
-            RebalanceAdminImpl.await(
-                () -> {
-                  throw new AssertionError();
-                },
-                Duration.ofSeconds(1)));
-
-    // forever works
-    Assertions.assertDoesNotThrow(
-        () -> RebalanceAdminImpl.await(() -> true, ChronoUnit.FOREVER.getDuration()));
-
-    // timeout works
-    {
-      long now0 = System.currentTimeMillis();
-      RebalanceAdminImpl.await(() -> false, Duration.ofMillis(1234));
-      long now1 = System.currentTimeMillis();
-      Assertions.assertTrue((now1 - now0) >= 1234);
-    }
-
-    // timeout works
-    {
-      long now0 = System.currentTimeMillis();
-      RebalanceAdminImpl.await(
-          () -> {
-            long now1 = System.currentTimeMillis();
-            // work done after 1 seconds
-            return (now0 + 1000 < now1);
-          },
-          Duration.ofSeconds(7));
-      long now2 = System.currentTimeMillis();
-      Assertions.assertTrue(5000 >= (now2 - now0) && (now2 - now0) >= 1000);
-    }
-  }
-
-  String prepareTopic(Admin admin, int partition, short replica) throws InterruptedException {
+  String prepareTopic(Admin admin, int partition, short replica) {
     var topicName = Utils.randomString();
 
     admin
@@ -386,13 +266,13 @@ class RebalanceAdminTest extends RequireBrokerCluster {
         .numberOfPartitions(partition)
         .numberOfReplicas(replica)
         .create();
-    TimeUnit.SECONDS.sleep(1);
+    Utils.sleep(Duration.ofSeconds(1));
 
     return topicName;
   }
 
   RebalanceAdmin prepareRebalanceAdmin(Admin admin) {
-    return RebalanceAdmin.of(admin, Map::of, (ignore) -> true);
+    return RebalanceAdmin.of(admin);
   }
 
   void prepareData(String topic, int partition, DataSize dataSize) {

@@ -19,19 +19,19 @@ package org.astraea.app.balancer.generator;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.Consumer;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
-import org.astraea.app.admin.TopicPartition;
 import org.astraea.app.balancer.RebalancePlanProposal;
 import org.astraea.app.balancer.log.ClusterLogAllocation;
-import org.astraea.app.balancer.log.LayeredClusterLogAllocation;
 import org.astraea.app.balancer.log.LogPlacement;
-import org.astraea.app.cost.ClusterInfo;
-import org.astraea.app.cost.NodeInfo;
-import org.astraea.app.partitioner.Configuration;
+import org.astraea.common.admin.TopicPartition;
 
 /**
  * The {@link ShufflePlanGenerator} proposes a new log placement based on the current log placement,
@@ -53,15 +53,6 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
 
   private final Supplier<Integer> numberOfShuffle;
 
-  public ShufflePlanGenerator(Configuration configuration) {
-    this(
-        () ->
-            configuration
-                .string("shuffle.plan.generator.shuffle.count")
-                .map(Integer::parseInt)
-                .orElse(3));
-  }
-
   public ShufflePlanGenerator(int origin, int bound) {
     this(() -> ThreadLocalRandom.current().nextInt(origin, bound));
   }
@@ -70,137 +61,136 @@ public class ShufflePlanGenerator implements RebalancePlanGenerator {
     this.numberOfShuffle = numberOfShuffle;
   }
 
-  private int sourceTopicPartitionSelector(List<TopicPartition> migrationCandidates) {
+  @Override
+  public Stream<RebalancePlanProposal> generate(
+      Map<Integer, Set<String>> brokerFolders, ClusterLogAllocation baseAllocation) {
+    if (brokerFolders.isEmpty()) {
+      return Stream.of(
+          RebalancePlanProposal.builder()
+              .clusterLogAllocation(baseAllocation)
+              .addWarning("There is no broker")
+              .build());
+    }
+
+    if (brokerFolders.size() == 1) {
+      return Stream.of(
+          RebalancePlanProposal.builder()
+              .clusterLogAllocation(baseAllocation)
+              .addWarning("Only one broker exists, unable to do some migration")
+              .build());
+    }
+
+    if (baseAllocation.topicPartitions().isEmpty()) {
+      return Stream.of(
+          RebalancePlanProposal.builder()
+              .clusterLogAllocation(baseAllocation)
+              .addWarning("No non-ignored topic to working on.")
+              .build());
+    }
+
+    var index = new AtomicInteger(0);
+    return Stream.generate(
+        () -> {
+          final var rebalancePlanBuilder = RebalancePlanProposal.builder();
+          final var shuffleCount = numberOfShuffle.get();
+
+          rebalancePlanBuilder.addInfo(
+              "Make " + shuffleCount + (shuffleCount > 0 ? " shuffles." : " shuffle."));
+
+          var candidates =
+              IntStream.range(0, shuffleCount)
+                  .mapToObj(i -> allocationGenerator(brokerFolders, rebalancePlanBuilder))
+                  .collect(Collectors.toUnmodifiableList());
+
+          var currentAllocation = baseAllocation;
+          for (var candidate : candidates) currentAllocation = candidate.apply(currentAllocation);
+
+          return rebalancePlanBuilder
+              .index(index.getAndIncrement())
+              .clusterLogAllocation(currentAllocation)
+              .build();
+        });
+  }
+
+  private static Function<ClusterLogAllocation, ClusterLogAllocation> allocationGenerator(
+      Map<Integer, Set<String>> brokerFolders, RebalancePlanProposal.Build rebalancePlanBuilder) {
+    return currentAllocation -> {
+      var pickingList = new ArrayList<>(currentAllocation.topicPartitions());
+      final var sourceTopicPartitionIndex = sourceTopicPartitionSelector(pickingList);
+      final var sourceTopicPartition = pickingList.get(sourceTopicPartitionIndex);
+      final var sourceLogPlacements = currentAllocation.logPlacements(sourceTopicPartition);
+      final var sourceLogPlacementIndex = sourceLogPlacementSelector(sourceLogPlacements);
+      final var sourceLogPlacement = sourceLogPlacements.get(sourceLogPlacementIndex);
+      final var sourceIsLeader = sourceLogPlacementIndex == 0;
+      final var sourceBroker = sourceLogPlacement.broker();
+      var targetPlacements =
+          sourceLogPlacements.size() > 1
+              ? sourceIsLeader
+                  ? sourceLogPlacements.stream().skip(1).collect(Collectors.toUnmodifiableList())
+                  : List.of(sourceLogPlacement)
+              : List.<LogPlacement>of();
+      // generate a set of valid migration broker for given placement.
+      final var validMigrationCandidates =
+          Stream.concat(
+
+                  // [Valid movement 1] add all brokers and remove all
+                  // broker in current replica set
+                  brokerFolders.keySet().stream()
+                      .filter(
+                          broker ->
+                              sourceLogPlacements.stream().noneMatch(log -> log.broker() == broker))
+                      .map(
+                          targetBroker ->
+                              (Supplier<ClusterLogAllocation>)
+                                  () -> {
+                                    var destDir = randomElement(brokerFolders.get(targetBroker));
+                                    rebalancePlanBuilder.addInfo(
+                                        String.format(
+                                            "Change replica set of topic %s partition %d, from %d to %d at %s.",
+                                            sourceTopicPartition.topic(),
+                                            sourceTopicPartition.partition(),
+                                            sourceLogPlacement.broker(),
+                                            targetBroker,
+                                            destDir));
+                                    return currentAllocation.migrateReplica(
+                                        sourceTopicPartition, sourceBroker, targetBroker, destDir);
+                                  }),
+                  // [Valid movement 2] add all leader/follower change
+                  // candidate
+                  targetPlacements.stream()
+                      .map(
+                          followerReplica ->
+                              () -> {
+                                rebalancePlanBuilder.addInfo(
+                                    String.format(
+                                        "Change the log identity of topic %s partition %d replica at broker %d, from %s to %s",
+                                        sourceTopicPartition.topic(),
+                                        sourceTopicPartition.partition(),
+                                        sourceLogPlacement.broker(),
+                                        sourceIsLeader ? "leader" : "follower",
+                                        sourceIsLeader ? "follower" : "leader"));
+                                return currentAllocation.letReplicaBecomeLeader(
+                                    sourceTopicPartition, followerReplica.broker());
+                              }))
+              .collect(Collectors.toUnmodifiableList());
+      // pick a migration and execute
+      final var selectedMigrationIndex = randomElement(validMigrationCandidates);
+      return selectedMigrationIndex.get();
+    };
+  }
+
+  private static int sourceTopicPartitionSelector(List<TopicPartition> migrationCandidates) {
     return ThreadLocalRandom.current().nextInt(0, migrationCandidates.size());
   }
 
-  private int sourceLogPlacementSelector(List<LogPlacement> migrationCandidates) {
+  private static int sourceLogPlacementSelector(List<LogPlacement> migrationCandidates) {
     return ThreadLocalRandom.current().nextInt(0, migrationCandidates.size());
   }
 
-  private <T> T randomElement(Collection<T> collection) {
+  private static <T> T randomElement(Collection<T> collection) {
     return collection.stream()
         .skip(ThreadLocalRandom.current().nextInt(0, collection.size()))
         .findFirst()
         .orElseThrow();
   }
-
-  @Override
-  public Stream<RebalancePlanProposal> generate(
-      ClusterInfo clusterInfo, ClusterLogAllocation baseAllocation) {
-    return Stream.generate(
-        () -> {
-          final var rebalancePlanBuilder = RebalancePlanProposal.builder();
-          final var brokerIds =
-              clusterInfo.nodes().stream()
-                  .map(NodeInfo::id)
-                  .collect(Collectors.toUnmodifiableSet());
-
-          if (brokerIds.size() == 0)
-            return rebalancePlanBuilder
-                .addWarning("Why there is no broker?")
-                .noRebalancePlan()
-                .build();
-
-          if (brokerIds.size() == 1)
-            return rebalancePlanBuilder
-                .addWarning("Only one broker exists. There is no reason to rebalance.")
-                .noRebalancePlan()
-                .build();
-
-          if (clusterInfo.topics().size() == 0)
-            return rebalancePlanBuilder
-                .addWarning("No non-ignored topic to working on.")
-                .noRebalancePlan()
-                .build();
-
-          final var shuffleCount = numberOfShuffle.get();
-          final var newAllocation = LayeredClusterLogAllocation.of(baseAllocation);
-          final var pickingList =
-              newAllocation.topicPartitionStream().collect(Collectors.toUnmodifiableList());
-
-          rebalancePlanBuilder.addInfo(
-              "Make " + shuffleCount + (shuffleCount > 0 ? " shuffles." : " shuffle."));
-          for (int i = 0; i < shuffleCount; i++) {
-            final var sourceTopicPartitionIndex = sourceTopicPartitionSelector(pickingList);
-            final var sourceTopicPartition = pickingList.get(sourceTopicPartitionIndex);
-            final var sourceLogPlacements = newAllocation.logPlacements(sourceTopicPartition);
-            final var sourceLogPlacementIndex = sourceLogPlacementSelector(sourceLogPlacements);
-            final var sourceLogPlacement = sourceLogPlacements.get(sourceLogPlacementIndex);
-            final var sourceIsLeader = sourceLogPlacementIndex == 0;
-            final var sourceBroker = sourceLogPlacement.broker();
-
-            Consumer<Integer> replicaSetMigration =
-                (targetBroker) -> {
-                  var destDir = randomElement(clusterInfo.dataDirectories(targetBroker));
-                  newAllocation.migrateReplica(
-                      sourceTopicPartition, sourceBroker, targetBroker, destDir);
-                  rebalancePlanBuilder.addInfo(
-                      String.format(
-                          "Change replica set of topic %s partition %d, from %d to %d at %s.",
-                          sourceTopicPartition.topic(),
-                          sourceTopicPartition.partition(),
-                          sourceLogPlacement.broker(),
-                          targetBroker,
-                          destDir));
-                };
-            Consumer<LogPlacement> leaderFollowerMigration =
-                (newLeaderReplicaCandidate) -> {
-                  newAllocation.letReplicaBecomeLeader(
-                      sourceTopicPartition, newLeaderReplicaCandidate.broker());
-                  rebalancePlanBuilder.addInfo(
-                      String.format(
-                          "Change the log identity of topic %s partition %d replica at broker %d, from %s to %s",
-                          sourceTopicPartition.topic(),
-                          sourceTopicPartition.partition(),
-                          sourceLogPlacement.broker(),
-                          sourceIsLeader ? "leader" : "follower",
-                          sourceIsLeader ? "follower" : "leader"));
-                };
-
-            // generate a set of valid migration broker for given placement.
-            final var validMigrationCandidates = new ArrayList<Movement>();
-            // [Valid movement 1] add all brokers and remove all broker in current replica set
-            brokerIds.stream()
-                .filter(
-                    broker -> sourceLogPlacements.stream().noneMatch(log -> log.broker() == broker))
-                .map(targetBroker -> (Runnable) () -> replicaSetMigration.accept(targetBroker))
-                .map(Movement::replicaSetMovement)
-                .forEach(validMigrationCandidates::add);
-            // [Valid movement 2] add all leader/follower change candidate
-            if (sourceLogPlacements.size() > 1) {
-              if (sourceIsLeader) {
-                // leader can migrate its identity to follower.
-                sourceLogPlacements.stream()
-                    .skip(1)
-                    .map(
-                        followerReplica ->
-                            (Runnable) () -> leaderFollowerMigration.accept(followerReplica))
-                    .map(Movement::replicaSetMovement)
-                    .forEach(validMigrationCandidates::add);
-              } else {
-                // follower can migrate its identity to leader.
-                validMigrationCandidates.add(
-                    Movement.replicaSetMovement(
-                        () -> leaderFollowerMigration.accept(sourceLogPlacement)));
-              }
-            }
-
-            // pick a migration and execute
-            final var selectedMigrationIndex = randomElement(validMigrationCandidates);
-            selectedMigrationIndex.run();
-          }
-
-          return rebalancePlanBuilder.withRebalancePlan(newAllocation).build();
-        });
-  }
-
-  /** Action to trigger upon this migration */
-  interface Movement extends Runnable {
-    static ReplicaSetMovement replicaSetMovement(Runnable runnable) {
-      return runnable::run;
-    }
-  }
-
-  interface ReplicaSetMovement extends Movement {}
 }

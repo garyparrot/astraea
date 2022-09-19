@@ -16,94 +16,199 @@
  */
 package org.astraea.app.web;
 
-import java.util.Map;
-import java.util.Optional;
+import static org.astraea.app.web.ReassignmentHandler.progressInPercentage;
+import static org.astraea.app.web.ReassignmentHandler.toReassignment;
+
+import java.time.Duration;
+import java.util.List;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
-import org.astraea.app.admin.Admin;
-import org.astraea.app.admin.TopicPartition;
-import org.astraea.app.common.Utils;
-import org.astraea.app.service.RequireBrokerCluster;
+import org.astraea.common.Utils;
+import org.astraea.common.admin.Admin;
+import org.astraea.common.admin.NodeInfo;
+import org.astraea.common.admin.Reassignment;
+import org.astraea.common.admin.Replica;
+import org.astraea.common.admin.TopicPartition;
+import org.astraea.it.RequireBrokerCluster;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 public class ReassignmentHandlerTest extends RequireBrokerCluster {
 
   @Test
-  void testMigrateToAnotherBroker() throws InterruptedException {
+  void testMigrateToAnotherBroker() {
     var topicName = Utils.randomString(10);
     try (Admin admin = Admin.of(bootstrapServers())) {
       var handler = new ReassignmentHandler(admin);
       admin.creator().topic(topicName).numberOfPartitions(1).create();
-      TimeUnit.SECONDS.sleep(3);
+      Utils.sleep(Duration.ofSeconds(3));
 
       var currentBroker =
-          admin.replicas(Set.of(topicName)).get(new TopicPartition(topicName, 0)).get(0).broker();
+          admin
+              .replicas(Set.of(topicName))
+              .get(TopicPartition.of(topicName, 0))
+              .get(0)
+              .nodeInfo()
+              .id();
       var nextBroker = brokerIds().stream().filter(i -> i != currentBroker).findAny().get();
 
-      Assertions.assertEquals(
-          Response.ACCEPT,
-          handler.post(
-              PostRequest.of(
-                  Map.of(
-                      ReassignmentHandler.TOPIC_KEY,
-                      topicName,
-                      ReassignmentHandler.PARTITION_KEY,
-                      "0",
-                      ReassignmentHandler.TO_KEY,
-                      "[\"" + nextBroker + "\"]"))));
+      var body =
+          String.format(
+              "{\"%s\": [{\"%s\": \"%s\",\"%s\": \"%s\",\"%s\": [%s]}]}",
+              ReassignmentHandler.PLANS_KEY,
+              ReassignmentHandler.TOPIC_KEY,
+              topicName,
+              ReassignmentHandler.PARTITION_KEY,
+              "0",
+              ReassignmentHandler.TO_KEY,
+              nextBroker);
 
-      TimeUnit.SECONDS.sleep(2);
-      var reassignments = handler.get(Optional.of(topicName), Map.of());
+      Assertions.assertEquals(
+          Response.ACCEPT, handler.post(Channel.ofRequest(PostRequest.of(body))));
+
+      Utils.sleep(Duration.ofSeconds(2));
+      var reassignments = handler.get(Channel.EMPTY);
       // the reassignment should be completed
       Assertions.assertEquals(0, reassignments.reassignments.size());
 
       Assertions.assertEquals(
           nextBroker,
-          admin.replicas(Set.of(topicName)).get(new TopicPartition(topicName, 0)).get(0).broker());
+          admin
+              .replicas(Set.of(topicName))
+              .get(TopicPartition.of(topicName, 0))
+              .get(0)
+              .nodeInfo()
+              .id());
     }
   }
 
   @Test
-  void testMigrateToAnotherPath() throws InterruptedException {
+  void testMigrateToAnotherPath() {
     var topicName = Utils.randomString(10);
     try (Admin admin = Admin.of(bootstrapServers())) {
       var handler = new ReassignmentHandler(admin);
       admin.creator().topic(topicName).numberOfPartitions(1).create();
-      TimeUnit.SECONDS.sleep(3);
+      Utils.sleep(Duration.ofSeconds(3));
 
       var currentReplica =
-          admin.replicas(Set.of(topicName)).get(new TopicPartition(topicName, 0)).get(0);
-      var currentBroker = currentReplica.broker();
-      var currentPath = currentReplica.path();
+          admin.replicas(Set.of(topicName)).get(TopicPartition.of(topicName, 0)).get(0);
+      var currentBroker = currentReplica.nodeInfo().id();
+      var currentPath = currentReplica.dataFolder();
       var nextPath =
           logFolders().get(currentBroker).stream()
               .filter(p -> !p.equals(currentPath))
               .findFirst()
               .get();
 
-      Assertions.assertEquals(
-          Response.ACCEPT,
-          handler.post(
-              PostRequest.of(
-                  Map.of(
-                      ReassignmentHandler.TOPIC_KEY,
-                      topicName,
-                      ReassignmentHandler.PARTITION_KEY,
-                      "0",
-                      ReassignmentHandler.BROKER_KEY,
-                      String.valueOf(currentBroker),
-                      ReassignmentHandler.TO_KEY,
-                      nextPath))));
+      var body =
+          String.format(
+              "{\"%s\": [{\"%s\": \"%s\", \"%s\": \"%s\" ,\"%s\": \"%s\",\"%s\": \"%s\"}]}",
+              ReassignmentHandler.PLANS_KEY,
+              ReassignmentHandler.TOPIC_KEY,
+              topicName,
+              ReassignmentHandler.PARTITION_KEY,
+              "0",
+              ReassignmentHandler.BROKER_KEY,
+              currentBroker,
+              ReassignmentHandler.TO_KEY,
+              nextPath);
 
-      TimeUnit.SECONDS.sleep(2);
-      var reassignments = handler.get(Optional.of(topicName), Map.of());
+      Assertions.assertEquals(
+          Response.ACCEPT, handler.post(Channel.ofRequest(PostRequest.of(body))));
+
+      Utils.sleep(Duration.ofSeconds(2));
+      var reassignments = handler.get(Channel.ofTarget(topicName));
       // the reassignment should be completed
       Assertions.assertEquals(0, reassignments.reassignments.size());
 
       Assertions.assertEquals(
           nextPath,
-          admin.replicas(Set.of(topicName)).get(new TopicPartition(topicName, 0)).get(0).path());
+          admin
+              .replicas(Set.of(topicName))
+              .get(TopicPartition.of(topicName, 0))
+              .get(0)
+              .dataFolder());
     }
+  }
+
+  @Test
+  void testBadRequest() {
+    var topicName = Utils.randomString(10);
+    try (Admin admin = Admin.of(bootstrapServers())) {
+      var handler = new ReassignmentHandler(admin);
+      admin.creator().topic(topicName).numberOfPartitions(1).create();
+      Utils.sleep(Duration.ofSeconds(3));
+      var body = "{\"plans\": []}";
+
+      Assertions.assertEquals(
+          Response.BAD_REQUEST, handler.post(Channel.ofRequest(PostRequest.of(body))));
+    }
+  }
+
+  @Test
+  void testToReassignment() {
+    var reassignment =
+        toReassignment(
+            TopicPartition.of("test", 0),
+            List.of(
+                new Reassignment.Location(1001, "/tmp/dir1"),
+                new Reassignment.Location(1002, "/tmp/dir1")),
+            List.of(
+                new Reassignment.Location(1001, "/tmp/dir2"),
+                new Reassignment.Location(1003, "/tmp/dir3")),
+            List.of(
+                fakeReplica(TopicPartition.of("test", 0), 1001, 200, "/tmp/dir1"),
+                fakeReplica(TopicPartition.of("test", 0), 1002, 200, "/tmp/dir1"),
+                fakeReplica(TopicPartition.of("test", 0), 1001, 20, "/tmp/dir2"),
+                fakeReplica(TopicPartition.of("test", 0), 1003, 30, "/tmp/dir3")));
+
+    Assertions.assertEquals(reassignment.topicName, "test");
+    Assertions.assertEquals(reassignment.partition, 0);
+
+    Assertions.assertEquals(reassignment.from.size(), 2);
+    var fromIterator = reassignment.from.iterator();
+    var from = fromIterator.next();
+    Assertions.assertEquals(from.broker, 1001);
+    Assertions.assertEquals(from.size, 200);
+    Assertions.assertEquals(from.path, "/tmp/dir1");
+    from = fromIterator.next();
+    Assertions.assertEquals(from.broker, 1002);
+    Assertions.assertEquals(from.size, 200);
+    Assertions.assertEquals(from.path, "/tmp/dir1");
+
+    Assertions.assertEquals(reassignment.to.size(), 2);
+    var toIterator = reassignment.to.iterator();
+    var to = toIterator.next();
+    Assertions.assertEquals(to.broker, 1001);
+    Assertions.assertEquals(to.size, 20);
+    Assertions.assertEquals(to.path, "/tmp/dir2");
+    to = toIterator.next();
+    Assertions.assertEquals(to.broker, 1003);
+    Assertions.assertEquals(to.size, 30);
+    Assertions.assertEquals(to.path, "/tmp/dir3");
+
+    Assertions.assertEquals(reassignment.progress, "12.50%");
+  }
+
+  private static Replica fakeReplica(
+      TopicPartition topicPartition, int brokerId, long size, String dataFolder) {
+    return Replica.of(
+        topicPartition.topic(),
+        topicPartition.partition(),
+        NodeInfo.of(brokerId, "", 12345),
+        0,
+        size,
+        true,
+        true,
+        true,
+        true,
+        true,
+        dataFolder);
+  }
+
+  @Test
+  void testProgressInPercentage() {
+    Assertions.assertEquals(progressInPercentage(-1.1), "0.00%");
+    Assertions.assertEquals(progressInPercentage(11.11), "100.00%");
+    Assertions.assertEquals(progressInPercentage(0.12345), "12.35%");
   }
 }

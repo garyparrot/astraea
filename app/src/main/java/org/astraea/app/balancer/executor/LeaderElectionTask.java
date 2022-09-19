@@ -16,26 +16,24 @@
  */
 package org.astraea.app.balancer.executor;
 
-import java.time.Duration;
-import org.astraea.app.admin.TopicPartition;
+import java.util.concurrent.CompletableFuture;
+import org.astraea.common.admin.TopicPartition;
 
-public class LeaderElectionTask implements CanAwait {
+public class LeaderElectionTask {
 
-  private final RebalanceAdmin admin;
   private final TopicPartition topicPartition;
+  private final CompletableFuture<Boolean> completableFuture;
 
   public LeaderElectionTask(RebalanceAdmin admin, TopicPartition topicPartition) {
-    this.admin = admin;
     this.topicPartition = topicPartition;
+    this.completableFuture = admin.waitPreferredLeaderSynced(topicPartition);
   }
 
-  @Override
-  public boolean await(Duration timeout) {
-    try {
-      return admin.waitPreferredLeaderSynced(topicPartition, timeout);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      return false;
-    }
+  public TopicPartition topicPartition() {
+    return topicPartition;
+  }
+
+  public CompletableFuture<Boolean> completableFuture() {
+    return completableFuture;
   }
 }

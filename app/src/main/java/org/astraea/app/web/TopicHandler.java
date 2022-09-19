@@ -16,23 +16,30 @@
  */
 package org.astraea.app.web;
 
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
-import org.astraea.app.admin.Admin;
-import org.astraea.app.admin.Config;
+import org.astraea.app.scenario.Scenario;
+import org.astraea.common.ExecutionRuntimeException;
+import org.astraea.common.admin.Admin;
+import org.astraea.common.admin.Config;
 
 class TopicHandler implements Handler {
+
+  static final String TOPICS_KEY = "topics";
 
   static final String TOPIC_NAME_KEY = "name";
   static final String NUMBER_OF_PARTITIONS_KEY = "partitions";
   static final String NUMBER_OF_REPLICAS_KEY = "replicas";
+  static final String PARTITION_KEY = "partition";
+  static final String LIST_INTERNAL = "listInternal";
+  static final String PROBABILITY_INTERNAL = "probability";
 
   private final Admin admin;
 
@@ -40,20 +47,34 @@ class TopicHandler implements Handler {
     this.admin = admin;
   }
 
-  Set<String> topicNames(Optional<String> target) {
-    return Handler.compare(admin.topicNames(), target);
+  Set<String> topicNames(Optional<String> target, boolean listInternal) {
+    return Handler.compare(admin.topicNames(listInternal), target);
   }
 
   @Override
-  public Response get(Optional<String> target, Map<String, String> queries) {
-    return get(topicNames(target));
+  public Response get(Channel channel) {
+    var topicNames =
+        topicNames(
+            channel.target(),
+            Optional.ofNullable(channel.queries().get(LIST_INTERNAL))
+                .map(Boolean::parseBoolean)
+                .orElse(true));
+    var topics =
+        get(
+            topicNames,
+            partition ->
+                !channel.queries().containsKey(PARTITION_KEY)
+                    || partition == Integer.parseInt(channel.queries().get(PARTITION_KEY)));
+    if (topicNames.size() == 1) return topics.topics.get(0);
+    return topics;
   }
 
-  private Response get(Set<String> topicNames) {
+  private Topics get(Set<String> topicNames, Predicate<Integer> partitionPredicate) {
     var topics = admin.topics(topicNames);
     var replicas = admin.replicas(topics.keySet());
     var partitions =
         admin.offsets(topics.keySet()).entrySet().stream()
+            .filter(e -> partitionPredicate.test(e.getKey().partition()))
             .collect(
                 Collectors.groupingBy(
                     e -> e.getKey().topic(),
@@ -72,13 +93,14 @@ class TopicHandler implements Handler {
         topics.entrySet().stream()
             .map(p -> new TopicInfo(p.getKey(), partitions.get(p.getKey()), p.getValue()))
             .collect(Collectors.toUnmodifiableList());
-
-    if (topicNames.size() == 1 && topicInfos.size() == 1) return topicInfos.get(0);
     return new Topics(topicInfos);
   }
 
   static Map<String, String> remainingConfigs(PostRequest request) {
-    var configs = new HashMap<>(request.raw());
+    var configs =
+        new HashMap<>(
+            request.raw().entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
     configs.remove(TOPIC_NAME_KEY);
     configs.remove(NUMBER_OF_PARTITIONS_KEY);
     configs.remove(NUMBER_OF_REPLICAS_KEY);
@@ -86,30 +108,67 @@ class TopicHandler implements Handler {
   }
 
   @Override
-  public Response post(PostRequest request) {
-    admin
-        .creator()
-        .topic(request.value(TOPIC_NAME_KEY))
-        .numberOfPartitions(request.intValue(NUMBER_OF_PARTITIONS_KEY, 1))
-        .numberOfReplicas(request.shortValue(NUMBER_OF_REPLICAS_KEY, (short) 1))
-        .configs(remainingConfigs(request))
-        .create();
-    if (admin.topicNames().contains(request.value(TOPIC_NAME_KEY))) {
-      try {
-        // if the topic creation is synced, we return the details.
-        return get(Set.of(request.value(TOPIC_NAME_KEY)));
-      } catch (UnknownTopicOrPartitionException e) {
-        // swallow
+  public Topics post(Channel channel) {
+    var requests = channel.request().requests(TOPICS_KEY);
+    var topicNames =
+        requests.stream().map(r -> r.value(TOPIC_NAME_KEY)).collect(Collectors.toSet());
+    if (topicNames.size() != requests.size())
+      throw new IllegalArgumentException("duplicate topic name: " + topicNames);
+    requests.forEach(
+        request -> {
+          var topicName = request.value(TOPIC_NAME_KEY);
+          var numberOfPartitions = request.getInt(NUMBER_OF_PARTITIONS_KEY).orElse(1);
+          var numberOfReplicas = request.getShort(NUMBER_OF_REPLICAS_KEY).orElse((short) 1);
+          if (request.has(PROBABILITY_INTERNAL)) {
+            Scenario.build(request.doubleValue(PROBABILITY_INTERNAL))
+                .topicName(topicName)
+                .numberOfPartitions(numberOfPartitions)
+                .numberOfReplicas(numberOfReplicas)
+                .build()
+                .apply(admin);
+          } else {
+            admin
+                .creator()
+                .topic(request.value(TOPIC_NAME_KEY))
+                .numberOfPartitions(request.getInt(NUMBER_OF_PARTITIONS_KEY).orElse(1))
+                .numberOfReplicas(request.getShort(NUMBER_OF_REPLICAS_KEY).orElse((short) 1))
+                .configs(remainingConfigs(request))
+                .create();
+          }
+        });
+
+    try {
+      // if the topic creation is synced, we return the details.
+      return get(topicNames, ignored -> true);
+    } catch (ExecutionRuntimeException executionRuntimeException) {
+      if (UnknownTopicOrPartitionException.class
+          != executionRuntimeException.getRootCause().getClass()) {
+        throw executionRuntimeException;
       }
     }
     // Otherwise, return only name
-    return new TopicInfo(request.value(TOPIC_NAME_KEY), List.of(), Map.of());
+    return new Topics(
+        topicNames.stream()
+            .map(t -> new TopicInfo(t, List.of(), Map.of()))
+            .collect(Collectors.toUnmodifiableList()));
+  }
+
+  @Override
+  public Response delete(Channel channel) {
+    return channel
+        .target()
+        .map(
+            topic -> {
+              admin.deleteTopics(Set.of(topic));
+              return Response.OK;
+            })
+        .orElse(Response.NOT_FOUND);
   }
 
   static class Topics implements Response {
-    final Collection<TopicInfo> topics;
+    final List<TopicInfo> topics;
 
-    private Topics(Collection<TopicInfo> topics) {
+    private Topics(List<TopicInfo> topics) {
       this.topics = topics;
     }
   }
@@ -157,15 +216,15 @@ class TopicHandler implements Handler {
     final boolean isFuture;
     final String path;
 
-    Replica(org.astraea.app.admin.Replica replica) {
+    Replica(org.astraea.common.admin.Replica replica) {
       this(
-          replica.broker(),
+          replica.nodeInfo().id(),
           replica.lag(),
           replica.size(),
-          replica.leader(),
+          replica.isLeader(),
           replica.inSync(),
           replica.isFuture(),
-          replica.path());
+          replica.dataFolder());
     }
 
     Replica(

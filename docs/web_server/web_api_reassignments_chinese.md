@@ -20,7 +20,10 @@ JSON Response 範例
 - `from`: replica 原本的位址
   - `broker`: broker id
   - `path`: 存放的資料夾路徑
+  - `size`: replica 大小，單位為 byte
 - `to`: replica 將來的位址
+- `progress`: 當前 replicas 搬移進度，以百分比顯示
+
 ```json
 {
   "reassignments": [
@@ -30,15 +33,18 @@ JSON Response 範例
       "from": [
         {
           "broker": 1002,
-          "path": "/tmp/log-folder-0"
+          "path": "/tmp/log-folder-0",
+          "size": 200
         }
       ],
       "to": [
         {
           "broker": 1001,
-          "path": "/tmp/log-folder-1"
+          "path": "/tmp/log-folder-1",
+          "size": 100
         }
-      ]
+      ],
+      "progress": "50.00%"
     }
   ]
 }
@@ -63,11 +69,11 @@ cURL 範例
 ```shell
 curl -X POST http://localhost:8001/reassignments \
     -H "Content-Type: application/json" \
-    -d '{
+    -d '"plans":[{
     "topic": "chia", 
     "partition": 0,
     "to": [1003]
-    }' 
+    }]' 
 ```
 
 ## 變更 replica 的資料路徑
@@ -90,10 +96,10 @@ cURL 範例
 ```shell
 curl -X POST http://localhost:8001/reassignments \
     -H "Content-Type: application/json" \
-    -d '{
+    -d '"plans":[{
     "topic": "chia", 
     "partition": 0,
     "broker": 1003
     "to": "/tmp/data"
-    }' 
+    }]' 
 ```

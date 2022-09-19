@@ -16,14 +16,18 @@
  */
 package org.astraea.app.web;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
+
 import java.util.Collection;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Collectors;
-import org.astraea.app.admin.Admin;
-import org.astraea.app.admin.TopicPartition;
+import org.astraea.common.admin.Admin;
+import org.astraea.common.admin.Replica;
+import org.astraea.common.admin.TopicPartition;
 
 public class ReassignmentHandler implements Handler {
+  static final String PLANS_KEY = "plans";
   static final String TOPIC_KEY = "topic";
   static final String PARTITION_KEY = "partition";
   static final String FROM_KEY = "from";
@@ -36,41 +40,59 @@ public class ReassignmentHandler implements Handler {
   }
 
   @Override
-  public Response post(PostRequest request) {
-    // case 0: move replica to another folder
-    if (request.has(BROKER_KEY, TOPIC_KEY, PARTITION_KEY, TO_KEY)) {
-      admin
-          .migrator()
-          .partition(request.value(TOPIC_KEY), request.intValue(PARTITION_KEY))
-          .moveTo(Map.of(request.intValue(BROKER_KEY), request.value(TO_KEY)));
-      return Response.ACCEPT;
-    }
-    // case 1: move replica to another broker
-    if (request.has(TOPIC_KEY, PARTITION_KEY, TO_KEY)) {
-      admin
-          .migrator()
-          .partition(request.value(TOPIC_KEY), request.intValue(PARTITION_KEY))
-          .moveTo(request.ints(TO_KEY));
-      return Response.ACCEPT;
-    }
+  public Response post(Channel channel) {
+    var rs =
+        channel.request().requests(PLANS_KEY).stream()
+            .map(
+                request -> {
+                  // case 0: move replica to another folder
+                  if (request.has(BROKER_KEY, TOPIC_KEY, PARTITION_KEY, TO_KEY)) {
+                    admin
+                        .migrator()
+                        .partition(request.value(TOPIC_KEY), request.intValue(PARTITION_KEY))
+                        .moveTo(Map.of(request.intValue(BROKER_KEY), request.value(TO_KEY)));
+                    return Response.ACCEPT;
+                  }
+                  // case 1: move replica to another broker
+                  if (request.has(TOPIC_KEY, PARTITION_KEY, TO_KEY)) {
+                    admin
+                        .migrator()
+                        .partition(request.value(TOPIC_KEY), request.intValue(PARTITION_KEY))
+                        .moveTo(request.intValues(TO_KEY));
+                    return Response.ACCEPT;
+                  }
+                  return Response.BAD_REQUEST;
+                })
+            .collect(Collectors.toUnmodifiableList());
+    if (!rs.isEmpty() && rs.stream().allMatch(r -> r == Response.ACCEPT)) return Response.ACCEPT;
     return Response.BAD_REQUEST;
   }
 
   @Override
-  public Reassignments get(Optional<String> target, Map<String, String> queries) {
+  public Reassignments get(Channel channel) {
+    var topics = Handler.compare(admin.topicNames(), channel.target());
+    var replicas = admin.replicas(topics);
     return new Reassignments(
-        admin.reassignments(Handler.compare(admin.topicNames(), target)).entrySet().stream()
-            .map(e -> new Reassignment(e.getKey(), e.getValue().from(), e.getValue().to()))
+        admin.reassignments(topics).entrySet().stream()
+            .map(
+                e ->
+                    toReassignment(
+                        e.getKey(),
+                        e.getValue().from(),
+                        e.getValue().to(),
+                        replicas.get(e.getKey())))
             .collect(Collectors.toUnmodifiableList()));
   }
 
   static class Location implements Response {
     final int broker;
     final String path;
+    final long size;
 
-    Location(org.astraea.app.admin.Reassignment.Location location) {
-      this.broker = location.broker();
-      this.path = location.path();
+    Location(int broker, String path, long size) {
+      this.broker = broker;
+      this.path = path;
+      this.size = size;
     }
   }
 
@@ -79,15 +101,19 @@ public class ReassignmentHandler implements Handler {
     final int partition;
     final Collection<Location> from;
     final Collection<Location> to;
+    final String progress;
 
     Reassignment(
-        TopicPartition topicPartition,
-        Collection<org.astraea.app.admin.Reassignment.Location> from,
-        Collection<org.astraea.app.admin.Reassignment.Location> to) {
+        TopicPartition topicPartition, Collection<Location> from, Collection<Location> to) {
       this.topicName = topicPartition.topic();
       this.partition = topicPartition.partition();
-      this.from = from.stream().map(Location::new).collect(Collectors.toUnmodifiableList());
-      this.to = to.stream().map(Location::new).collect(Collectors.toUnmodifiableList());
+      this.from = from;
+      this.to = to;
+
+      double fromSizeSum = from.stream().map(f -> f.size).reduce(0L, Long::sum);
+      double toSizeSum = to.stream().map(t -> t.size).reduce(0L, Long::sum);
+      double progress = fromSizeSum == 0 ? 0 : toSizeSum / fromSizeSum;
+      this.progress = progressInPercentage(progress);
     }
   }
 
@@ -97,5 +123,39 @@ public class ReassignmentHandler implements Handler {
     Reassignments(Collection<Reassignment> reassignments) {
       this.reassignments = reassignments;
     }
+  }
+
+  // visible for testing
+  static Reassignment toReassignment(
+      TopicPartition topicPartition,
+      Collection<org.astraea.common.admin.Reassignment.Location> from,
+      Collection<org.astraea.common.admin.Reassignment.Location> to,
+      Collection<Replica> replicas) {
+    return new Reassignment(
+        topicPartition,
+        from.stream()
+            .map(l -> new Location(l.broker(), l.dataFolder(), findReplica(replicas, l).size()))
+            .collect(Collectors.toUnmodifiableList()),
+        to.stream()
+            .map(l -> new Location(l.broker(), l.dataFolder(), findReplica(replicas, l).size()))
+            .collect(Collectors.toUnmodifiableList()));
+  }
+
+  // visible for testing
+  static String progressInPercentage(double progress) {
+    // min(max(progress, 0), 1) is to force valid progress value is 0 < progress < 1
+    // in case something goes wrong (maybe compacting cause data size shrinking suddenly)
+    return String.format("%.2f%%", min(max(progress, 0), 1) * 100);
+  }
+
+  private static Replica findReplica(
+      Collection<Replica> replicas, org.astraea.common.admin.Reassignment.Location location) {
+    return replicas.stream()
+        .filter(
+            r ->
+                r.nodeInfo().id() == location.broker()
+                    && r.dataFolder().equals(location.dataFolder()))
+        .findFirst()
+        .orElseThrow(() -> new RuntimeException("replica not found"));
   }
 }

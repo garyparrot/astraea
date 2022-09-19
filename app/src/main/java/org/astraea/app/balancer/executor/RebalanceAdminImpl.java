@@ -17,57 +17,36 @@
 package org.astraea.app.balancer.executor;
 
 import java.time.Duration;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Function;
-import java.util.function.Predicate;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import org.astraea.app.admin.Admin;
-import org.astraea.app.admin.Replica;
-import org.astraea.app.admin.TopicPartition;
-import org.astraea.app.admin.TopicPartitionReplica;
 import org.astraea.app.balancer.log.LogPlacement;
-import org.astraea.app.common.Utils;
-import org.astraea.app.cost.ClusterInfo;
-import org.astraea.app.metrics.HasBeanObject;
+import org.astraea.common.Utils;
+import org.astraea.common.admin.Admin;
+import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.admin.Replica;
+import org.astraea.common.admin.TopicPartition;
+import org.astraea.common.admin.TopicPartitionReplica;
 
 class RebalanceAdminImpl implements RebalanceAdmin {
 
-  private final Predicate<String> topicFilter;
   private final Admin admin;
-  private final Supplier<Map<Integer, Collection<HasBeanObject>>> metricSource;
 
   /**
    * Construct an implementation of {@link RebalanceAdmin}
    *
-   * @param topicFilter to determine which topics are permitted for balance operation
    * @param admin the actual {@link Admin} implementation
-   * @param metricSource the supplier for new metrics, this supplier should return the metrics that
-   *     {@link RebalancePlanExecutor#fetcher()} is interested.
    */
-  public RebalanceAdminImpl(
-      Predicate<String> topicFilter,
-      Admin admin,
-      Supplier<Map<Integer, Collection<HasBeanObject>>> metricSource) {
-    this.topicFilter = topicFilter;
+  public RebalanceAdminImpl(Admin admin) {
     this.admin = admin;
-    this.metricSource = metricSource;
-  }
-
-  private void ensureTopicPermitted(String topic) {
-    if (!topicFilter.test(topic))
-      throw new IllegalArgumentException("Operation to topic \"" + topic + "\" is not permitted");
   }
 
   private List<LogPlacement> fetchCurrentPlacement(TopicPartition topicPartition) {
-    ensureTopicPermitted(topicPartition.topic());
     return admin.replicas(Set.of(topicPartition.topic())).get(topicPartition).stream()
-        .map(replica -> LogPlacement.of(replica.broker(), replica.path()))
+        .map(replica -> LogPlacement.of(replica.nodeInfo().id(), replica.dataFolder()))
         .collect(Collectors.toUnmodifiableList());
   }
 
@@ -88,7 +67,6 @@ class RebalanceAdminImpl implements RebalanceAdmin {
    */
   private void declarePreferredDataDirectories(
       TopicPartition topicPartition, List<LogPlacement> preferredPlacements) {
-    ensureTopicPermitted(topicPartition.topic());
 
     final var currentPlacement = fetchCurrentPlacement(topicPartition);
 
@@ -100,10 +78,7 @@ class RebalanceAdminImpl implements RebalanceAdmin {
     final var declareMap =
         preferredPlacements.stream()
             .filter(futurePlacement -> !currentBrokerAllocation.contains(futurePlacement.broker()))
-            .filter(futurePlacement -> futurePlacement.logDirectory().isPresent())
-            .collect(
-                Collectors.toUnmodifiableMap(
-                    LogPlacement::broker, x -> x.logDirectory().orElseThrow()));
+            .collect(Collectors.toUnmodifiableMap(LogPlacement::broker, LogPlacement::dataFolder));
 
     admin
         .migrator()
@@ -114,7 +89,6 @@ class RebalanceAdminImpl implements RebalanceAdmin {
   @Override
   public List<ReplicaMigrationTask> alterReplicaPlacements(
       TopicPartition topicPartition, List<LogPlacement> expectedPlacement) {
-    ensureTopicPermitted(topicPartition.topic());
 
     // ensure replica will be placed in the correct data directory at destination broker.
     declarePreferredDataDirectories(topicPartition, expectedPlacement);
@@ -123,8 +97,6 @@ class RebalanceAdminImpl implements RebalanceAdmin {
         fetchCurrentPlacement(topicPartition).stream()
             .map(LogPlacement::broker)
             .collect(Collectors.toUnmodifiableSet());
-    System.out.println(currentReplicaBrokers);
-    System.out.println(expectedPlacement);
 
     // do cross broker migration
     admin
@@ -134,15 +106,15 @@ class RebalanceAdminImpl implements RebalanceAdmin {
             expectedPlacement.stream()
                 .map(LogPlacement::broker)
                 .collect(Collectors.toUnmodifiableList()));
+
+    // wait until the whole cluster knows the replica list just changed
+    Utils.sleep(Duration.ofMillis(500));
+
     // do inter-data-directories migration
     var forCrossDirMigration =
         expectedPlacement.stream()
             .filter(placement -> currentReplicaBrokers.contains(placement.broker()))
-            .filter(placement -> placement.logDirectory().isPresent())
-            .collect(
-                Collectors.toUnmodifiableMap(
-                    LogPlacement::broker, placement -> placement.logDirectory().orElseThrow()));
-    System.out.println(forCrossDirMigration);
+            .collect(Collectors.toUnmodifiableMap(LogPlacement::broker, LogPlacement::dataFolder));
     admin
         .migrator()
         .partition(topicPartition.topic(), topicPartition.partition())
@@ -151,116 +123,92 @@ class RebalanceAdminImpl implements RebalanceAdmin {
     return expectedPlacement.stream()
         .map(
             log ->
-                new TopicPartitionReplica(
+                TopicPartitionReplica.of(
                     topicPartition.topic(), topicPartition.partition(), log.broker()))
         .map(log -> new ReplicaMigrationTask(this, log))
         .collect(Collectors.toUnmodifiableList());
   }
 
-  @Override
-  public boolean waitLogSynced(TopicPartitionReplica log, Duration timeout)
-      throws InterruptedException {
-    ensureTopicPermitted(log.topic());
-    return debouncedAwait(
-        () ->
-            admin.replicas(Set.of(log.topic())).entrySet().stream()
-                .filter(x -> x.getKey().partition() == log.partition())
-                .filter(x -> x.getKey().topic().equals(log.topic()))
-                .flatMap(x -> x.getValue().stream())
-                .filter(x -> x.broker() == log.brokerId())
-                .findFirst()
-                .map(x -> x.inSync() && !x.isFuture())
-                .orElse(false),
-        timeout,
-        debounceTime.get());
+  private long getEndTime(Duration timeout) {
+    try {
+      return Math.addExact(System.currentTimeMillis(), timeout.toMillis());
+    } catch (ArithmeticException e) {
+      return Long.MAX_VALUE;
+    }
   }
 
   @Override
-  public boolean waitPreferredLeaderSynced(TopicPartition topicPartition, Duration timeout)
-      throws InterruptedException {
-    ensureTopicPermitted(topicPartition.topic());
-    // the set of interested topics.
-    return debouncedAwait(
-        () ->
-            admin.replicas(Set.of(topicPartition.topic())).entrySet().stream()
-                .filter(x -> x.getKey().equals(topicPartition))
-                .findFirst()
-                .map(Map.Entry::getValue)
-                .map(
-                    replicas -> {
-                      var preferred =
-                          replicas.stream()
-                              .filter(Replica::isPreferredLeader)
-                              .findFirst()
-                              .orElseThrow();
-                      return preferred.leader();
-                    })
-                .orElseThrow(),
-        timeout,
-        debounceTime.get());
+  public CompletableFuture<Boolean> waitLogSynced(TopicPartitionReplica log, Duration timeout) {
+    return CompletableFuture.supplyAsync(
+        debounceCheck(
+            timeout,
+            () ->
+                admin.replicas(Set.of(log.topic())).entrySet().stream()
+                    .filter(x -> x.getKey().partition() == log.partition())
+                    .filter(x -> x.getKey().topic().equals(log.topic()))
+                    .flatMap(x -> x.getValue().stream())
+                    .filter(x -> x.nodeInfo().id() == log.brokerId())
+                    .findFirst()
+                    .map(x -> x.inSync() && !x.isFuture())
+                    .orElse(false)));
+  }
+
+  @Override
+  public CompletableFuture<Boolean> waitPreferredLeaderSynced(
+      TopicPartition topicPartition, Duration timeout) {
+    return CompletableFuture.supplyAsync(
+        debounceCheck(
+            timeout,
+            () ->
+                admin.replicas(Set.of(topicPartition.topic())).entrySet().stream()
+                    .filter(x -> x.getKey().equals(topicPartition))
+                    .findFirst()
+                    .map(Map.Entry::getValue)
+                    .map(
+                        replicas -> {
+                          var preferred =
+                              replicas.stream()
+                                  .filter(Replica::isPreferredLeader)
+                                  .findFirst()
+                                  .orElseThrow();
+                          return preferred.isLeader();
+                        })
+                    .orElseThrow()));
+  }
+
+  private Supplier<Boolean> debounceCheck(Duration timeout, Supplier<Boolean> testDone) {
+    var debounceInitialCount = 10;
+    return () -> {
+      // due to the state consistency issue in Kafka broker design. the cluster state returned
+      // from the API might bounce between the `old state` and the `new state` during the very
+      // beginning and accomplishment of the cluster state alteration API. to fix this we use
+      // debounce technique, to ensure the target condition is held over a few successive tries,
+      // which mean the cluster state alteration is considered stable.
+      var debounce = debounceInitialCount;
+      var endTime = getEndTime(timeout);
+      while (!Thread.currentThread().isInterrupted()) {
+        // debounce & retrial interval
+        Utils.sleep(Duration.ofMillis(100));
+        var isDone = testDone.get();
+        debounce = isDone ? (debounce - 1) : debounceInitialCount;
+        // synced
+        if (isDone && debounce <= 0) return true;
+        // timeout
+        if (System.currentTimeMillis() > endTime) return false;
+      }
+      return false;
+    };
   }
 
   @Override
   public LeaderElectionTask leaderElection(TopicPartition topicPartition) {
-    ensureTopicPermitted(topicPartition.topic());
-
     admin.preferredLeaderElection(topicPartition);
 
     return new LeaderElectionTask(this, topicPartition);
   }
 
   @Override
-  public ClusterInfo clusterInfo() {
-    return admin.clusterInfo(
-        admin.topicNames().stream().filter(topicFilter).collect(Collectors.toUnmodifiableSet()));
-  }
-
-  @Override
-  public ClusterInfo refreshMetrics(ClusterInfo oldClusterInfo) {
-    return ClusterInfo.of(oldClusterInfo, metricSource.get());
-  }
-
-  /** Wait until the condition is hold true over certain amount of time */
-  static boolean debouncedAwait(Supplier<Boolean> task, Duration timeout, Duration debounce)
-      throws InterruptedException {
-    return await(
-        () -> {
-          if (!task.get()) return false;
-          Utils.packException(() -> Thread.sleep(debounce.toMillis()));
-          if (!task.get()) return false;
-          return true;
-        },
-        timeout);
-  }
-
-  static boolean await(Supplier<Boolean> task, Duration timeout) throws InterruptedException {
-    long retryInterval = Duration.ofSeconds(0).toMillis();
-    Function<Long, Long> nextRetry = (current) -> Math.min(5000, current + 1000);
-    long nowMs = System.currentTimeMillis();
-    long oldMs = nowMs;
-    long timeoutMs = timeout.getSeconds() * 1000 + timeout.toMillisPart() + nowMs;
-
-    // overflow detection
-    if (timeoutMs < timeout.getSeconds()) timeoutMs = Long.MAX_VALUE;
-
-    boolean isDone;
-    do {
-      TimeUnit.MILLISECONDS.sleep(Math.max(0, retryInterval - (nowMs - oldMs)));
-
-      oldMs = nowMs;
-      isDone = task.get();
-      retryInterval = nextRetry.apply(retryInterval);
-      nowMs = System.currentTimeMillis();
-    } while (!isDone && timeoutMs > nowMs);
-
-    return isDone;
-  }
-
-  private static final AtomicReference<Duration> debounceTime =
-      new AtomicReference<>(Duration.ofSeconds(1));
-
-  // visible for test
-  static void changeDebounceTime(Duration newDebounceTime) {
-    debounceTime.set(newDebounceTime);
+  public ClusterInfo<Replica> clusterInfo() {
+    return admin.clusterInfo();
   }
 }
