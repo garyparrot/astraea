@@ -327,7 +327,7 @@ done
 
 rejectProperty "listeners"
 rejectProperty "log.dirs"
-rejectProperty "broker.id"
+# rejectProperty "broker.id"
 requireProperty "zookeeper.connect"
 
 setListener
