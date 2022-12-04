@@ -16,12 +16,16 @@
  */
 package org.astraea.common.admin;
 
-import java.time.Duration;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import org.astraea.common.Utils;
 import org.astraea.common.metrics.BeanObject;
 import org.astraea.common.metrics.HasBeanObject;
 import org.astraea.common.metrics.broker.HasGauge;
@@ -104,29 +108,42 @@ class ClusterBeanTest {
         2, clusterBean.mapByReplica().get(TopicPartitionReplica.of("testBeans", 0, 2)).size());
   }
 
+  final List<String> topicNamePool =
+      IntStream.range(0, 100)
+          .mapToObj(i -> "topic-" + Utils.randomString())
+          .collect(Collectors.toUnmodifiableList());
+
   Stream<HasBeanObject> random(int broker) {
+    final var time = new AtomicLong();
     return Stream.generate(
             () -> {
-              final var domainName = "test";
+              final var t = time.incrementAndGet();
+              final var domainName = "kafka.server";
               final var properties =
                   Map.of(
-                      "type", "testing",
-                      "broker", String.valueOf(broker),
-                      "name", "whatever");
+                      "type",
+                      "BrokerTopicMetrics",
+                      "broker",
+                      String.valueOf(broker),
+                      "topic",
+                      topicNamePool.get((int) (t % 100)),
+                      "name",
+                      "BytesInPerSec");
               final var attributes =
-                  Map.<String, Object>of("value", ThreadLocalRandom.current().nextInt());
-              return new BeanObject(domainName, properties, attributes);
+                  Map.<String, Object>of("count", ThreadLocalRandom.current().nextInt());
+              final var bean = new BeanObject(domainName, properties, attributes);
+              return Map.entry(t, bean);
             })
         .map(
-            bean -> {
-              final var fakeTime = ThreadLocalRandom.current().nextLong(0, 1000);
-              switch (ThreadLocalRandom.current().nextInt(0, 3)) {
+            e -> {
+              final var fakeTime = (long) e.getKey();
+              switch (((int) fakeTime) % 3) {
                 case 0:
-                  return new MetricType1(fakeTime, bean);
+                  return new Metric1(fakeTime, e.getValue());
                 case 1:
-                  return new MetricType2(fakeTime, bean);
+                  return new Metric2(fakeTime, e.getValue());
                 case 2:
-                  return new MetricType3(fakeTime, bean);
+                  return new Metric3(fakeTime, e.getValue());
                 default:
                   throw new RuntimeException();
               }
@@ -134,7 +151,7 @@ class ClusterBeanTest {
   }
 
   @Test
-  void testClusterBeanQuery() {
+  void testLatestQuery() {
     var clusterBean =
         ClusterBean.of(
             Map.of(
@@ -142,41 +159,163 @@ class ClusterBeanTest {
                 2, random(2).limit(1000).collect(Collectors.toUnmodifiableList()),
                 3, random(3).limit(1000).collect(Collectors.toUnmodifiableList())));
 
-    {
-      // select a window of metric from a broker in ClusterBean
-      var windowQuery =
-          clusterBean.query(
-              ClusterBeanQuery.window(MetricType1.class, 1).metricSince(500).ascending());
-      System.out.println("[Window]");
-      System.out.println(windowQuery);
-    }
+    // fetch the latest metric from one broker
+    Metric2 firstMetric =
+        clusterBean.run(
+            ClusterBeanQuery.builder(Metric2.class, Set.of(1))
+                .useLatestQuery()
+                .descendingOrder()
+                .build());
+    Assertions.assertInstanceOf(Metric2.class, firstMetric);
+    Assertions.assertEquals(1000, firstMetric.createdTimestamp());
 
-    {
-      // select a window of metric from a broker in ClusterBean
-      var windowQuery =
-          clusterBean.query(
-              ClusterBeanQuery.window(MetricType1.class, 1)
-                  .metricSince(Duration.ofSeconds(3))
-                  .descending());
-      System.out.println("[Window]");
-      System.out.println(windowQuery);
-    }
+    // fetch the latest metric from any of the brokers
+    Metric1 firstAnyMetric =
+        clusterBean.run(
+            ClusterBeanQuery.builder(Metric1.class, Set.of(1, 2))
+                .useLatestQuery()
+                .descendingOrder()
+                .build());
+    Assertions.assertInstanceOf(Metric1.class, firstAnyMetric);
+    Assertions.assertNotEquals(3, firstMetric.broker());
 
-    {
-      // select the latest metric from a broker in ClusterBean
-      var latestMetric = clusterBean.query(ClusterBeanQuery.latest(MetricType2.class, 1));
-      System.out.println("[Latest]");
-      System.out.println(latestMetric);
-    }
+    // fetch the oldest metric of all the brokers
+    Map<Integer, Metric3> firstBrokerMetric =
+        clusterBean.run(
+            ClusterBeanQuery.builder(Metric3.class, Set.of(1, 2, 3))
+                .useLatestQuery()
+                .groupingBy((id, bean) -> id)
+                .ascendingOrder()
+                .build());
+    firstBrokerMetric.forEach(
+        (id, metric) -> {
+          Assertions.assertInstanceOf(Metric3.class, metric);
+          Assertions.assertEquals(id, metric.broker());
+          Assertions.assertEquals(2, metric.createdTimestamp());
+        });
+
+    // grouping demo
+    Map<String, Metric1> grouping =
+        clusterBean.run(
+            ClusterBeanQuery.builder(Metric1.class, Set.of(1, 2, 3))
+                .useLatestQuery()
+                .groupingBy((id, bean) -> "Broker" + id + "_" + bean.topic())
+                .descendingOrder()
+                .build());
+    grouping.forEach(
+        (brokerTopic, metric) -> {
+          Assertions.assertEquals(300, grouping.size());
+          Assertions.assertTrue(brokerTopic.matches("Broker[1-3]_topic-.+"));
+        });
+
+    // grouping demo 2
+    Map<String, Metric1> grouping2 =
+        clusterBean.run(
+            ClusterBeanQuery.builder(Metric1.class, Set.of(1, 2, 3))
+                .useLatestQuery()
+                .groupingBy((id, bean) -> bean.topic())
+                .descendingOrder()
+                .build());
+    grouping2.forEach(
+        (brokerTopic, metric) -> {
+          Assertions.assertEquals(100, grouping2.size());
+          Assertions.assertTrue(brokerTopic.matches("topic-.+"));
+        });
   }
 
-  private static class MetricType1 implements HasBeanObject {
+  @Test
+  void testWindowQuery() {
+    var clusterBean =
+        ClusterBean.of(
+            Map.of(
+                1, random(1).limit(1000).collect(Collectors.toUnmodifiableList()),
+                2, random(2).limit(1000).collect(Collectors.toUnmodifiableList()),
+                3, random(3).limit(1000).collect(Collectors.toUnmodifiableList())));
+
+    List<Metric1> all =
+        clusterBean.run(
+            ClusterBeanQuery.builder(Metric1.class, Set.of(1, 2, 3))
+                .useWindowQuery()
+                .descendingOrder()
+                .build());
+    Assertions.assertEquals(999, all.size());
+    Assertions.assertEquals(
+        all.stream()
+            .sorted(Comparator.comparingLong(Metric1::createdTimestamp).reversed())
+            .collect(Collectors.toUnmodifiableList()),
+        all);
+
+    List<Metric2> filtered =
+        clusterBean.run(
+            ClusterBeanQuery.builder(Metric2.class, Set.of(1, 2))
+                .useWindowQuery()
+                .filterByTime(500)
+                .filterBy(bean -> bean.count() > 0)
+                .build());
+    Assertions.assertTrue(filtered.stream().allMatch(bean -> bean.createdTimestamp() >= 500));
+    Assertions.assertTrue(filtered.stream().allMatch(bean -> bean.count() > 0));
+    Assertions.assertTrue(filtered.stream().allMatch(bean -> Set.of(1, 2).contains(bean.broker())));
+
+    Map<Integer, List<Metric3>> allMetric3 =
+        clusterBean.run(
+            ClusterBeanQuery.builder(Metric3.class, Set.of(1, 2, 3))
+                .useWindowQuery()
+                .groupingBy((id, metric) -> id)
+                .filterByTime(500)
+                .descendingOrder()
+                .build());
+    Assertions.assertEquals(Set.of(1, 2, 3), allMetric3.keySet());
+    allMetric3.forEach(
+        (id, metrics) -> {
+          Assertions.assertTrue(metrics.stream().allMatch(bean -> bean.createdTimestamp() >= 500));
+          Assertions.assertEquals(
+              metrics.stream()
+                  .sorted(Comparator.comparingLong(HasBeanObject::createdTimestamp).reversed())
+                  .collect(Collectors.toUnmodifiableList()),
+              metrics);
+          metrics.forEach(m -> Assertions.assertInstanceOf(Metric3.class, m));
+        });
+
+    Map<String, List<Metric3>> grouping =
+        clusterBean.run(
+            ClusterBeanQuery.builder(Metric3.class, Set.of(1, 2, 3))
+                .useWindowQuery()
+                .groupingBy((id, bean) -> "Broker" + id + "_" + bean.topic())
+                .ascendingOrder()
+                .build());
+    Assertions.assertEquals(300, grouping.size());
+    Assertions.assertTrue(
+        grouping.keySet().stream().allMatch(key -> key.matches("Broker[1-3]_topic-.+")));
+    grouping
+        .values()
+        .forEach(
+            metrics ->
+                Assertions.assertEquals(
+                    metrics.stream()
+                        .sorted(Comparator.comparingLong(HasBeanObject::createdTimestamp))
+                        .collect(Collectors.toUnmodifiableList()),
+                    metrics));
+  }
+
+  private static class Metric1 implements HasBeanObject {
     private final long createTime;
     private final BeanObject beanObject;
 
-    private MetricType1(long createTime, BeanObject beanObject) {
+    private Metric1(long createTime, BeanObject beanObject) {
       this.createTime = createTime;
       this.beanObject = beanObject;
+    }
+
+    public int broker() {
+      return Integer.parseInt(beanObject.properties().get("broker"));
+    }
+
+    public int count() {
+      return (int) beanObject.attributes().get("count");
+    }
+
+    public String topic() {
+      return beanObject.properties().get("topic");
     }
 
     @Override
@@ -201,14 +340,14 @@ class ClusterBeanTest {
     }
   }
 
-  private static class MetricType2 extends MetricType1 {
-    private MetricType2(long createTime, BeanObject beanObject) {
+  private static class Metric2 extends Metric1 {
+    private Metric2(long createTime, BeanObject beanObject) {
       super(createTime, beanObject);
     }
   }
 
-  private static class MetricType3 extends MetricType2 {
-    private MetricType3(long createTime, BeanObject beanObject) {
+  private static class Metric3 extends Metric2 {
+    private Metric3(long createTime, BeanObject beanObject) {
       super(createTime, beanObject);
     }
   }

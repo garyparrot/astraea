@@ -18,11 +18,7 @@ package org.astraea.common.admin;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.Comparator;
-import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
 import java.util.stream.Collectors;
 import org.astraea.common.Lazy;
 import org.astraea.common.metrics.HasBeanObject;
@@ -94,19 +90,70 @@ public interface ClusterBean {
    */
   Map<TopicPartitionReplica, Collection<HasBeanObject>> mapByReplica();
 
-  default <T extends HasBeanObject> List<T> query(ClusterBeanQuery.WindowQuery<T> query) {
-    return Objects.requireNonNull(all().get(query.id), "No such identity: " + query.id).stream()
-        .filter(bean -> bean.getClass() == query.metricType)
-        .map(query.metricType::cast)
-        .filter(query.filter)
-        .sorted(query.comparator)
-        .collect(Collectors.toUnmodifiableList());
+  @SuppressWarnings("unchecked")
+  default <Bean extends HasBeanObject, Key, Value, QueryResult> QueryResult run(
+      ClusterBeanQuery<Bean, Key, Value, QueryResult> query) {
+    switch (query.queryType()) {
+      case Latest:
+        if (query.groupingKey() != null) {
+          return (QueryResult)
+              all().entrySet().stream()
+                  .filter(e -> query.queryTarget().contains(e.getKey()))
+                  .flatMap(e -> e.getValue().stream().map(bean -> Map.entry(e.getKey(), bean)))
+                  .filter(e -> e.getValue().getClass() == query.metricClass())
+                  .map(e -> Map.entry(e.getKey(), query.metricClass().cast(e.getValue())))
+                  .filter(e -> query.filter().test(e.getValue()))
+                  .collect(
+                      Collectors.groupingBy(
+                          e -> query.groupingKey().apply(e.getKey(), e.getValue()),
+                          Collectors.mapping(
+                              Map.Entry::getValue, Collectors.minBy(query.comparator()))))
+                  .entrySet()
+                  .stream()
+                  .collect(
+                      Collectors.toUnmodifiableMap(
+                          Map.Entry::getKey, e -> e.getValue().orElseThrow()));
+        } else {
+          return (QueryResult)
+              all().entrySet().stream()
+                  .filter(e -> query.queryTarget().contains(e.getKey()))
+                  .flatMap(e -> e.getValue().stream())
+                  .filter(bean -> bean.getClass() == query.metricClass())
+                  .map(bean -> query.metricClass().cast(bean))
+                  .filter(query.filter())
+                  .min(query.comparator())
+                  .orElse(null);
+        }
+      case Window:
+        if (query.groupingKey() != null) {
+          return (QueryResult)
+              all().entrySet().stream()
+                  .filter(e -> query.queryTarget().contains(e.getKey()))
+                  .flatMap(e -> e.getValue().stream().map(bean -> Map.entry(e.getKey(), bean)))
+                  .filter(e -> e.getValue().getClass() == query.metricClass())
+                  .map(e -> Map.entry(e.getKey(), query.metricClass().cast(e.getValue())))
+                  .filter(e -> query.filter().test(e.getValue()))
+                  .sorted(Map.Entry.comparingByValue(query.comparator()))
+                  .collect(
+                      Collectors.groupingBy(
+                          e -> query.groupingKey().apply(e.getKey(), e.getValue()),
+                          Collectors.mapping(
+                              Map.Entry::getValue, Collectors.toUnmodifiableList())));
+        } else {
+          return (QueryResult)
+              all().entrySet().stream()
+                  .filter(e -> query.queryTarget().contains(e.getKey()))
+                  .flatMap(e -> e.getValue().stream())
+                  .filter(bean -> bean.getClass() == query.metricClass())
+                  .map(bean -> query.metricClass().cast(bean))
+                  .filter(bean -> query.filter().test(bean))
+                  .sorted(query.comparator())
+                  .collect(Collectors.toUnmodifiableList());
+        }
+      default:
+        throw new UnsupportedOperationException();
+    }
   }
 
-  default <T extends HasBeanObject> Optional<T> query(ClusterBeanQuery.LatestMetricQuery<T> query) {
-    return Objects.requireNonNull(all().get(query.id), "No such id: " + query.id).stream()
-        .filter(bean -> bean.getClass() == query.metricClass)
-        .max(Comparator.comparingLong(HasBeanObject::createdTimestamp))
-        .map(query.metricClass::cast);
-  }
+  static void shit() {}
 }
