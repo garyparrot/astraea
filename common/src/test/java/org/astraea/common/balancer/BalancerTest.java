@@ -19,32 +19,36 @@ package org.astraea.common.balancer;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import org.astraea.common.Configuration;
 import org.astraea.common.Utils;
 import org.astraea.common.admin.Admin;
 import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
+import org.astraea.common.admin.ReplicaInfo;
+import org.astraea.common.admin.TopicPartition;
 import org.astraea.common.balancer.algorithms.AlgorithmConfig;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
 import org.astraea.common.balancer.algorithms.SingleStepBalancer;
 import org.astraea.common.balancer.executor.StraightPlanExecutor;
-import org.astraea.common.balancer.log.ClusterLogAllocation;
 import org.astraea.common.cost.ClusterCost;
 import org.astraea.common.cost.DecreasingCost;
 import org.astraea.common.cost.HasClusterCost;
+import org.astraea.common.cost.MoveCost;
 import org.astraea.common.cost.NoSufficientMetricsException;
 import org.astraea.common.cost.ReplicaLeaderCost;
 import org.astraea.common.metrics.BeanObject;
 import org.astraea.common.metrics.HasBeanObject;
-import org.astraea.common.scenario.Scenario;
 import org.astraea.it.RequireBrokerCluster;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -62,15 +66,22 @@ class BalancerTest extends RequireBrokerCluster {
       var topicName = Utils.randomString();
       var currentLeaders =
           (Supplier<Map<Integer, Long>>)
-              () ->
-                  admin
-                      .clusterInfo(admin.topicNames(false).toCompletableFuture().join())
-                      .toCompletableFuture()
-                      .join()
-                      .replicaStream()
-                      .filter(Replica::isLeader)
-                      .map(replica -> replica.nodeInfo().id())
-                      .collect(Collectors.groupingBy(x -> x, Collectors.counting()));
+              () -> {
+                var clusterInfo =
+                    admin
+                        .clusterInfo(admin.topicNames(false).toCompletableFuture().join())
+                        .toCompletableFuture()
+                        .join();
+                return clusterInfo.nodes().stream()
+                    .collect(
+                        Collectors.toMap(
+                            NodeInfo::id,
+                            n ->
+                                clusterInfo
+                                    .replicaStream(n.id())
+                                    .filter(ReplicaInfo::isLeader)
+                                    .count()));
+              };
       var currentImbalanceFactor =
           (Supplier<Long>)
               () ->
@@ -79,15 +90,20 @@ class BalancerTest extends RequireBrokerCluster {
                           .mapToLong(x -> x)
                           .min()
                           .orElseThrow();
-      Scenario.build(0.1)
-          .topicName(topicName)
-          .numberOfPartitions(100)
-          .numberOfReplicas((short) 1)
-          .binomialProbability(0.1)
-          .build()
-          .apply(admin)
+
+      admin.creator().topic(topicName).numberOfPartitions(100).run().toCompletableFuture().join();
+      Utils.sleep(Duration.ofSeconds(2));
+      admin
+          .moveToBrokers(
+              IntStream.range(0, 100)
+                  .mapToObj(i -> TopicPartition.of(topicName, i))
+                  .collect(
+                      Collectors.toMap(
+                          Function.identity(), ignored -> List.of(brokerIds().iterator().next()))))
           .toCompletableFuture()
           .join();
+      Utils.sleep(Duration.ofSeconds(2));
+
       var imbalanceFactor0 = currentImbalanceFactor.get();
       Assertions.assertNotEquals(
           0, imbalanceFactor0, "This cluster is completely balanced in terms of leader count");
@@ -97,7 +113,6 @@ class BalancerTest extends RequireBrokerCluster {
                   theClass,
                   AlgorithmConfig.builder()
                       .clusterCost(new ReplicaLeaderCost())
-                      .dataFolders(admin.brokerFolders().toCompletableFuture().join())
                       .topicFilter(topic -> topic.equals(topicName))
                       .build())
               .offer(
@@ -106,6 +121,7 @@ class BalancerTest extends RequireBrokerCluster {
                       .toCompletableFuture()
                       .join(),
                   Duration.ofSeconds(10))
+              .solution()
               .orElseThrow();
       new StraightPlanExecutor()
           .run(admin, plan.proposal(), Duration.ofSeconds(10))
@@ -150,17 +166,16 @@ class BalancerTest extends RequireBrokerCluster {
               .clusterInfo(admin.topicNames(false).toCompletableFuture().join())
               .toCompletableFuture()
               .join();
-      var brokerFolders = admin.brokerFolders().toCompletableFuture().join();
       var newAllocation =
           Balancer.create(
                   theClass,
                   AlgorithmConfig.builder()
                       .topicFilter(t -> t.equals(theTopic))
-                      .dataFolders(brokerFolders)
                       .clusterCost(randomScore)
-                      .config("iteration", "500")
+                      .config(Configuration.of(Map.of("iteration", "500")))
                       .build())
               .offer(clusterInfo, Duration.ofSeconds(3))
+              .solution()
               .get()
               .proposal();
 
@@ -171,9 +186,29 @@ class BalancerTest extends RequireBrokerCluster {
               .join();
       var newCluster = ClusterInfo.update(currentCluster, newAllocation::replicas);
 
-      Assertions.assertTrue(
-          ClusterInfo.diff(currentCluster, newCluster).stream()
-              .allMatch(replica -> replica.topic().equals(theTopic)),
+      Assertions.assertEquals(
+          currentCluster.replicas(topic1).stream()
+              .map(ReplicaInfo::topicPartitionReplica)
+              .collect(Collectors.toSet()),
+          newCluster.replicas(topic1).stream()
+              .map(ReplicaInfo::topicPartitionReplica)
+              .collect(Collectors.toSet()),
+          "With filter, only specific topic has been balanced");
+      Assertions.assertEquals(
+          currentCluster.replicas(topic2).stream()
+              .map(ReplicaInfo::topicPartitionReplica)
+              .collect(Collectors.toSet()),
+          newCluster.replicas(topic2).stream()
+              .map(ReplicaInfo::topicPartitionReplica)
+              .collect(Collectors.toSet()),
+          "With filter, only specific topic has been balanced");
+      Assertions.assertEquals(
+          currentCluster.replicas(topic3).stream()
+              .map(ReplicaInfo::topicPartitionReplica)
+              .collect(Collectors.toSet()),
+          newCluster.replicas(topic3).stream()
+              .map(ReplicaInfo::topicPartitionReplica)
+              .collect(Collectors.toSet()),
           "With filter, only specific topic has been balanced");
     }
   }
@@ -198,7 +233,6 @@ class BalancerTest extends RequireBrokerCluster {
                           theClass,
                           AlgorithmConfig.builder()
                               .clusterCost((clusterInfo, bean) -> Math::random)
-                              .dataFolders(admin.brokerFolders().toCompletableFuture().join())
                               .build())
                       .offer(
                           admin
@@ -206,6 +240,7 @@ class BalancerTest extends RequireBrokerCluster {
                               .toCompletableFuture()
                               .join(),
                           Duration.ofSeconds(3))
+                      .solution()
                       .get()
                       .proposal());
       Utils.sleep(Duration.ofMillis(1000));
@@ -254,9 +289,8 @@ class BalancerTest extends RequireBrokerCluster {
                   theClass,
                   AlgorithmConfig.builder()
                       .clusterCost(theCostFunction)
-                      .dataFolders(Map.of())
                       .metricSource(metricSource)
-                      .config("iteration", "500")
+                      .config(Configuration.of(Map.of("iteration", "500")))
                       .build())
               .offer(ClusterInfo.empty(), Duration.ofSeconds(3));
           Assertions.assertTrue(called.get(), "The cost function has been invoked");
@@ -284,13 +318,12 @@ class BalancerTest extends RequireBrokerCluster {
     var balancer =
         new Balancer() {
           @Override
-          public Optional<Plan> offer(ClusterInfo<Replica> currentClusterInfo, Duration timeout) {
+          public Plan offer(ClusterInfo<Replica> currentClusterInfo, Duration timeout) {
             if (System.currentTimeMillis() - startMs < sampleTimeMs)
               throw new NoSufficientMetricsException(
                   costFunction,
                   Duration.ofMillis(sampleTimeMs - (System.currentTimeMillis() - startMs)));
-            return Optional.of(
-                new Plan(ClusterLogAllocation.of(currentClusterInfo), () -> 0, () -> 0, List.of()));
+            return new Plan(() -> 0, new Solution(() -> 0, MoveCost.EMPTY, currentClusterInfo));
           }
         };
 
@@ -311,7 +344,7 @@ class BalancerTest extends RequireBrokerCluster {
     var balancer =
         new Balancer() {
           @Override
-          public Optional<Plan> offer(ClusterInfo<Replica> currentClusterInfo, Duration timeout) {
+          public Plan offer(ClusterInfo<Replica> currentClusterInfo, Duration timeout) {
             throw new NoSufficientMetricsException(
                 costFunction, Duration.ofSeconds(999), "This will takes forever");
           }

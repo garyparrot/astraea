@@ -30,7 +30,6 @@ import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.balancer.Balancer;
-import org.astraea.common.balancer.log.ClusterLogAllocation;
 import org.astraea.common.cost.MoveCost;
 import org.astraea.common.cost.ReplicaLeaderCost;
 import org.astraea.common.cost.ReplicaSizeCost;
@@ -54,20 +53,13 @@ class BalancerNodeTest extends RequireBrokerCluster {
 
   @Test
   void testMovementConstraint() {
-    Assertions.assertTrue(BalancerNode.movementConstraint(Map.of()).test(List.of()));
-    Assertions.assertTrue(
-        BalancerNode.movementConstraint(Map.of())
-            .test(List.of(MoveCost.builder().name("test").totalCost(100).build())));
+    Assertions.assertTrue(BalancerNode.movementConstraint(Map.of()).test(MoveCost.EMPTY));
     Assertions.assertFalse(
         BalancerNode.movementConstraint(Map.of(BalancerNode.MAX_MIGRATE_LEADER_NUM, "10"))
-            .test(
-                List.of(
-                    MoveCost.builder().name(ReplicaLeaderCost.COST_NAME).totalCost(100).build())));
+            .test(MoveCost.changedReplicaLeaderCount(Map.of(1, 1000))));
     Assertions.assertTrue(
         BalancerNode.movementConstraint(Map.of(BalancerNode.MAX_MIGRATE_LEADER_NUM, "10"))
-            .test(
-                List.of(
-                    MoveCost.builder().name(ReplicaLeaderCost.COST_NAME).totalCost(5).build())));
+            .test(MoveCost.changedReplicaLeaderCount(Map.of(1, 5))));
   }
 
   @Test
@@ -117,6 +109,8 @@ class BalancerNodeTest extends RequireBrokerCluster {
   void testResult() {
     var topic = Utils.randomString();
     var leaderSize = 100;
+    var allNodes =
+        List.of(NodeInfo.of(0, "aa", 0), NodeInfo.of(1, "aa", 0), NodeInfo.of(3, "aa", 0));
     var beforeReplicas =
         List.of(
             Replica.builder()
@@ -124,7 +118,7 @@ class BalancerNodeTest extends RequireBrokerCluster {
                 .isPreferredLeader(false)
                 .topic(topic)
                 .partition(0)
-                .nodeInfo(NodeInfo.of(0, "aa", 0))
+                .nodeInfo(allNodes.get(0))
                 .size(leaderSize)
                 .path("/tmp/aaa")
                 .build(),
@@ -133,7 +127,7 @@ class BalancerNodeTest extends RequireBrokerCluster {
                 .isPreferredLeader(true)
                 .topic(topic)
                 .partition(0)
-                .nodeInfo(NodeInfo.of(1, "aa", 0))
+                .nodeInfo(allNodes.get(1))
                 .size(leaderSize)
                 .path("/tmp/bbb")
                 .build());
@@ -144,7 +138,7 @@ class BalancerNodeTest extends RequireBrokerCluster {
                 .isPreferredLeader(false)
                 .topic(topic)
                 .partition(0)
-                .nodeInfo(NodeInfo.of(3, "aa", 0))
+                .nodeInfo(allNodes.get(2))
                 .size(leaderSize)
                 .path("/tmp/ddd")
                 .build(),
@@ -153,20 +147,19 @@ class BalancerNodeTest extends RequireBrokerCluster {
                 .isPreferredLeader(true)
                 .topic(topic)
                 .partition(0)
-                .nodeInfo(NodeInfo.of(1, "aa", 0))
+                .nodeInfo(allNodes.get(1))
                 .size(leaderSize)
                 .path("/tmp/bbb")
                 .build());
-    var beforeClusterInfo = ClusterInfo.of(Set.of(), beforeReplicas);
+    var beforeClusterInfo = ClusterInfo.of(List.of(), beforeReplicas);
 
     var results =
         BalancerNode.assignmentResult(
             beforeClusterInfo,
-            new Balancer.Plan(
-                ClusterLogAllocation.of(ClusterInfo.of(afterReplicas)),
+            new Balancer.Solution(
                 new ReplicaLeaderCost().clusterCost(beforeClusterInfo, ClusterBean.EMPTY),
-                new ReplicaLeaderCost().clusterCost(beforeClusterInfo, ClusterBean.EMPTY),
-                List.of(MoveCost.builder().build())));
+                MoveCost.EMPTY,
+                ClusterInfo.of(allNodes, afterReplicas)));
     Assertions.assertEquals(results.size(), 1);
     Assertions.assertEquals(results.get(0).get("topic"), topic);
     Assertions.assertEquals(results.get(0).get("partition"), 0);

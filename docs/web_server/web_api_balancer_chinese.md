@@ -12,15 +12,15 @@ POST /balancer
 
 參數
 
-| 名稱                  | 說明                                                          | 預設值                                                   |
-|---------------------|-------------------------------------------------------------|-------------------------------------------------------|
-| topics              | (選填) 只嘗試搬移指定的 topics                                        | 無，除了內部 topics 以外的都作為候選對象                              |
-| timeout             | (選填) 指定產生時間                                                 | 3s                                                    |
-| balancer            | (選填) 愈使用的負載平衡計劃搜尋演算法                                        | org.astraea.common.balancer.algorithms.GreedyBalancer |
-| balancer-config     | (選填) 搜尋演算法的實作細節參數，此為一個 JSON Object 內含一系列的 key/value String  | 無                                                     |
-| costWeights         | (選填) 指定要優化的目標以及權重                                           | ReplicaSizeCost,ReplicaLeaderCost權重皆為1                |
- | max-migrated-size   | (選填) 設定最大可搬移的log size                                       | 無 　                                                   |
- | max-migrated-leader | (選填) 設定最大可搬移的leader 數量                                      | 無                                                     |
+| 名稱                | 說明                                                         | 預設值                                                   |
+|-------------------|------------------------------------------------------------|-------------------------------------------------------|
+| topics            | (選填) 只嘗試搬移指定的 topics                                       | 無，除了內部 topics 以外的都作為候選對象                              |
+| timeout           | (選填) 指定產生時間                                                | 3s                                                    |
+| balancer          | (選填) 愈使用的負載平衡計劃搜尋演算法                                       | org.astraea.common.balancer.algorithms.GreedyBalancer |
+| balancerConfig    | (選填) 搜尋演算法的實作細節參數，此為一個 JSON Object 內含一系列的 key/value String | 無                                                     |
+| costWeights       | (選填) 指定要優化的目標以及權重                                          | ReplicaSizeCost,ReplicaLeaderCost權重皆為1                |
+ | maxMigratedSize   | (選填) 設定最大可搬移的log size                                      | 無 　                                                   |
+ | maxMigratedLeader | (選填) 設定最大可搬移的leader 數量                                     | 無                                                     |
 
 cURL 範例
 ```shell
@@ -28,17 +28,16 @@ curl -X POST http://localhost:8001/balancer \
     -H "Content-Type: application/json" \
     -d '{ "timeout": "10s" ,
       "balancer": "org.astraea.common.balancer.algorithms.GreedyBalancer",
-      "balancer-config": {
-        "shuffle.plan.generator.min.step": "1",
-        "shuffle.plan.generator.max.step": "30",
-        "iteration": "10000"
+      "balancerConfig": {
+        "shuffle.tweaker.min.step": "1",
+        "shuffle.tweaker.max.step": "5"
       },
       "costWeights": [
-        { "cost":  "org.astraea.common.cost.ReplicaSizeCost", "weight":  3},
-        { "cost":  "org.astraea.common.cost.ReplicaLeaderCost", "weight":  2}
+        { "cost": "org.astraea.common.cost.ReplicaSizeCost", "weight": 1 },
+        { "cost": "org.astraea.common.cost.ReplicaLeaderCost", "weight": 1 }
       ],
-      "max-migrated-size": "300MB",
-      "max-migrated-leader": "3"
+      "maxMigratedSize": "300MB",
+      "maxMigratedLeader": "3"
     }'
 ```
 
@@ -125,8 +124,9 @@ JSON Response 範例
   1. 搜尋負載平衡計劃的過程中發生錯誤 (此情境下 `generated` 會是 `false`)
   2. 執行負載平衡計劃的過程中發生錯誤 (此情境下 `scheduled` 會是 `true` 但 `done` 為 `false`)
 * `info`: 此負載平衡計劃的詳細資訊，如果此計劃還沒生成，則此欄位會是 `null`
-  * `cost`: 目前叢集的成本 (越高越不好)
-  * `newCost`: 評估後比較好的成本 (<= `cost`)
+  * `isPlanGenerated`: 表示計劃是否成功生成，如果此欄位為 `false` 代表 Balancer 實作無法找到更好的計劃
+  * `cost`: 目前叢集的分數 (越高越不好)
+  * `newCost`: 提出的新計劃之分數，當計劃沒有成功生成時，此欄位會是 `null`
   * `function`: 用來評估品質的方法
   * `changes`: 新的 partitions 配置
     * `topic`: topic 名稱
@@ -151,9 +151,10 @@ JSON Response 範例
   "scheduled": true,
   "done": true,
   "info": {
+    "isPlanGenerated": true,
     "cost": 0.04948716593053935,
     "newCost": 0.04948716593053935,
-    "function": "ReplicaLeaderCost",
+    "function": "WeightCompositeClusterCost[{\"org.astraea.common.cost.ReplicaSizeCost@36835e87\" weight 1.0}, {\"org.astraea.common.cost.ReplicaLeaderCost@2d87f4d3\" weight 1.0}]",
     "changes": [
       {
         "topic": "__consumer_offsets",
@@ -212,6 +213,23 @@ JSON Response 範例
 >
 > 從 JSON 陣列第二位開始預期都是這個 topic/partition 的 follower logs，特別注意目前內部實作
 > 不保證這個 follower logs 的順序是否會一致地反映到 Apache Kafka 內部的儲存資料結構內。
+
+> ##### 優化目標的權重設定注意事項
+> 權重的分配在優化算法遇到必須做取捨的情況時很重要，設定不適合的權重，可能會讓算法往比較不重要的優化目標做取捨。
+> 
+> 假設現在有 3 個優化目標和他們各自的權重
+> 1. 節點輸入流量 weight 1
+> 2. 節點輸出流量 weight 1
+> 3. 節點的 Leader 數量 weight 1
+> 
+> 上述在進行負載優化時，由於 Leader 的平衡和網路吞吐量一樣重要，可能會導致為了多兼容這個優化需求而喪失一些優化的機會。
+> 如發現 Balancer 生成計劃的 `newScore` 分數沒辦法貼近 0，則其生成的計劃可能在三者之間做了某種程度的取捨。如果不希望
+> 這些取捨發生，或願意對某些不重要的優化項目做取捨，可以考慮調低 Leader 數量平衡的權重值。
+
+> ##### 解讀 `score` 的注意事項
+> 1. `score` 和 `newScore` 之值代表一個叢集分佈接近最佳狀況的程度。
+> 2. 不同負載平衡計劃之間的 `score` 分數沒有關聯(不能彼此比較)。
+> 3. 同一筆平衡計劃所產生分數能夠反映叢集的好壞，即 `scoreA` > `scoreB` 有定義，其代表 B 負載分佈比 A 負載分佈在此特定情境下更好。
 
 
 目前此 endpoint 僅能查詢負載平衡計劃是否完成，如想知道更細部的搬移進度，可考慮使用 [Web Service Reassignments API](web_api_reassignments_chinese.md) 查詢。

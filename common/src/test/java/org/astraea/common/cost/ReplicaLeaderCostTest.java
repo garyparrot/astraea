@@ -18,10 +18,10 @@ package org.astraea.common.cost;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.admin.ClusterInfoTest;
 import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.ReplicaInfo;
@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 public class ReplicaLeaderCostTest {
-  private final Dispersion dispersion = Dispersion.correlationCoefficient();
+  private final Dispersion dispersion = Dispersion.cov();
 
   @Test
   void testNoMetrics() {
@@ -44,7 +44,7 @@ public class ReplicaLeaderCostTest {
             ReplicaInfo.of("topic", 0, NodeInfo.of(11, "broker1", 1111), true, true, false));
     var clusterInfo =
         ClusterInfo.of(
-            Set.of(
+            List.of(
                 NodeInfo.of(10, "host1", 8080),
                 NodeInfo.of(11, "host1", 8080),
                 NodeInfo.of(12, "host1", 8080)),
@@ -193,15 +193,16 @@ public class ReplicaLeaderCostTest {
                 .isPreferredLeader(false)
                 .path("")
                 .build());
-    var beforeClusterInfo = ClusterInfo.of(before);
-    var afterClusterInfo = ClusterInfo.of(after);
+    var beforeClusterInfo = ClusterInfoTest.of(before);
+    var afterClusterInfo = ClusterInfoTest.of(after);
     var moveCost = costFunction.moveCost(beforeClusterInfo, afterClusterInfo, ClusterBean.EMPTY);
-    Assertions.assertEquals(1, moveCost.totalCost());
-    Assertions.assertEquals(2, moveCost.changes().size());
-    Assertions.assertTrue(moveCost.changes().containsKey(0));
-    Assertions.assertTrue(moveCost.changes().containsKey(2));
-    Assertions.assertEquals(-1, moveCost.changes().get(0));
-    Assertions.assertEquals(1, moveCost.changes().get(2));
+    Assertions.assertEquals(3, moveCost.changedReplicaLeaderCount().size());
+    Assertions.assertTrue(moveCost.changedReplicaLeaderCount().containsKey(0));
+    Assertions.assertTrue(moveCost.changedReplicaLeaderCount().containsKey(1));
+    Assertions.assertTrue(moveCost.changedReplicaLeaderCount().containsKey(2));
+    Assertions.assertEquals(-1, moveCost.changedReplicaLeaderCount().get(0));
+    Assertions.assertEquals(0, moveCost.changedReplicaLeaderCount().get(1));
+    Assertions.assertEquals(1, moveCost.changedReplicaLeaderCount().get(2));
   }
 
   private ServerMetrics.ReplicaManager.Gauge mockResult(String name, int count) {

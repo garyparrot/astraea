@@ -17,14 +17,24 @@
 package org.astraea.common.backup;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
-import java.io.UncheckedIOException;
+import org.astraea.common.DataSize;
+import org.astraea.common.Utils;
 import org.astraea.common.consumer.Record;
 
 public interface RecordWriter extends AutoCloseable {
   void append(Record<byte[], byte[]> record);
+
+  /**
+   * @return size of all records
+   */
+  DataSize size();
+
+  /**
+   * @return count of all records
+   */
+  int count();
 
   void flush();
 
@@ -32,11 +42,7 @@ public interface RecordWriter extends AutoCloseable {
   void close();
 
   static RecordWriterBuilder builder(File file) {
-    try {
-      return builder(new FileOutputStream(file));
-    } catch (FileNotFoundException e) {
-      throw new UncheckedIOException(e);
-    }
+    return Utils.packException(() -> builder(new FileOutputStream(file)));
   }
 
   static RecordWriterBuilder builder(OutputStream outputStream) {

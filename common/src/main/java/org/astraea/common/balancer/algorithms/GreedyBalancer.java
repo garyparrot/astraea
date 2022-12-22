@@ -21,19 +21,17 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.LongAccumulator;
+import java.util.concurrent.atomic.DoubleAccumulator;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 import org.astraea.common.Utils;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.balancer.Balancer;
-import org.astraea.common.balancer.log.ClusterLogAllocation;
 import org.astraea.common.balancer.tweakers.ShuffleTweaker;
 import org.astraea.common.cost.ClusterCost;
-import org.astraea.common.metrics.jmx.MBeanRegister;
+import org.astraea.common.metrics.MBeanRegister;
 
 /**
  * A single-state hill-climbing algorithm. It discovers rebalance solution by tweaking the cluster
@@ -42,10 +40,8 @@ import org.astraea.common.metrics.jmx.MBeanRegister;
  */
 public class GreedyBalancer implements Balancer {
 
-  public static final String SHUFFLE_PLAN_GENERATOR_MIN_STEP_CONFIG =
-      "shuffle.plan.generator.min.step";
-  public static final String SHUFFLE_PLAN_GENERATOR_MAX_STEP_CONFIG =
-      "shuffle.plan.generator.max.step";
+  public static final String SHUFFLE_TWEAKER_MIN_STEP_CONFIG = "shuffle.tweaker.min.step";
+  public static final String SHUFFLE_TWEAKER_MAX_STEP_CONFIG = "shuffle.tweaker.max.step";
   public static final String ITERATION_CONFIG = "iteration";
   public static final Set<String> ALL_CONFIGS =
       new TreeSet<>(Utils.constants(GreedyBalancer.class, name -> name.endsWith("CONFIG")));
@@ -60,21 +56,21 @@ public class GreedyBalancer implements Balancer {
     this.config = algorithmConfig;
     minStep =
         config
-            .algorithmConfig()
-            .string(SHUFFLE_PLAN_GENERATOR_MIN_STEP_CONFIG)
+            .config()
+            .string(SHUFFLE_TWEAKER_MIN_STEP_CONFIG)
             .map(Integer::parseInt)
             .map(Utils::requirePositive)
             .orElse(1);
     maxStep =
         config
-            .algorithmConfig()
-            .string(SHUFFLE_PLAN_GENERATOR_MAX_STEP_CONFIG)
+            .config()
+            .string(SHUFFLE_TWEAKER_MAX_STEP_CONFIG)
             .map(Integer::parseInt)
             .map(Utils::requirePositive)
             .orElse(30);
     iteration =
         config
-            .algorithmConfig()
+            .config()
             .string(ITERATION_CONFIG)
             .map(Integer::parseInt)
             .map(Utils::requirePositive)
@@ -82,13 +78,11 @@ public class GreedyBalancer implements Balancer {
   }
 
   @Override
-  public Optional<Plan> offer(ClusterInfo<Replica> currentClusterInfo, Duration timeout) {
-    Jmx jmx = new Jmx();
-
+  public Plan offer(ClusterInfo<Replica> currentClusterInfo, Duration timeout) {
     final var allocationTweaker = new ShuffleTweaker(minStep, maxStep);
     final var metrics = config.metricSource().get();
     final var clusterCostFunction = config.clusterCostFunction();
-    final var moveCostFunction = config.moveCostFunctions();
+    final var moveCostFunction = config.moveCostFunction();
     final var initialCost = clusterCostFunction.clusterCost(currentClusterInfo, metrics);
 
     final var loop = new AtomicInteger(iteration);
@@ -96,22 +90,19 @@ public class GreedyBalancer implements Balancer {
     final var executionTime = timeout.toMillis();
     Supplier<Boolean> moreRoom =
         () -> System.currentTimeMillis() - start < executionTime && loop.getAndDecrement() > 0;
-    BiFunction<ClusterLogAllocation, ClusterCost, Optional<Balancer.Plan>> next =
+    BiFunction<ClusterInfo<Replica>, ClusterCost, Optional<Solution>> next =
         (currentAllocation, currentCost) ->
             allocationTweaker
-                .generate(config.dataFolders(), currentAllocation)
+                .generate(currentAllocation)
                 .takeWhile(ignored -> moreRoom.get())
                 .map(
                     newAllocation -> {
                       var newClusterInfo =
                           ClusterInfo.update(currentClusterInfo, newAllocation::replicas);
-                      return new Balancer.Plan(
-                          newAllocation,
-                          initialCost,
+                      return new Solution(
                           clusterCostFunction.clusterCost(newClusterInfo, metrics),
-                          moveCostFunction.stream()
-                              .map(cf -> cf.moveCost(currentClusterInfo, newClusterInfo, metrics))
-                              .collect(Collectors.toList()));
+                          moveCostFunction.moveCost(currentClusterInfo, newClusterInfo, metrics),
+                          newAllocation);
                     })
                 .filter(
                     plan ->
@@ -119,54 +110,31 @@ public class GreedyBalancer implements Balancer {
                 .filter(plan -> config.movementConstraint().test(plan.moveCost()))
                 .findFirst();
     var currentCost = initialCost;
-    var currentAllocation =
-        ClusterLogAllocation.of(ClusterInfo.masked(currentClusterInfo, config.topicFilter()));
-    var currentPlan = Optional.<Balancer.Plan>empty();
+    var currentAllocation = ClusterInfo.masked(currentClusterInfo, config.topicFilter());
+    var currentSolution = Optional.<Solution>empty();
+
+    // register JMX
+    var currentIteration = new LongAdder();
+    var currentMinCost =
+        new DoubleAccumulator((l, r) -> Double.isNaN(r) ? l : Math.min(l, r), initialCost.value());
+    MBeanRegister.local()
+        .setDomainName("astraea.balancer")
+        .addProperty("id", config.executionId())
+        .addProperty("algorithm", GreedyBalancer.class.getSimpleName())
+        .addProperty("run", Integer.toString(run.getAndIncrement()))
+        .addAttribute("Iteration", Long.class, currentIteration::sum)
+        .addAttribute("MinCost", Double.class, currentMinCost::get)
+        .register();
+
     while (true) {
-      jmx.nextIteration();
-      jmx.newCost(currentCost.value());
+      currentIteration.add(1);
+      currentMinCost.accumulate(currentCost.value());
       var newPlan = next.apply(currentAllocation, currentCost);
       if (newPlan.isEmpty()) break;
-      currentPlan = newPlan;
-      currentCost = currentPlan.get().proposalClusterCost();
-      currentAllocation = currentPlan.get().proposal();
+      currentSolution = newPlan;
+      currentCost = currentSolution.get().proposalClusterCost();
+      currentAllocation = currentSolution.get().proposal();
     }
-    return currentPlan;
-  }
-
-  // visible for test
-  static long minLongDouble(long lhs, long rhs) {
-    double l = Double.longBitsToDouble(lhs);
-    double r = Double.longBitsToDouble(rhs);
-    double out = (Double.isNaN(r) || l < r) ? l : r;
-    return Double.doubleToRawLongBits(out);
-  }
-
-  private class Jmx {
-
-    private final LongAdder currentIteration = new LongAdder();
-    private final LongAccumulator currentMinCost =
-        new LongAccumulator(GreedyBalancer::minLongDouble, Double.doubleToRawLongBits(Double.NaN));
-
-    Jmx() {
-      final var runId = run.getAndIncrement();
-      MBeanRegister.local()
-          .setDomainName("astraea.balancer")
-          .addProperty("id", config.executionId())
-          .addProperty("algorithm", GreedyBalancer.class.getSimpleName())
-          .addProperty("run", Integer.toString(runId))
-          .addAttribute("Iteration", Long.class, currentIteration::sum)
-          .addAttribute(
-              "MinCost", Double.class, () -> Double.longBitsToDouble(currentMinCost.get()))
-          .register();
-    }
-
-    void nextIteration() {
-      currentIteration.increment();
-    }
-
-    void newCost(double cost) {
-      currentMinCost.accumulate(Double.doubleToRawLongBits(cost));
-    }
+    return new Plan(initialCost, currentSolution.orElse(null));
   }
 }

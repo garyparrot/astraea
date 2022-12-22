@@ -17,7 +17,6 @@
 package org.astraea.common.balancer;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.Optional;
 import org.astraea.common.EnumInfo;
 import org.astraea.common.Utils;
@@ -26,7 +25,6 @@ import org.astraea.common.admin.Replica;
 import org.astraea.common.balancer.algorithms.AlgorithmConfig;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
 import org.astraea.common.balancer.algorithms.SingleStepBalancer;
-import org.astraea.common.balancer.log.ClusterLogAllocation;
 import org.astraea.common.cost.ClusterCost;
 import org.astraea.common.cost.MoveCost;
 import org.astraea.common.cost.NoSufficientMetricsException;
@@ -37,7 +35,7 @@ public interface Balancer {
    * Execute {@link Balancer#offer(ClusterInfo, Duration)}. Retry the plan generation if a {@link
    * NoSufficientMetricsException} exception occurred.
    */
-  default Optional<Plan> retryOffer(ClusterInfo<Replica> currentClusterInfo, Duration timeout) {
+  default Plan retryOffer(ClusterInfo<Replica> currentClusterInfo, Duration timeout) {
     final var timeoutMs = System.currentTimeMillis() + timeout.toMillis();
     while (System.currentTimeMillis() < timeoutMs) {
       try {
@@ -67,7 +65,7 @@ public interface Balancer {
   /**
    * @return a rebalance plan
    */
-  Optional<Plan> offer(ClusterInfo<Replica> currentClusterInfo, Duration timeout);
+  Plan offer(ClusterInfo<Replica> currentClusterInfo, Duration timeout);
 
   @SuppressWarnings("unchecked")
   static Balancer create(String classpath, AlgorithmConfig config) {
@@ -97,14 +95,8 @@ public interface Balancer {
   }
 
   class Plan {
-    final ClusterLogAllocation proposal;
     final ClusterCost initialClusterCost;
-    final ClusterCost proposalClusterCost;
-    final List<MoveCost> moveCost;
-
-    public ClusterLogAllocation proposal() {
-      return proposal;
-    }
+    final Solution solution;
 
     /**
      * The {@link ClusterCost} score of the original {@link ClusterInfo} when this plan is start
@@ -114,22 +106,42 @@ public interface Balancer {
       return initialClusterCost;
     }
 
+    public Optional<Solution> solution() {
+      return Optional.ofNullable(solution);
+    }
+
+    public Plan(ClusterCost initialClusterCost) {
+      this(initialClusterCost, null);
+    }
+
+    public Plan(ClusterCost initialClusterCost, Solution solution) {
+      this.initialClusterCost = initialClusterCost;
+      this.solution = solution;
+    }
+  }
+
+  class Solution {
+
+    final ClusterInfo<Replica> proposal;
+    final ClusterCost proposalClusterCost;
+    final MoveCost moveCost;
+
+    public ClusterInfo<Replica> proposal() {
+      return proposal;
+    }
+
     /** The {@link ClusterCost} score of the proposed new allocation. */
     public ClusterCost proposalClusterCost() {
       return proposalClusterCost;
     }
 
-    public List<MoveCost> moveCost() {
+    public MoveCost moveCost() {
       return moveCost;
     }
 
-    public Plan(
-        ClusterLogAllocation proposal,
-        ClusterCost initialClusterCost,
-        ClusterCost proposalClusterCost,
-        List<MoveCost> moveCost) {
+    public Solution(
+        ClusterCost proposalClusterCost, MoveCost moveCost, ClusterInfo<Replica> proposal) {
       this.proposal = proposal;
-      this.initialClusterCost = initialClusterCost;
       this.proposalClusterCost = proposalClusterCost;
       this.moveCost = moveCost;
     }

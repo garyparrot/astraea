@@ -59,8 +59,8 @@ public class DispatcherTest extends RequireSingleBrokerCluster {
           @Override
           public int partition(
               String topic, byte[] key, byte[] value, ClusterInfo<ReplicaInfo> clusterInfo) {
-            Assertions.assertEquals(0, Objects.requireNonNull(key).length);
-            Assertions.assertEquals(0, Objects.requireNonNull(value).length);
+            Assertions.assertNull(key);
+            Assertions.assertNull(value);
             count.incrementAndGet();
             return 0;
           }
@@ -99,7 +99,7 @@ public class DispatcherTest extends RequireSingleBrokerCluster {
   }
 
   @RepeatedTest(5)
-  void multipleThreadTest() {
+  void multipleThreadTest() throws IOException {
     var topicName = "address";
     createTopic(topicName);
     var key = "tainan";
@@ -154,7 +154,7 @@ public class DispatcherTest extends RequireSingleBrokerCluster {
   }
 
   @Test
-  void interdependentTest() {
+  void interdependentTest() throws IOException {
     var topicName = "address";
     createTopic(topicName);
     var key = "tainan";
@@ -248,7 +248,7 @@ public class DispatcherTest extends RequireSingleBrokerCluster {
         : null;
   }
 
-  private Properties initProConfig() {
+  private Properties initProConfig() throws IOException {
     Properties props = new Properties();
     props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers());
     props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
@@ -261,16 +261,12 @@ public class DispatcherTest extends RequireSingleBrokerCluster {
         new File(
             Objects.requireNonNull(DispatcherTest.class.getResource("")).getPath()
                 + "PartitionerConfigTest");
-    try {
-      var fileWriter = new FileWriter(file);
+    try (var fileWriter = new FileWriter(file)) {
       fileWriter.write("jmx.port=" + jmxServiceURL().getPort() + "\n");
       fileWriter.write("broker.0.jmx.port=" + jmxServiceURL().getPort() + "\n");
       fileWriter.write("broker.1.jmx.port=" + jmxServiceURL().getPort() + "\n");
       fileWriter.write("broker.2.jmx.port=" + jmxServiceURL().getPort());
       fileWriter.flush();
-      fileWriter.close();
-    } catch (IOException e) {
-      e.printStackTrace();
     }
     props.put(
         "partitioner.config",

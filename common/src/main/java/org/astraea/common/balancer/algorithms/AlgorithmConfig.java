@@ -16,11 +16,7 @@
  */
 package org.astraea.common.balancer.algorithms;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiPredicate;
 import java.util.function.Predicate;
@@ -37,7 +33,11 @@ import org.astraea.common.cost.MoveCost;
 public interface AlgorithmConfig {
 
   static Builder builder() {
-    return new Builder();
+    return new Builder(null);
+  }
+
+  static Builder builder(AlgorithmConfig config) {
+    return new Builder(config);
   }
 
   /**
@@ -47,11 +47,6 @@ public interface AlgorithmConfig {
   String executionId();
 
   /**
-   * @return the data folders of al brokers.
-   */
-  Map<Integer, Set<String>> dataFolders();
-
-  /**
    * @return the cluster cost function for this problem.
    */
   HasClusterCost clusterCostFunction();
@@ -59,7 +54,7 @@ public interface AlgorithmConfig {
   /**
    * @return the movement cost functions for this problem
    */
-  List<HasMoveCost> moveCostFunctions();
+  HasMoveCost moveCostFunction();
 
   /**
    * @return the cluster cost constraint that must be complied with by the algorithm solution
@@ -69,7 +64,7 @@ public interface AlgorithmConfig {
   /**
    * @return the movement constraint that must be complied with by the algorithm solution
    */
-  Predicate<List<MoveCost>> movementConstraint();
+  Predicate<MoveCost> movementConstraint();
 
   /**
    * @return a {@link Predicate} that can indicate which topic is eligible for rebalance.
@@ -84,20 +79,32 @@ public interface AlgorithmConfig {
   /**
    * @return the algorithm implementation specific parameters
    */
-  Configuration algorithmConfig();
+  Configuration config();
 
   class Builder {
 
     private String executionId = "noname-" + UUID.randomUUID();
     private HasClusterCost clusterCostFunction;
-    private Map<Integer, Set<String>> dataFolders;
-    private List<HasMoveCost> moveCostFunction = List.of(HasMoveCost.EMPTY);
+    private HasMoveCost moveCostFunction = HasMoveCost.EMPTY;
     private BiPredicate<ClusterCost, ClusterCost> clusterConstraint =
         (before, after) -> after.value() < before.value();
-    private Predicate<List<MoveCost>> movementConstraint = ignore -> true;
+    private Predicate<MoveCost> movementConstraint = ignore -> true;
     private Supplier<ClusterBean> metricSource = () -> ClusterBean.EMPTY;
     private Predicate<String> topicFilter = ignore -> true;
-    private final Map<String, String> config = new HashMap<>();
+    private Configuration config = Configuration.EMPTY;
+
+    private Builder(AlgorithmConfig config) {
+      if (config != null) {
+        this.executionId = config.executionId();
+        this.clusterCostFunction = config.clusterCostFunction();
+        this.moveCostFunction = config.moveCostFunction();
+        this.clusterConstraint = config.clusterConstraint();
+        this.movementConstraint = config.movementConstraint();
+        this.metricSource = config.metricSource();
+        this.topicFilter = config.topicFilter();
+        this.config = config.config();
+      }
+    }
 
     /**
      * Set a String that represents the execution of this algorithm. This information is typically
@@ -107,18 +114,6 @@ public interface AlgorithmConfig {
      */
     public Builder executionId(String id) {
       this.executionId = id;
-      return this;
-    }
-
-    /**
-     * Specify the data folders of all brokers
-     *
-     * @return this.
-     */
-    public Builder dataFolders(Map<Integer, Set<String>> dataFolders) {
-      // TODO: Embedded these data folders information into ClusterInfo
-      //       see https://github.com/skiptests/astraea/issues/1106
-      this.dataFolders = Objects.requireNonNull(dataFolders);
       return this;
     }
 
@@ -142,7 +137,7 @@ public interface AlgorithmConfig {
      *     cluster.
      * @return this
      */
-    public Builder moveCost(List<HasMoveCost> costFunction) {
+    public Builder moveCost(HasMoveCost costFunction) {
       this.moveCostFunction = Objects.requireNonNull(costFunction);
       return this;
     }
@@ -168,7 +163,7 @@ public interface AlgorithmConfig {
      *     acceptable(in terms of the ongoing cost caused by execute this rebalance plan).
      * @return this
      */
-    public Builder movementConstraint(Predicate<List<MoveCost>> moveConstraint) {
+    public Builder movementConstraint(Predicate<MoveCost> moveConstraint) {
       this.movementConstraint = Objects.requireNonNull(moveConstraint);
       return this;
     }
@@ -201,27 +196,16 @@ public interface AlgorithmConfig {
     }
 
     /**
-     * @param configuration for {@link Balancer}
+     * @param config for {@link Balancer}
      * @return this
      */
-    public Builder config(Configuration configuration) {
-      configuration.entrySet().forEach((e) -> this.config(e.getKey(), e.getValue()));
-      return this;
-    }
-
-    /**
-     * @param key for {@link Balancer} implementation specific config
-     * @param value for {@link Balancer} implementation specific config
-     * @return this
-     */
-    public Builder config(String key, String value) {
-      this.config.put(Objects.requireNonNull(key), Objects.requireNonNull(value));
+    public Builder config(Configuration config) {
+      this.config = config;
       return this;
     }
 
     public AlgorithmConfig build() {
       Objects.requireNonNull(clusterCostFunction);
-      Objects.requireNonNull(dataFolders);
 
       return new AlgorithmConfig() {
         @Override
@@ -230,17 +214,12 @@ public interface AlgorithmConfig {
         }
 
         @Override
-        public Map<Integer, Set<String>> dataFolders() {
-          return dataFolders;
-        }
-
-        @Override
         public HasClusterCost clusterCostFunction() {
           return clusterCostFunction;
         }
 
         @Override
-        public List<HasMoveCost> moveCostFunctions() {
+        public HasMoveCost moveCostFunction() {
           return moveCostFunction;
         }
 
@@ -250,7 +229,7 @@ public interface AlgorithmConfig {
         }
 
         @Override
-        public Predicate<List<MoveCost>> movementConstraint() {
+        public Predicate<MoveCost> movementConstraint() {
           return movementConstraint;
         }
 
@@ -264,11 +243,9 @@ public interface AlgorithmConfig {
           return metricSource;
         }
 
-        private final Configuration prepared = Configuration.of(Map.copyOf(config));
-
         @Override
-        public Configuration algorithmConfig() {
-          return prepared;
+        public Configuration config() {
+          return config;
         }
       };
     }

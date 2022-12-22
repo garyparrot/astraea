@@ -24,11 +24,22 @@ import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.Objects;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Data size class */
 public class DataSize implements Comparable<DataSize> {
+
+  /** Parse number and DataUnit */
+  private static final Pattern DATA_SIZE_PATTERN =
+      Pattern.compile("(?<measurement>[0-9]+)\\s?(?<dataUnit>[a-zA-Z]+)");
+
+  public static DataSize of(String argument) {
+    var matcher = DATA_SIZE_PATTERN.matcher(argument);
+    if (matcher.matches())
+      return DataUnit.valueOf(matcher.group("dataUnit"))
+          .of(Long.parseLong(matcher.group("measurement")));
+    throw new IllegalArgumentException("Unknown DataSize \"" + argument + "\"");
+  }
 
   public static final DataSize ZERO = DataUnit.Byte.of(0);
 
@@ -266,8 +277,10 @@ public class DataSize implements Comparable<DataSize> {
 
   /** Return a string represent current size in given data unit. */
   public String toString(DataUnit unit) {
+    // DataSize#of does not support double value, so we don't generate double value.
+    // Otherwise, we can't convert the string back to DataSize
     var divide =
-        new BigDecimal(this.bits).divide(new BigDecimal(unit.bits), 3, RoundingMode.HALF_EVEN);
+        new BigDecimal(this.bits).divide(new BigDecimal(unit.bits), 0, RoundingMode.HALF_EVEN);
     return String.format("%s %s", divide, unit.name());
   }
 
@@ -300,35 +313,5 @@ public class DataSize implements Comparable<DataSize> {
   @FunctionalInterface
   public interface DataSizeSource {
     DataSize of(long measurement);
-  }
-
-  public static class Field extends org.astraea.common.argument.Field<DataSize> {
-    // Parse number and DataUnit
-    private static final Pattern DATA_SIZE_PATTERN =
-        Pattern.compile("(?<measurement>[0-9]+)\\s?(?<dataUnit>[a-zA-Z]+)");
-
-    /**
-     * Convert string to DataSize.
-     *
-     * <pre>{@code
-     * new DataSize.Field().convert("500KB");  // 500 KB  (500 * 1000 bytes)
-     * new DataSize.Field().convert("500KiB"); // 500 KiB (500 * 1024 bytes)
-     * new DataSize.Field().convert("500Kb");  // 500 Kb  (500 * 1000 bits)
-     * new DataSize.Field().convert("500Kib"); // 500 Kib (500 * 1024 bits)
-     * }</pre>
-     *
-     * @param argument number and the unit. e.g. "500MiB", "9876 KB"
-     * @return a data size object of given measurement under specific data unit.
-     */
-    @Override
-    public DataSize convert(String argument) {
-      Matcher matcher = DATA_SIZE_PATTERN.matcher(argument);
-      if (matcher.matches()) {
-        return DataUnit.valueOf(matcher.group("dataUnit"))
-            .of(Long.parseLong(matcher.group("measurement")));
-      } else {
-        throw new IllegalArgumentException("Unknown DataSize \"" + argument + "\"");
-      }
-    }
   }
 }

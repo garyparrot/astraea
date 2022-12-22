@@ -26,10 +26,11 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.admin.ClusterInfoBuilder;
 import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.ReplicaInfo;
-import org.astraea.common.balancer.log.ClusterLogAllocation;
 
 /**
  * The {@link ShuffleTweaker} proposes a new log placement based on the current log placement, but
@@ -57,17 +58,16 @@ public class ShuffleTweaker implements AllocationTweaker {
   }
 
   @Override
-  public Stream<ClusterLogAllocation> generate(
-      Map<Integer, Set<String>> brokerFolders, ClusterLogAllocation baseAllocation) {
+  public Stream<ClusterInfo<Replica>> generate(ClusterInfo<Replica> baseAllocation) {
     // There is no broker
-    if (brokerFolders.isEmpty()) return Stream.of();
+    if (baseAllocation.nodes().isEmpty()) return Stream.of();
 
     // No non-ignored topic to working on.
     if (baseAllocation.topicPartitions().isEmpty()) return Stream.of();
 
     // Only one broker & one folder exists, unable to do any log migration
-    if (brokerFolders.size() == 1
-        && brokerFolders.values().stream().findFirst().orElseThrow().size() == 1)
+    if (baseAllocation.nodes().size() == 1
+        && baseAllocation.brokerFolders().values().stream().findFirst().orElseThrow().size() == 1)
       return Stream.of();
 
     return Stream.generate(
@@ -76,7 +76,7 @@ public class ShuffleTweaker implements AllocationTweaker {
 
           var candidates =
               IntStream.range(0, shuffleCount)
-                  .mapToObj(i -> allocationGenerator(brokerFolders))
+                  .mapToObj(i -> allocationGenerator(baseAllocation.brokerFolders()))
                   .collect(Collectors.toUnmodifiableList());
 
           var currentAllocation = baseAllocation;
@@ -86,7 +86,7 @@ public class ShuffleTweaker implements AllocationTweaker {
         });
   }
 
-  private static Function<ClusterLogAllocation, ClusterLogAllocation> allocationGenerator(
+  private static Function<ClusterInfo<Replica>, ClusterInfo<Replica>> allocationGenerator(
       Map<Integer, Set<String>> brokerFolders) {
     return currentAllocation -> {
       final var selectedPartition =
@@ -104,8 +104,11 @@ public class ShuffleTweaker implements AllocationTweaker {
               .skip(1)
               .map(
                   follower ->
-                      (Supplier<ClusterLogAllocation>)
-                          () -> currentAllocation.becomeLeader(follower.topicPartitionReplica()));
+                      (Supplier<ClusterInfo<Replica>>)
+                          () ->
+                              ClusterInfoBuilder.builder(currentAllocation)
+                                  .setPreferredLeader(follower.topicPartitionReplica())
+                                  .build());
 
       // [valid operation 2] change replica list
       final var currentIds =
@@ -121,14 +124,16 @@ public class ShuffleTweaker implements AllocationTweaker {
                       currentReplicas.stream()
                           .map(
                               replica ->
-                                  (Supplier<ClusterLogAllocation>)
+                                  (Supplier<ClusterInfo<Replica>>)
                                       () -> {
                                         var toThisDir =
                                             randomElement(brokerFolders.get(toThisBroker));
-                                        return currentAllocation.migrateReplica(
-                                            replica.topicPartitionReplica(),
-                                            toThisBroker,
-                                            toThisDir);
+                                        return ClusterInfoBuilder.builder(currentAllocation)
+                                            .reassignReplica(
+                                                replica.topicPartitionReplica(),
+                                                toThisBroker,
+                                                toThisDir)
+                                            .build();
                                       }));
 
       return randomElement(

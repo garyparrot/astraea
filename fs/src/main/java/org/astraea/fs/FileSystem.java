@@ -19,18 +19,30 @@ package org.astraea.fs;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import org.astraea.common.Configuration;
-import org.astraea.fs.ftp.FtpFileSystem;
-import org.astraea.fs.local.LocalFileSystem;
+import org.astraea.common.Utils;
 
+/**
+ * the implementation must be thread-safe in the same JVM. The operations from other JVM is fine to
+ * cause exception.
+ */
 public interface FileSystem extends AutoCloseable {
+  Map<String, String> DEFAULT_IMPLS =
+      Map.of(
+          "ftp.impl",
+          "org.astraea.fs.ftp.FtpFileSystem",
+          "local.impl",
+          "org.astraea.fs.local.LocalFileSystem");
 
-  static FileSystem ftp(Configuration configuration) {
-    return new FtpFileSystem(configuration);
-  }
-
-  static FileSystem local(Configuration configuration) {
-    return new LocalFileSystem(configuration);
+  static FileSystem of(String schema, Configuration configuration) {
+    var key = schema.toLowerCase() + "." + "impl";
+    return configuration
+        .string(key)
+        .or(() -> Optional.ofNullable(DEFAULT_IMPLS.get(key)))
+        .map(clz -> Utils.construct(clz, FileSystem.class, configuration))
+        .orElseThrow(() -> new IllegalArgumentException("unsupported schema: " + schema));
   }
 
   /**
@@ -89,10 +101,12 @@ public interface FileSystem extends AutoCloseable {
     return root + "/" + name;
   }
 
-  static String parent(String path) {
-    if (path.equals("/")) return null;
+  static Optional<String> parent(String path) {
+    if (path.equals("/")) return Optional.empty();
+    if (!path.startsWith("/")) return Optional.empty();
     var index = path.lastIndexOf("/");
     if (index < 0) throw new IllegalArgumentException("illegal path: " + path);
-    return path.substring(0, index);
+    if (index == 0) return Optional.of("/");
+    return Optional.of(path.substring(0, index));
   }
 }

@@ -16,10 +16,9 @@
  */
 package org.astraea.common.balancer.tweakers;
 
-import java.util.Map;
-import java.util.Set;
 import java.util.stream.Stream;
-import org.astraea.common.balancer.log.ClusterLogAllocation;
+import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.admin.Replica;
 
 @FunctionalInterface
 public interface AllocationTweaker {
@@ -29,21 +28,18 @@ public interface AllocationTweaker {
   }
 
   /**
-   * Given a {@link ClusterLogAllocation}, tweak it by certain implementation specific logic.
+   * Given a {@link ClusterInfo}, tweak it by certain implementation specific logic.
    *
-   * <p>In a nutshell. This function takes a {@link ClusterLogAllocation} and return another
-   * modified version of the given {@link ClusterLogAllocation}. The caller can use this method for
-   * browsing the space of possible {@link ClusterLogAllocation}.
+   * <p>In a nutshell. This function takes a {@link ClusterInfo} and return another modified version
+   * of the given {@link ClusterInfo}. The caller can use this method for browsing the space of
+   * possible {@link ClusterInfo}.
    *
-   * <p>If the implementation find no alternative feasible {@link ClusterLogAllocation}. Then an
-   * empty {@link Stream} will be returned. We don't encourage the implementation to return the
-   * original {@link ClusterLogAllocation} as part of the Stream result. Since there is no tweaking
-   * occurred.
+   * <p>If the implementation find no alternative feasible {@link ClusterInfo}. Then an empty {@link
+   * Stream} will be returned. We don't encourage the implementation to return the original {@link
+   * ClusterInfo} as part of the Stream result. Since there is no tweaking occurred.
    *
-   * @param brokerFolders key is the broker id, and the value is the folder used to keep data
-   * @param baseAllocation the {@link ClusterLogAllocation} as the base being tweaked.
-   * @return a {@link Stream} of possible tweaked {@link ClusterLogAllocation}.
+   * @param baseAllocation the {@link ClusterInfo} as the base being tweaked.
+   * @return a {@link Stream} of possible tweaked {@link ClusterInfo}.
    */
-  Stream<ClusterLogAllocation> generate(
-      Map<Integer, Set<String>> brokerFolders, ClusterLogAllocation baseAllocation);
+  Stream<ClusterInfo<Replica>> generate(ClusterInfo<Replica> baseAllocation);
 }
