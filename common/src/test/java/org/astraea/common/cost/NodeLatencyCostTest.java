@@ -31,12 +31,20 @@ import org.astraea.common.metrics.client.HasNodeMetrics;
 import org.astraea.common.metrics.client.producer.ProducerMetrics;
 import org.astraea.common.producer.Producer;
 import org.astraea.common.producer.Record;
-import org.astraea.it.RequireBrokerCluster;
+import org.astraea.it.Service;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
-public class NodeLatencyCostTest extends RequireBrokerCluster {
+public class NodeLatencyCostTest {
+
+  private static final Service SERVICE = Service.builder().numberOfBrokers(3).build();
+
+  @AfterAll
+  static void closeService() {
+    SERVICE.close();
+  }
 
   @Test
   void testNan() {
@@ -63,10 +71,10 @@ public class NodeLatencyCostTest extends RequireBrokerCluster {
 
   @Test
   void testCost() {
-    var brokerId = brokerIds().iterator().next();
+    var brokerId = SERVICE.dataFolders().keySet().iterator().next();
     var topic = Utils.randomString(10);
-    try (var admin = Admin.of(bootstrapServers());
-        var producer = Producer.of(bootstrapServers())) {
+    try (var admin = Admin.of(SERVICE.bootstrapServers());
+        var producer = Producer.of(SERVICE.bootstrapServers())) {
       admin.creator().topic(topic).numberOfPartitions(1).run().toCompletableFuture().join();
       Utils.sleep(Duration.ofSeconds(3));
       producer.send(Record.builder().topic(Utils.randomString(10)).value(new byte[100]).build());
@@ -92,16 +100,16 @@ public class NodeLatencyCostTest extends RequireBrokerCluster {
   }
 
   @Test
-  void testFetcher() {
+  void testSensor() {
     var function = new NodeLatencyCost();
     var client = Mockito.mock(MBeanClient.class);
-    Mockito.when(client.queryBeans(Mockito.any()))
+    Mockito.when(client.beans(Mockito.any()))
         .thenReturn(
             List.of(
                 new BeanObject("a", Map.of("node-id", "node-10"), Map.of()),
                 new BeanObject("a", Map.of("node-id", "node-10"), Map.of()),
                 new BeanObject("a", Map.of("node-id", "node-11"), Map.of())));
-    var result = function.fetcher().get().fetch(client);
+    var result = function.metricSensor().get().fetch(client, ClusterBean.EMPTY);
     Assertions.assertEquals(3, result.size());
   }
 }

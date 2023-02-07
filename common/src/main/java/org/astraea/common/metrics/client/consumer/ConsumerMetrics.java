@@ -19,7 +19,6 @@ package org.astraea.common.metrics.client.consumer;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.astraea.common.metrics.AppInfo;
 import org.astraea.common.metrics.BeanObject;
@@ -31,7 +30,7 @@ public class ConsumerMetrics {
 
   public static List<AppInfo> appInfo(MBeanClient client) {
     return client
-        .queryBeans(
+        .beans(
             BeanQuery.builder()
                 .domainName("kafka.consumer")
                 .property("type", "app-info")
@@ -78,10 +77,8 @@ public class ConsumerMetrics {
    * @return key is broker id, and value is associated to broker metrics recorded by all consumers
    */
   public static Collection<HasNodeMetrics> nodes(MBeanClient mBeanClient) {
-    Function<String, Integer> brokerId =
-        node -> Integer.parseInt(node.substring(node.indexOf("-") + 1));
     return mBeanClient
-        .queryBeans(
+        .beans(
             BeanQuery.builder()
                 .domainName("kafka.consumer")
                 .property("type", "consumer-node-metrics")
@@ -95,7 +92,7 @@ public class ConsumerMetrics {
 
   public static Collection<HasConsumerCoordinatorMetrics> coordinators(MBeanClient mBeanClient) {
     return mBeanClient
-        .queryBeans(
+        .beans(
             BeanQuery.builder()
                 .domainName("kafka.consumer")
                 .property("type", "consumer-coordinator-metrics")
@@ -108,7 +105,7 @@ public class ConsumerMetrics {
 
   public static Collection<HasConsumerFetchMetrics> fetches(MBeanClient mBeanClient) {
     return mBeanClient
-        .queryBeans(
+        .beans(
             BeanQuery.builder()
                 .domainName("kafka.consumer")
                 .property("type", "consumer-fetch-manager-metrics")
@@ -121,7 +118,7 @@ public class ConsumerMetrics {
 
   public static Collection<HasConsumerMetrics> of(MBeanClient mBeanClient) {
     return mBeanClient
-        .queryBeans(
+        .beans(
             BeanQuery.builder()
                 .domainName("kafka.consumer")
                 .property("type", "consumer-metrics")

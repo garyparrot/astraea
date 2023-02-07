@@ -27,11 +27,10 @@ import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
-import org.astraea.common.admin.ReplicaInfo;
 import org.astraea.common.metrics.HasBeanObject;
 import org.astraea.common.metrics.broker.HasGauge;
 import org.astraea.common.metrics.broker.ServerMetrics;
-import org.astraea.common.metrics.collector.Fetcher;
+import org.astraea.common.metrics.collector.MetricSensor;
 
 /** more replica leaders -> higher cost */
 public class ReplicaLeaderCost implements HasBrokerCost, HasClusterCost, HasMoveCost {
@@ -39,8 +38,7 @@ public class ReplicaLeaderCost implements HasBrokerCost, HasClusterCost, HasMove
   public static final String COST_NAME = "leader";
 
   @Override
-  public BrokerCost brokerCost(
-      ClusterInfo<? extends ReplicaInfo> clusterInfo, ClusterBean clusterBean) {
+  public BrokerCost brokerCost(ClusterInfo clusterInfo, ClusterBean clusterBean) {
     var result =
         leaderCount(clusterInfo, clusterBean).entrySet().stream()
             .collect(Collectors.toMap(Map.Entry::getKey, e -> (double) e.getValue()));
@@ -48,14 +46,19 @@ public class ReplicaLeaderCost implements HasBrokerCost, HasClusterCost, HasMove
   }
 
   @Override
-  public ClusterCost clusterCost(ClusterInfo<Replica> clusterInfo, ClusterBean clusterBean) {
+  public ClusterCost clusterCost(ClusterInfo clusterInfo, ClusterBean clusterBean) {
     var brokerScore = brokerCost(clusterInfo, clusterBean).value();
     var value = dispersion.calculate(brokerScore.values());
-    return () -> value;
+    return ClusterCost.of(
+        value,
+        () ->
+            brokerScore.values().stream()
+                .map(Object::toString)
+                .collect(Collectors.joining(", ", "{", "}")));
   }
 
   private static Map<Integer, Integer> leaderCount(
-      ClusterInfo<? extends ReplicaInfo> clusterInfo, ClusterBean clusterBean) {
+      ClusterInfo clusterInfo, ClusterBean clusterBean) {
     if (clusterBean == ClusterBean.EMPTY) return leaderCount(clusterInfo);
     var leaderCount = leaderCount(clusterBean);
     // if there is no available metrics, we re-count the leaders based on cluster information
@@ -78,20 +81,20 @@ public class ReplicaLeaderCost implements HasBrokerCost, HasClusterCost, HasMove
                         .sum()));
   }
 
-  static Map<Integer, Integer> leaderCount(ClusterInfo<? extends ReplicaInfo> clusterInfo) {
+  static Map<Integer, Integer> leaderCount(ClusterInfo clusterInfo) {
     return clusterInfo.nodes().stream()
         .map(nodeInfo -> Map.entry(nodeInfo.id(), clusterInfo.replicaLeaders(nodeInfo.id()).size()))
         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
   @Override
-  public Optional<Fetcher> fetcher() {
-    return Optional.of(c -> List.of(ServerMetrics.ReplicaManager.LEADER_COUNT.fetch(c)));
+  public Optional<MetricSensor> metricSensor() {
+    return Optional.of(
+        (client, ignored) -> List.of(ServerMetrics.ReplicaManager.LEADER_COUNT.fetch(client)));
   }
 
   @Override
-  public MoveCost moveCost(
-      ClusterInfo<Replica> before, ClusterInfo<Replica> after, ClusterBean clusterBean) {
+  public MoveCost moveCost(ClusterInfo before, ClusterInfo after, ClusterBean clusterBean) {
     return MoveCost.changedReplicaLeaderCount(
         Stream.concat(before.nodes().stream(), after.nodes().stream())
             .map(NodeInfo::id)
@@ -105,25 +108,30 @@ public class ReplicaLeaderCost implements HasBrokerCost, HasClusterCost, HasMove
                           (int)
                               before
                                   .replicaStream(id)
-                                  .filter(ReplicaInfo::isLeader)
+                                  .filter(Replica::isLeader)
                                   .filter(
                                       r ->
                                           after
                                               .replicaStream(r.topicPartitionReplica())
-                                              .noneMatch(ReplicaInfo::isLeader))
+                                              .noneMatch(Replica::isLeader))
                                   .count();
                       var newLeaders =
                           (int)
                               after
                                   .replicaStream(id)
-                                  .filter(ReplicaInfo::isLeader)
+                                  .filter(Replica::isLeader)
                                   .filter(
                                       r ->
                                           before
                                               .replicaStream(r.topicPartitionReplica())
-                                              .noneMatch(ReplicaInfo::isLeader))
+                                              .noneMatch(Replica::isLeader))
                                   .count();
                       return newLeaders - removedLeaders;
                     })));
+  }
+
+  @Override
+  public String toString() {
+    return this.getClass().getSimpleName();
   }
 }

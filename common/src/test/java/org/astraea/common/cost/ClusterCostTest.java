@@ -22,47 +22,49 @@ import org.astraea.common.Utils;
 import org.astraea.common.admin.Admin;
 import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.admin.Replica;
 import org.astraea.common.metrics.MBeanClient;
-import org.astraea.common.metrics.broker.LogMetrics;
 import org.astraea.common.metrics.broker.ServerMetrics;
-import org.astraea.it.RequireSingleBrokerCluster;
+import org.astraea.it.Service;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-class ClusterCostTest extends RequireSingleBrokerCluster {
+class ClusterCostTest {
 
-  @Test
-  void testMerge() {
-    HasClusterCost cost0 = (c, b) -> () -> 0.2;
-    HasClusterCost cost1 = (c, b) -> () -> 0.5;
-    HasClusterCost cost2 = (c, b) -> () -> 0.8;
-    var merged = HasClusterCost.of(Map.of(cost0, 1D, cost1, 2D, cost2, 2D));
-    var result = merged.clusterCost(null, null).value();
-    Assertions.assertEquals(2.8, Math.round(result * 100.0) / 100.0);
+  private static final Service SERVICE = Service.builder().numberOfBrokers(1).build();
+
+  @AfterAll
+  static void closeService() {
+    SERVICE.close();
   }
 
   @Test
-  void testFetcher() {
+  void testMerge() {
+    HasClusterCost cost0 = (c, b) -> ClusterCost.of(0.2, () -> "description0");
+    HasClusterCost cost1 = (c, b) -> ClusterCost.of(0.5, () -> "description1");
+    HasClusterCost cost2 = (c, b) -> ClusterCost.of(0.8, () -> "description2");
+    var merged = HasClusterCost.of(Map.of(cost0, 1D, cost1, 2D, cost2, 2D));
+    var clusterCost = merged.clusterCost(null, null);
+    var result = clusterCost.value();
+    Assertions.assertEquals(0.56, Math.round(result * 100.0) / 100.0);
+    Assertions.assertTrue(clusterCost.toString().contains("description0"));
+    Assertions.assertTrue(clusterCost.toString().contains("description1"));
+    Assertions.assertTrue(clusterCost.toString().contains("description2"));
+  }
+
+  @Test
+  void testSensor() {
     // create topic partition to get metrics
-    try (var admin = Admin.of(bootstrapServers())) {
-      admin.creator().topic("testFetcher").numberOfPartitions(2).run().toCompletableFuture().join();
+    try (var admin = Admin.of(SERVICE.bootstrapServers())) {
+      admin.creator().topic("testSensor").numberOfPartitions(2).run().toCompletableFuture().join();
     }
-    var cost1 = new ReplicaSizeCost();
+    var cost1 = new RecordSizeCost();
     var cost2 = new ReplicaLeaderCost();
     var mergeCost = HasClusterCost.of(Map.of(cost1, 1.0, cost2, 1.0));
     var metrics =
-        mergeCost.fetcher().stream()
-            .map(x -> x.fetch(MBeanClient.of(jmxServiceURL())))
+        mergeCost.metricSensor().stream()
+            .map(x -> x.fetch(MBeanClient.of(SERVICE.jmxServiceURL()), ClusterBean.EMPTY))
             .collect(Collectors.toSet());
-    Assertions.assertTrue(
-        metrics.iterator().next().stream()
-            .anyMatch(
-                x ->
-                    x.beanObject()
-                        .properties()
-                        .get("name")
-                        .equals(LogMetrics.Log.SIZE.metricName())));
     Assertions.assertTrue(
         metrics.iterator().next().stream()
             .anyMatch(
@@ -81,8 +83,7 @@ class ClusterCostTest extends RequireSingleBrokerCluster {
     var cost0 =
         new HasClusterCost() {
           @Override
-          public ClusterCost clusterCost(
-              ClusterInfo<Replica> clusterInfo, ClusterBean clusterBean) {
+          public ClusterCost clusterCost(ClusterInfo clusterInfo, ClusterBean clusterBean) {
             return null;
           }
 
@@ -94,8 +95,7 @@ class ClusterCostTest extends RequireSingleBrokerCluster {
     var cost1 =
         new HasClusterCost() {
           @Override
-          public ClusterCost clusterCost(
-              ClusterInfo<Replica> clusterInfo, ClusterBean clusterBean) {
+          public ClusterCost clusterCost(ClusterInfo clusterInfo, ClusterBean clusterBean) {
             return null;
           }
 
@@ -107,8 +107,7 @@ class ClusterCostTest extends RequireSingleBrokerCluster {
     var cost2 =
         new HasClusterCost() {
           @Override
-          public ClusterCost clusterCost(
-              ClusterInfo<Replica> clusterInfo, ClusterBean clusterBean) {
+          public ClusterCost clusterCost(ClusterInfo clusterInfo, ClusterBean clusterBean) {
             return null;
           }
 

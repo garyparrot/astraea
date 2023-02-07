@@ -25,10 +25,9 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.admin.ReplicaInfo;
 import org.astraea.common.metrics.HasBeanObject;
 import org.astraea.common.metrics.broker.ServerMetrics;
-import org.astraea.common.metrics.collector.Fetcher;
+import org.astraea.common.metrics.collector.MetricSensor;
 import org.astraea.common.partitioner.PartitionerUtils;
 
 public class LoadCost implements HasBrokerCost {
@@ -42,8 +41,7 @@ public class LoadCost implements HasBrokerCost {
 
   /** Do "Poisson" and "weightPoisson" calculation on "load". And change output to double. */
   @Override
-  public BrokerCost brokerCost(
-      ClusterInfo<? extends ReplicaInfo> clusterInfo, ClusterBean clusterBean) {
+  public BrokerCost brokerCost(ClusterInfo clusterInfo, ClusterBean clusterBean) {
     var load = computeLoad(clusterBean.all());
 
     // Poisson calculation (-> Poisson -> throughputAbility -> to double)
@@ -150,12 +148,17 @@ public class LoadCost implements HasBrokerCost {
    * @return the metrics getters. Those getters are used to fetch mbeans.
    */
   @Override
-  public Optional<Fetcher> fetcher() {
+  public Optional<MetricSensor> metricSensor() {
     return Optional.of(
-        client ->
+        (client, ignored) ->
             List.of(
                 ServerMetrics.BrokerTopic.BYTES_IN_PER_SEC.fetch(client),
                 ServerMetrics.BrokerTopic.BYTES_OUT_PER_SEC.fetch(client)));
+  }
+
+  @Override
+  public String toString() {
+    return this.getClass().getSimpleName();
   }
 
   private static class BrokerMetric {

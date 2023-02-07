@@ -117,9 +117,9 @@ public class NetworkMetrics {
       return alias();
     }
 
-    public Histogram fetch(MBeanClient mBeanClient) {
+    public Histogram totalTimeMs(MBeanClient mBeanClient) {
       return new Histogram(
-          mBeanClient.queryBean(
+          mBeanClient.bean(
               BeanQuery.builder()
                   .domainName("kafka.network")
                   .property("type", "RequestMetrics")

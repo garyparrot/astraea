@@ -17,6 +17,7 @@
 package org.astraea.common.metrics.stats;
 
 import java.time.Duration;
+import java.util.concurrent.ConcurrentLinkedDeque;
 
 public class Avg {
   public static Stat<Double> of() {
@@ -32,42 +33,8 @@ public class Avg {
 
       @Override
       public synchronized Double measure() {
-        if (counter == 0) throw new RuntimeException("Nothing to measure");
+        if (counter == 0) return Double.NaN;
         return accumulator / counter;
-      }
-    };
-  }
-
-  /**
-   * Calculate the difference of the latest two ranged data.
-   *
-   * @param period Set the interval time for obtaining indicators. If multiple values are obtained
-   *     within the duration, it will be regarded as one
-   */
-  public static Stat<Double> rateByTime(Duration period) {
-    return new Stat<>() {
-      private double accumulate = 0.0;
-
-      private long count = 0;
-
-      private final Debounce<Double> debounce = Debounce.of(period);
-      ;
-
-      @Override
-      public synchronized void record(Double value) {
-        long current = System.currentTimeMillis();
-        debounce
-            .record(value, current)
-            .ifPresent(
-                debouncedValue -> {
-                  accumulate += debouncedValue;
-                  ++count;
-                });
-      }
-
-      @Override
-      public synchronized Double measure() {
-        return accumulate / count;
       }
     };
   }
@@ -107,5 +74,46 @@ public class Avg {
         return accumulate;
       }
     };
+  }
+
+  /** Compute the average of value recorded in the given time period. */
+  public static Stat<Double> byTime(Duration period) {
+    if (period.toMillis() <= 0) {
+      throw new IllegalArgumentException(
+          "Stat, Average by time, needs period longer than 1 millisecond.");
+    }
+    return new Stat<>() {
+      private final ConcurrentLinkedDeque<ValueAndTime<Double>> past =
+          new ConcurrentLinkedDeque<>();
+
+      @Override
+      public void record(Double value) {
+        past.add(new ValueAndTime<>(value, System.currentTimeMillis()));
+        popOutdated();
+      }
+
+      @Override
+      public Double measure() {
+        popOutdated();
+        return past.stream().mapToDouble(e -> e.value).average().orElse(Double.NaN);
+      }
+
+      private void popOutdated() {
+        var outdated = System.currentTimeMillis() - period.toMillis();
+        while (!past.isEmpty() && past.peekFirst().timestamp < outdated) {
+          past.poll();
+        }
+      }
+    };
+  }
+
+  private static class ValueAndTime<V> {
+    public final V value;
+    public final long timestamp;
+
+    public ValueAndTime(V value, long timestamp) {
+      this.value = value;
+      this.timestamp = timestamp;
+    }
   }
 }

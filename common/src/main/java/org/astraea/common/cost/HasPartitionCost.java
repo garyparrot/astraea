@@ -23,9 +23,8 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.admin.ReplicaInfo;
 import org.astraea.common.admin.TopicPartition;
-import org.astraea.common.metrics.collector.Fetcher;
+import org.astraea.common.metrics.collector.MetricSensor;
 
 @FunctionalInterface
 public interface HasPartitionCost extends CostFunction {
@@ -33,17 +32,16 @@ public interface HasPartitionCost extends CostFunction {
   HasPartitionCost EMPTY = (clusterInfo, clusterBean) -> Map::of;
 
   static HasPartitionCost of(Map<HasPartitionCost, Double> costAndWeight) {
-    var fetcher =
-        Fetcher.of(
+    var sensor =
+        MetricSensor.of(
             costAndWeight.keySet().stream()
-                .map(CostFunction::fetcher)
+                .map(CostFunction::metricSensor)
                 .filter(Optional::isPresent)
                 .map(Optional::get)
                 .collect(Collectors.toUnmodifiableList()));
     return new HasPartitionCost() {
       @Override
-      public PartitionCost partitionCost(
-          ClusterInfo<? extends ReplicaInfo> clusterInfo, ClusterBean clusterBean) {
+      public PartitionCost partitionCost(ClusterInfo clusterInfo, ClusterBean clusterBean) {
         var result = new HashMap<TopicPartition, Double>();
         costAndWeight.forEach(
             (function, weight) ->
@@ -60,12 +58,17 @@ public interface HasPartitionCost extends CostFunction {
       }
 
       @Override
-      public Optional<Fetcher> fetcher() {
-        return fetcher;
+      public Optional<MetricSensor> metricSensor() {
+        return sensor;
+      }
+
+      @Override
+      public String toString() {
+        return "WeightCompositePartitionCostFunction"
+            + CostFunction.toStringComposite(costAndWeight);
       }
     };
   }
 
-  PartitionCost partitionCost(
-      ClusterInfo<? extends ReplicaInfo> clusterInfo, ClusterBean clusterBean);
+  PartitionCost partitionCost(ClusterInfo clusterInfo, ClusterBean clusterBean);
 }

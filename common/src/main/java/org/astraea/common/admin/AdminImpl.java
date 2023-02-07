@@ -26,8 +26,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.apache.kafka.clients.admin.AlterConfigOp;
@@ -49,6 +51,7 @@ import org.apache.kafka.common.ElectionType;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.config.ConfigResource;
 import org.apache.kafka.common.errors.ElectionNotNeededException;
+import org.apache.kafka.common.errors.ReplicaNotAvailableException;
 import org.apache.kafka.common.errors.UnsupportedVersionException;
 import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaEntity;
@@ -384,15 +387,10 @@ class AdminImpl implements Admin {
         updatableTopicPartitions.thenCompose(this::latestOffsets),
         updatableTopicPartitions
             .thenCompose(this::maxTimestamps)
-            // the old kafka does not support to fetch max timestamp. It is fine to return partition
-            // without max timestamp
-            .exceptionally(
-                e -> {
-                  if (e instanceof UnsupportedVersionException
-                      || e.getCause() instanceof UnsupportedVersionException) return Map.of();
-                  if (e instanceof RuntimeException) throw (RuntimeException) e;
-                  throw new RuntimeException(e);
-                }),
+            // supported version: 3.0.0
+            // https://issues.apache.org/jira/browse/KAFKA-12541
+            // It is fine to return partition without max timestamp
+            .exceptionally(exceptionHandler(UnsupportedVersionException.class, Map.of())),
         topicDesc.thenApply(
             ts ->
                 ts.entrySet().stream()
@@ -448,9 +446,14 @@ class AdminImpl implements Admin {
 
   @Override
   public CompletionStage<List<Broker>> brokers() {
+    return clusterIdAndBrokers().thenApply(Map.Entry::getValue);
+  }
+
+  private CompletionStage<Map.Entry<String, List<Broker>>> clusterIdAndBrokers() {
     var cluster = kafkaAdmin.describeCluster();
     var nodeFuture = to(cluster.nodes());
     return FutureUtils.combine(
+        to(cluster.clusterId()),
         to(cluster.controller()),
         topicNames(true).thenCompose(names -> to(kafkaAdmin.describeTopics(names).all())),
         nodeFuture.thenCompose(
@@ -469,18 +472,20 @@ class AdminImpl implements Admin {
                                     ConfigResource.Type.BROKER, String.valueOf(n.id())))
                         .collect(Collectors.toList()))),
         nodeFuture,
-        (controller, topics, logDirs, configs, nodes) ->
-            nodes.stream()
-                .map(
-                    node ->
-                        Broker.of(
-                            node.id() == controller.id(),
-                            node,
-                            configs.get(String.valueOf(node.id())),
-                            logDirs.get(node.id()),
-                            topics.values()))
-                .sorted(Comparator.comparing(NodeInfo::id))
-                .collect(Collectors.toList()));
+        (id, controller, topics, logDirs, configs, nodes) ->
+            Map.entry(
+                id,
+                nodes.stream()
+                    .map(
+                        node ->
+                            Broker.of(
+                                node.id() == controller.id(),
+                                node,
+                                configs.get(String.valueOf(node.id())),
+                                logDirs.get(node.id()),
+                                topics.values()))
+                    .sorted(Comparator.comparing(NodeInfo::id))
+                    .collect(Collectors.toList())));
   }
 
   @Override
@@ -516,6 +521,8 @@ class AdminImpl implements Admin {
                     groupId ->
                         new ConsumerGroup(
                             groupId,
+                            consumerGroupDescriptions.get(groupId).partitionAssignor(),
+                            consumerGroupDescriptions.get(groupId).state().name(),
                             NodeInfo.of(consumerGroupDescriptions.get(groupId).coordinator()),
                             consumerGroupMetadata.get(groupId).entrySet().stream()
                                 .collect(
@@ -544,20 +551,44 @@ class AdminImpl implements Admin {
   public CompletionStage<List<ProducerState>> producerStates(Set<TopicPartition> partitions) {
     if (partitions.isEmpty()) return CompletableFuture.completedFuture(List.of());
     return to(kafkaAdmin
-            .describeProducers(
-                partitions.stream()
-                    .map(TopicPartition::to)
-                    .collect(Collectors.toUnmodifiableList()))
+            .describeTopics(
+                partitions.stream().map(TopicPartition::topic).collect(Collectors.toSet()))
             .all())
         .thenApply(
-            ps ->
-                ps.entrySet().stream()
-                    .flatMap(
-                        e ->
-                            e.getValue().activeProducers().stream()
-                                .map(s -> ProducerState.of(e.getKey(), s)))
-                    .sorted(Comparator.comparing(ProducerState::topic))
-                    .collect(Collectors.toList()));
+            ts ->
+                partitions.stream()
+                    .filter(
+                        p ->
+                            ts.containsKey(p.topic())
+                                && ts.get(p.topic()).partitions().stream()
+                                    .anyMatch(
+                                        partitionInfo ->
+                                            partitionInfo.partition() == p.partition()
+                                                // It will get stuck if admin tries to connect to
+                                                // offline nodes,
+                                                && partitionInfo.leader() != null
+                                                && !partitionInfo.leader().isEmpty()))
+                    .collect(Collectors.toSet()))
+        .thenCompose(
+            availablePartitions ->
+                to(kafkaAdmin
+                        .describeProducers(
+                            availablePartitions.stream()
+                                .map(TopicPartition::to)
+                                .collect(Collectors.toUnmodifiableList()))
+                        .all())
+                    // supported version: 2.8.0
+                    // https://issues.apache.org/jira/browse/KAFKA-12238
+                    .exceptionally(exceptionHandler(UnsupportedVersionException.class, Map.of()))
+                    .thenApply(
+                        ps ->
+                            ps.entrySet().stream()
+                                .flatMap(
+                                    e ->
+                                        e.getValue().activeProducers().stream()
+                                            .map(s -> ProducerState.of(e.getKey(), s)))
+                                .sorted(Comparator.comparing(ProducerState::topic))
+                                .collect(Collectors.toList())));
   }
 
   @Override
@@ -583,16 +614,17 @@ class AdminImpl implements Admin {
   }
 
   @Override
-  public CompletionStage<ClusterInfo<Replica>> clusterInfo(Set<String> topics) {
+  public CompletionStage<ClusterInfo> clusterInfo(Set<String> topics) {
     return FutureUtils.combine(
-        brokers()
-            .thenApply(
-                brokers ->
-                    brokers.stream()
-                        .map(x -> (NodeInfo) x)
-                        .collect(Collectors.toUnmodifiableList())),
+        clusterIdAndBrokers(),
         replicas(topics),
-        ClusterInfo::of);
+        (clusterIdAndBrokers, replicas) ->
+            ClusterInfo.of(
+                clusterIdAndBrokers.getKey(),
+                clusterIdAndBrokers.getValue().stream()
+                    .map(x -> (NodeInfo) x)
+                    .collect(Collectors.toUnmodifiableList()),
+                replicas));
   }
 
   private CompletionStage<List<Replica>> replicas(Set<String> topics) {
@@ -602,7 +634,10 @@ class AdminImpl implements Admin {
     return FutureUtils.combine(
         logDirs(),
         to(kafkaAdmin.describeTopics(topics).allTopicNames()),
-        to(kafkaAdmin.listPartitionReassignments().reassignments()),
+        to(kafkaAdmin.listPartitionReassignments().reassignments())
+            // supported version: 2.4.0
+            // https://issues.apache.org/jira/browse/KAFKA-8345
+            .exceptionally(exceptionHandler(UnsupportedVersionException.class, Map.of())),
         (logDirs, ts, reassignmentMap) ->
             ts.values().stream()
                 .flatMap(topic -> topic.partitions().stream().map(p -> Map.entry(topic.name(), p)))
@@ -655,7 +690,7 @@ class AdminImpl implements Admin {
                                                       partition.leader() != null
                                                           && !partition.leader().isEmpty()
                                                           && partition.leader().id() == node.id())
-                                                  .inSync(partition.isr().contains(node))
+                                                  .isSync(partition.isr().contains(node))
                                                   .isFuture(pathAndReplica.getValue().isFuture())
                                                   .isOffline(
                                                       node.isEmpty()
@@ -683,35 +718,35 @@ class AdminImpl implements Admin {
 
   @Override
   public CompletionStage<List<Quota>> quotas(Map<String, Set<String>> targets) {
-    return to(kafkaAdmin
-            .describeClientQuotas(
-                ClientQuotaFilter.contains(
-                    targets.entrySet().stream()
-                        .flatMap(
-                            t ->
-                                t.getValue().stream()
-                                    .map(v -> ClientQuotaFilterComponent.ofEntity(t.getKey(), v)))
-                        .collect(Collectors.toList())))
-            .entities())
+    return quotas(
+            ClientQuotaFilter.contains(
+                targets.entrySet().stream()
+                    .flatMap(
+                        t ->
+                            t.getValue().stream()
+                                .map(v -> ClientQuotaFilterComponent.ofEntity(t.getKey(), v)))
+                    .collect(Collectors.toList())))
         .thenApply(Quota::of);
   }
 
   @Override
   public CompletionStage<List<Quota>> quotas(Set<String> targetKeys) {
-    return to(kafkaAdmin
-            .describeClientQuotas(
-                ClientQuotaFilter.contains(
-                    targetKeys.stream()
-                        .map(ClientQuotaFilterComponent::ofEntityType)
-                        .collect(Collectors.toList())))
-            .entities())
+    return quotas(
+            ClientQuotaFilter.contains(
+                targetKeys.stream()
+                    .map(ClientQuotaFilterComponent::ofEntityType)
+                    .collect(Collectors.toList())))
         .thenApply(Quota::of);
   }
 
   @Override
   public CompletionStage<List<Quota>> quotas() {
-    return to(kafkaAdmin.describeClientQuotas(ClientQuotaFilter.all()).entities())
-        .thenApply(Quota::of);
+    return quotas(ClientQuotaFilter.all()).thenApply(Quota::of);
+  }
+
+  private CompletionStage<Map<ClientQuotaEntity, Map<String, Double>>> quotas(
+      ClientQuotaFilter filter) {
+    return to(kafkaAdmin.describeClientQuotas(filter).entities());
   }
 
   @Override
@@ -951,21 +986,43 @@ class AdminImpl implements Admin {
   }
 
   @Override
+  public CompletionStage<Void> declarePreferredDataFolders(
+      Map<TopicPartitionReplica, String> assignments) {
+    if (assignments.isEmpty()) return CompletableFuture.completedFuture(null);
+    return clusterInfo(
+            assignments.keySet().stream()
+                .map(TopicPartitionReplica::topic)
+                .collect(Collectors.toUnmodifiableSet()))
+        .thenApply(
+            cluster ->
+                assignments.entrySet().stream()
+                    .filter(e -> cluster.replicas(e.getKey()).isEmpty())
+                    .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue)))
+        .thenCompose(this::moveToFolders)
+        .handle(
+            (r, e) -> {
+              if (e == null)
+                throw new RuntimeException(
+                    "Fail to expect a ReplicaNotAvailableException return from the API. "
+                        + "A data folder movement might just triggered. "
+                        + "Is there another Admin Client manipulating the cluster state?");
+              if (e instanceof CompletionException
+                  && (e.getCause()) instanceof ReplicaNotAvailableException) return null;
+              throw (RuntimeException) e;
+            });
+  }
+
+  @Override
   public CompletionStage<Void> preferredLeaderElection(Set<TopicPartition> partitions) {
     return to(kafkaAdmin
             .electLeaders(
                 ElectionType.PREFERRED,
                 partitions.stream().map(TopicPartition::to).collect(Collectors.toSet()))
             .all())
-        .exceptionally(
-            e -> {
-              // This error occurred if the preferred leader of the given topic/partition is already
-              // the leader. It is ok to swallow the exception since the preferred leader be the
-              // actual leader. That is what the caller wants to be.
-              if (e instanceof ElectionNotNeededException) return null;
-              if (e instanceof RuntimeException) throw (RuntimeException) e;
-              throw new RuntimeException(e);
-            });
+        // This error occurred if the preferred leader of the given topic/partition is already
+        // the leader. It is ok to swallow the exception since the preferred leader be the
+        // actual leader. That is what the caller wants to be.
+        .exceptionally(exceptionHandler(ElectionNotNeededException.class, null));
   }
 
   @Override
@@ -1330,5 +1387,16 @@ class AdminImpl implements Admin {
                                                         Collectors.toMap(
                                                             Map.Entry::getKey,
                                                             Map.Entry::getValue)))))));
+  }
+
+  private <T> Function<Throwable, T> exceptionHandler(
+      Class<? extends Exception> clz, T defaultValue) {
+    return e -> {
+      if (clz.isInstance(e) || (e.getCause() != null && clz.isInstance(e.getCause())))
+        return defaultValue;
+
+      if (e instanceof RuntimeException) throw (RuntimeException) e;
+      throw new RuntimeException(e);
+    };
   }
 }

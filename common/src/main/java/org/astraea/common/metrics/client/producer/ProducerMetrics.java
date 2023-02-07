@@ -19,7 +19,6 @@ package org.astraea.common.metrics.client.producer;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.astraea.common.metrics.AppInfo;
 import org.astraea.common.metrics.BeanObject;
@@ -31,7 +30,7 @@ public final class ProducerMetrics {
 
   public static List<AppInfo> appInfo(MBeanClient client) {
     return client
-        .queryBeans(
+        .beans(
             BeanQuery.builder()
                 .domainName("kafka.producer")
                 .property("type", "app-info")
@@ -54,7 +53,6 @@ public final class ProducerMetrics {
                   @Override
                   public Optional<Long> startTimeMs() {
                     var t = beanObject().attributes().get("start-time-ms");
-                    ;
                     if (t == null) return Optional.empty();
                     return Optional.of((long) t);
                   }
@@ -79,10 +77,8 @@ public final class ProducerMetrics {
    * @return key is broker id, and value is associated to broker metrics recorded by all producers
    */
   public static Collection<HasNodeMetrics> nodes(MBeanClient mBeanClient) {
-    Function<String, Integer> brokerId =
-        node -> Integer.parseInt(node.substring(node.indexOf("-") + 1));
     return mBeanClient
-        .queryBeans(
+        .beans(
             BeanQuery.builder()
                 .domainName("kafka.producer")
                 .property("type", "producer-node-metrics")
@@ -102,7 +98,7 @@ public final class ProducerMetrics {
    */
   public static Collection<HasProducerTopicMetrics> topics(MBeanClient mBeanClient) {
     return mBeanClient
-        .queryBeans(
+        .beans(
             BeanQuery.builder()
                 .domainName("kafka.producer")
                 .property("type", "producer-topic-metrics")
@@ -116,7 +112,7 @@ public final class ProducerMetrics {
 
   public static Collection<HasProducerMetrics> of(MBeanClient mBeanClient) {
     return mBeanClient
-        .queryBeans(
+        .beans(
             BeanQuery.builder()
                 .domainName("kafka.producer")
                 .property("type", "producer-metrics")

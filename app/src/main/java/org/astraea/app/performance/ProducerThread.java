@@ -16,8 +16,8 @@
  */
 package org.astraea.app.performance;
 
-import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -27,17 +27,25 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.astraea.common.Utils;
-import org.astraea.common.admin.TopicPartition;
+import org.astraea.common.metrics.MBeanRegister;
+import org.astraea.common.metrics.Sensor;
+import org.astraea.common.metrics.stats.Avg;
 import org.astraea.common.partitioner.Dispatcher;
 import org.astraea.common.producer.Producer;
 import org.astraea.common.producer.Record;
 
 public interface ProducerThread extends AbstractThread {
 
+  String DOMAIN_NAME = "org.astraea";
+  String TYPE_PROPERTY = "type";
+
+  String TYPE_VALUE = "producer";
+
+  String AVG_PROPERTY = "avg";
+  String ID_PROPERTY = "client-id";
+
   static List<ProducerThread> create(
-      int batchSize,
-      DataSupplier dataSupplier,
-      Supplier<TopicPartition> topicPartitionSupplier,
+      List<ArrayBlockingQueue<List<Record<byte[], byte[]>>>> queues,
       int producers,
       Supplier<Producer<byte[], byte[]>> producerSupplier,
       int interdependent) {
@@ -63,50 +71,52 @@ public interface ProducerThread extends AbstractThread {
               var closeLatch = closeLatches.get(index);
               var closed = new AtomicBoolean(false);
               var producer = producerSupplier.get();
+              var queue = queues.get(index);
+              var sensor = Sensor.builder().addStat(AVG_PROPERTY, Avg.of()).build();
+              // export the custom jmx for report thread
+              MBeanRegister.local()
+                  .domainName(DOMAIN_NAME)
+                  .property(TYPE_PROPERTY, TYPE_VALUE)
+                  .property(ID_PROPERTY, producer.clientId())
+                  .attribute(AVG_PROPERTY, Double.class, () -> sensor.measure(AVG_PROPERTY))
+                  .register();
               executors.execute(
                   () -> {
                     try {
                       int interdependentCounter = 0;
+
                       while (!closed.get()) {
-                        var data =
-                            IntStream.range(0, batchSize)
-                                .mapToObj(i -> dataSupplier.get())
-                                .collect(Collectors.toUnmodifiableList());
 
-                        // no more data
-                        if (data.stream().allMatch(DataSupplier.Data::done)) return;
-
-                        // no data due to throttle
-                        // TODO: we should return a precise sleep time
-                        if (data.stream().allMatch(DataSupplier.Data::throttled)) {
-                          Utils.sleep(Duration.ofSeconds(1));
-                          continue;
-                        }
+                        var data = queue.poll(3, TimeUnit.SECONDS);
 
                         // Using interdependent
-                        if (interdependent > 1) {
+                        if (interdependent > 1 && data != null) {
                           Dispatcher.beginInterdependent(producer);
-                          interdependentCounter +=
-                              data.stream().filter(DataSupplier.Data::hasData).count();
+                          interdependentCounter += data.size();
                         }
-                        producer.send(
-                            data.stream()
-                                .filter(DataSupplier.Data::hasData)
-                                .map(
-                                    d ->
-                                        Record.builder()
-                                            .topicPartition(topicPartitionSupplier.get())
-                                            .key(d.key())
-                                            .value(d.value())
-                                            .timestamp(System.currentTimeMillis())
-                                            .build())
-                                .collect(Collectors.toList()));
+                        var now = System.currentTimeMillis();
+                        if (data != null)
+                          producer
+                              .send(data)
+                              .forEach(
+                                  f ->
+                                      f.whenComplete(
+                                          (r, e) -> {
+                                            if (e == null)
+                                              sensor.record(
+                                                  (double) (System.currentTimeMillis() - now));
+                                          }));
+
                         // End interdependent
                         if (interdependent > 1 && interdependentCounter >= interdependent) {
                           Dispatcher.endInterdependent(producer);
                           interdependentCounter = 0;
                         }
                       }
+                    } catch (InterruptedException e) {
+                      if (!queue.isEmpty())
+                        throw new RuntimeException(
+                            e + ", The producer thread was prematurely closed.");
                     } finally {
                       Utils.swallowException(producer::close);
                       closeLatch.countDown();

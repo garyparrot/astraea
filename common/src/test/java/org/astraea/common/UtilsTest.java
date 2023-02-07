@@ -25,12 +25,33 @@ import java.util.concurrent.ExecutionException;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.astraea.common.cost.CostFunction;
+import org.astraea.common.cost.HasBrokerCost;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 public class UtilsTest {
+
+  @Test
+  void testChunk() {
+    var input = List.of("a", "b", "c", "d");
+
+    var output = List.copyOf(Utils.chunk(input, 1));
+    Assertions.assertEquals(1, output.size());
+    Assertions.assertEquals(input, output.get(0));
+
+    var output2 = List.copyOf(Utils.chunk(input, 2));
+    Assertions.assertEquals(2, output2.size());
+    Assertions.assertEquals(List.of("a", "c"), output2.get(0));
+    Assertions.assertEquals(List.of("b", "d"), output2.get(1));
+
+    var output3 = List.copyOf(Utils.chunk(input, 3));
+    Assertions.assertEquals(3, output3.size(), output3.toString());
+    Assertions.assertEquals(List.of("a", "d"), output3.get(0));
+    Assertions.assertEquals(List.of("b"), output3.get(1));
+    Assertions.assertEquals(List.of("c"), output3.get(2));
+  }
 
   @Test
   void testHandleException() {
@@ -200,5 +221,42 @@ public class UtilsTest {
 
   private static class TestBadCostFunction implements CostFunction {
     public TestBadCostFunction(int value) {}
+  }
+
+  @Test
+  void testCostFunctions() {
+    var config =
+        Configuration.of(
+            Map.of(
+                "org.astraea.common.cost.BrokerInputCost",
+                "20",
+                "org.astraea.common.cost.BrokerOutputCost",
+                "1.25"));
+    var ans = Utils.costFunctions(config, HasBrokerCost.class);
+    Assertions.assertEquals(2, ans.size());
+    for (var entry : ans.entrySet()) {
+      if (entry.getKey().getClass().getName().equals("org.astraea.common.cost.BrokerInputCost")) {
+        Assertions.assertEquals(20.0, entry.getValue());
+      } else if (entry
+          .getKey()
+          .getClass()
+          .getName()
+          .equals("org.astraea.common.cost.BrokerOutputCost")) {
+        Assertions.assertEquals(1.25, entry.getValue());
+      } else {
+        Assertions.assertEquals(0.0, entry.getValue());
+      }
+    }
+
+    // test negative weight
+    var config2 =
+        Configuration.of(
+            Map.of(
+                "org.astraea.common.cost.BrokerInputCost",
+                "-20",
+                "org.astraea.common.cost.BrokerOutputCost",
+                "1.25"));
+    Assertions.assertThrows(
+        IllegalArgumentException.class, () -> Utils.costFunctions(config2, HasBrokerCost.class));
   }
 }

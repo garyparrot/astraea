@@ -22,23 +22,22 @@ source "$DOCKER_FOLDER"/docker_build_common.sh
 declare -r SPARK_VERSION=${SPARK_VERSION:-3.3.1}
 # ===============================[global variables]================================
 declare -r LOCAL_PATH=$(cd -- "$(dirname -- "${DOCKER_FOLDER}")" &>/dev/null && pwd)
-declare -r HEAP_OPTS="${HEAP_OPTS:-"-Xmx4G -Xms4G"}"
 # ===============================[properties keys]=================================
 declare -r SOURCE_KEY="source.path"
+declare -r CHECKPOINT_KEY="checkpoint"
 # ===============================[spark driver/executor resource]==================
-declare -r RESOURCES_CONFIGS="${RESOURCES_CONFIGS:-"2G"}"
+declare -r RESOURCES_CONFIGS="${RESOURCES_CONFIGS:-"--conf spark.driver.memory=4g --conf spark.executor.memory=4g"}"
 # ===================================[functions]===================================
 
 function showHelp() {
   echo "Usage: [ENV] start_etl.sh properties_path"
   echo "required Arguments: "
-  echo "    master                         where to submit spark job"
-  echo "    property.file                         The path of Spark2Kafka.properties."
+  echo "    master                                                where to submit spark job"
+  echo "    property.file                                         The path of Spark2Kafka.properties."
   echo "ENV: "
-  echo "    ACCOUNT=skiptests                       set the account to clone from"
-  echo "    VERSION=main                            set branch of astraea"
-  echo "    HEAP_OPTS=\"-Xmx2G -Xms2G\"             set broker JVM memory"
-  echo "    RESOURCES_CONFIGS=\"-Xmx2G -Xms2G\"     set spark memory"
+  echo "    ACCOUNT=skiptests                                     set the account to clone from"
+  echo "    VERSION=main                                          set branch of astraea"
+  echo "    RESOURCES_CONFIGS=\"--conf spark.driver.memory=4g\"     set spark memory"
 }
 
 function runContainer() {
@@ -51,6 +50,7 @@ function runContainer() {
   fi
 
   source_path=$(cat $propertiesPath | grep $SOURCE_KEY | cut -d "=" -f2)
+  checkpoint_path=$(cat $propertiesPath | grep $CHECKPOINT_KEY | cut -d "=" -f2)
   source_name=$(echo "${source_path}" | tr '/' '-')
 
   docker run --rm -v "$LOCAL_PATH":/tmp/astraea \
@@ -73,6 +73,12 @@ function runContainer() {
     exit 1
   fi
 
+  mkdir -p "$checkpoint_path"
+  if [ $? -ne 0 ]; then
+    echo "failed to create folder on $checkpoint_path"
+    exit 1
+  fi
+
   ui_port=$(($(($RANDOM % 10000)) + 10000))
   if [[ "$master" == "local"* ]]; then
     network_config="-p ${ui_port}:${ui_port}"
@@ -88,17 +94,20 @@ function runContainer() {
       -v "$propertiesPath":"$propertiesPath":ro \
       -v "$jar_path":/tmp/astraea-etl.jar:ro \
       -v "${source_path}":"${source_path}" \
+      -v "${checkpoint_path}":"${checkpoint_path}" \
       -e JAVA_OPTS="$HEAP_OPTS" \
       ghcr.io/skiptests/astraea/spark:$SPARK_VERSION \
       ./bin/spark-submit \
       --conf "spark.ui.port=$ui_port" \
+      $RESOURCES_CONFIGS \
       --packages org.apache.spark:spark-sql-kafka-0-10_2.13:"$SPARK_VERSION" \
-      --executor-memory "$RESOURCES_CONFIGS" \
       --class org.astraea.etl.Spark2Kafka \
       --jars file:///tmp/astraea-etl.jar \
       --master $master \
       /tmp/astraea-etl.jar \
       "$propertiesPath"
+
+    echo "application web: http:$ADDRESS:$ui_port"
   else
     echo "$master is unsupported"
     exit 1
@@ -128,5 +137,10 @@ while [[ $# -gt 0 ]]; do
 
   shift
 done
+
+if [[ "$property_file_path" == "" ]]; then
+  showHelp
+  exit 0
+fi
 
 runContainer "$master" "$property_file_path"

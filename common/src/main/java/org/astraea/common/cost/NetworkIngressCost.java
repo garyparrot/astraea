@@ -16,15 +16,17 @@
  */
 package org.astraea.common.cost;
 
-import org.astraea.common.metrics.broker.ServerMetrics;
-
 /**
  * A cost function to evaluate cluster load balance score in terms of message ingress data rate. See
  * {@link NetworkCost} for further detail.
  */
 public class NetworkIngressCost extends NetworkCost {
+  public NetworkIngressCost() {
+    super(BandwidthType.Ingress);
+  }
+
   @Override
-  ServerMetrics.Topic useMetric() {
-    return ServerMetrics.Topic.BYTES_IN_PER_SEC;
+  public String toString() {
+    return this.getClass().getSimpleName();
   }
 }

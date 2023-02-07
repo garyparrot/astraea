@@ -36,33 +36,34 @@ import org.astraea.common.metrics.MBeanClient;
 import org.astraea.common.metrics.platform.HostMetrics;
 import org.astraea.common.metrics.platform.JvmMemory;
 import org.astraea.common.metrics.platform.OperatingSystemInfo;
-import org.astraea.it.RequireBrokerCluster;
+import org.astraea.it.Service;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.mockito.stubbing.Answer;
 
-class MetricCollectorTest extends RequireBrokerCluster {
+class MetricCollectorTest {
 
-  private static final Fetcher memoryFetcher = (client) -> List.of(HostMetrics.jvmMemory(client));
-  private static final Fetcher osFetcher = (client) -> List.of(HostMetrics.operatingSystem(client));
+  private static final Service SERVICE = Service.builder().numberOfBrokers(3).build();
 
-  @Test
-  void addFetcher() {
-    try (var collector = MetricCollector.builder().build()) {
-      collector.addFetcher(memoryFetcher);
-
-      Assertions.assertEquals(1, collector.listFetchers().size());
-      Assertions.assertTrue(collector.listFetchers().contains(memoryFetcher));
-    }
+  @AfterAll
+  static void closeService() {
+    SERVICE.close();
   }
 
+  private static final MetricSensor MEMORY_METRIC_SENSOR =
+      (client, ignored) -> List.of(HostMetrics.jvmMemory(client));
+  private static final MetricSensor OS_METRIC_SENSOR =
+      (client, ignored) -> List.of(HostMetrics.operatingSystem(client));
+
   @Test
-  void addSensor() {
+  void testAddSensor() {
     try (var collector = MetricCollector.builder().build()) {
-      MetricSensor metricSensor = (identity, beans) -> null;
-      collector.addMetricSensors(metricSensor);
-      Assertions.assertEquals(1, collector.listMetricsSensors().size());
+      collector.addMetricSensor(MEMORY_METRIC_SENSOR);
+
+      Assertions.assertEquals(1, collector.metricSensors().size());
+      Assertions.assertTrue(collector.metricSensors().contains(MEMORY_METRIC_SENSOR));
     }
   }
 
@@ -70,7 +71,8 @@ class MetricCollectorTest extends RequireBrokerCluster {
   void registerJmx() {
     try (var collector = MetricCollector.builder().build()) {
       var socket =
-          InetSocketAddress.createUnresolved(jmxServiceURL().getHost(), jmxServiceURL().getPort());
+          InetSocketAddress.createUnresolved(
+              SERVICE.jmxServiceURL().getHost(), SERVICE.jmxServiceURL().getPort());
       collector.registerJmx(1, socket);
       collector.registerLocalJmx(-1);
 
@@ -92,8 +94,8 @@ class MetricCollectorTest extends RequireBrokerCluster {
   void testListMetricTypes() {
     var sample = Duration.ofMillis(100);
     try (var collector = MetricCollector.builder().interval(sample).build()) {
-      collector.addFetcher(memoryFetcher);
-      collector.addFetcher(osFetcher);
+      collector.addMetricSensor(MEMORY_METRIC_SENSOR);
+      collector.addMetricSensor(OS_METRIC_SENSOR);
       collector.registerLocalJmx(0);
 
       Utils.sleep(sample);
@@ -110,8 +112,8 @@ class MetricCollectorTest extends RequireBrokerCluster {
       collector.registerLocalJmx(0);
       collector.registerLocalJmx(1);
       collector.registerLocalJmx(2);
-      collector.addFetcher(memoryFetcher);
-      collector.addFetcher(osFetcher);
+      collector.addMetricSensor(MEMORY_METRIC_SENSOR);
+      collector.addMetricSensor(OS_METRIC_SENSOR);
 
       Utils.sleep(sample);
       Utils.sleep(sample);
@@ -138,8 +140,9 @@ class MetricCollectorTest extends RequireBrokerCluster {
   void metrics() {
     var sample = Duration.ofSeconds(2);
     try (var collector = MetricCollector.builder().interval(sample).build()) {
-      collector.addFetcher(memoryFetcher, (id, err) -> Assertions.fail(err.getMessage()));
-      collector.addFetcher(osFetcher, (id, err) -> Assertions.fail(err.getMessage()));
+      collector.addMetricSensor(
+          MEMORY_METRIC_SENSOR, (id, err) -> Assertions.fail(err.getMessage()));
+      collector.addMetricSensor(OS_METRIC_SENSOR, (id, err) -> Assertions.fail(err.getMessage()));
       collector.registerLocalJmx(0);
 
       Utils.sleep(Duration.ofMillis(300));
@@ -181,11 +184,11 @@ class MetricCollectorTest extends RequireBrokerCluster {
           Mockito.mockStatic(Executors.class, sniff("newScheduledThreadPool", services))) {
         var socket =
             InetSocketAddress.createUnresolved(
-                jmxServiceURL().getHost(), jmxServiceURL().getPort());
+                SERVICE.jmxServiceURL().getHost(), SERVICE.jmxServiceURL().getPort());
         var collector = MetricCollector.builder().build();
-        collector.addFetcher(memoryFetcher);
-        collector.addFetcher(memoryFetcher);
-        collector.addFetcher(memoryFetcher);
+        collector.addMetricSensor(MEMORY_METRIC_SENSOR);
+        collector.addMetricSensor(MEMORY_METRIC_SENSOR);
+        collector.addMetricSensor(MEMORY_METRIC_SENSOR);
         collector.registerJmx(0, socket);
         collector.registerJmx(1, socket);
         collector.registerJmx(2, socket);
@@ -207,18 +210,18 @@ class MetricCollectorTest extends RequireBrokerCluster {
   }
 
   @Test
-  void testFetcherErrorHandling() {
+  void testSensorErrorHandling() {
     var called = new AtomicBoolean();
-    Fetcher noSuchFetcher =
-        (client) -> {
+    MetricSensor noSuchMetricSensor =
+        (client, ignored) -> {
           BeanObject beanObject =
-              client.queryBean(
+              client.bean(
                   BeanQuery.builder().domainName("no.such.metric").property("k", "v").build());
           return List.of(() -> beanObject);
         };
     try (var collector = MetricCollector.builder().interval(Duration.ofMillis(100)).build()) {
-      collector.addFetcher(
-          noSuchFetcher,
+      collector.addMetricSensor(
+          noSuchMetricSensor,
           (id, ex) -> {
             Assertions.assertEquals(-1, id);
             Assertions.assertInstanceOf(NoSuchElementException.class, ex);
@@ -239,7 +242,7 @@ class MetricCollectorTest extends RequireBrokerCluster {
             .cleanerInterval(Duration.ofMillis(50))
             .interval(Duration.ofMillis(100))
             .build()) {
-      collector.addFetcher(memoryFetcher);
+      collector.addMetricSensor(MEMORY_METRIC_SENSOR);
       collector.registerLocalJmx(0);
 
       Utils.sleep(Duration.ofMillis(1500));

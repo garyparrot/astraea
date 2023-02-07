@@ -30,7 +30,6 @@ import javafx.scene.Node;
 import org.astraea.common.DataSize;
 import org.astraea.common.MapUtils;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.TopicPartition;
 import org.astraea.common.admin.TopicPartitionReplica;
 import org.astraea.common.function.Bi3Function;
@@ -41,7 +40,7 @@ import org.astraea.gui.pane.PaneBuilder;
 import org.astraea.gui.text.EditableText;
 import org.astraea.gui.text.TextInput;
 
-public class ReplicaNode {
+class ReplicaNode {
 
   static final String TOPIC_NAME_KEY = "topic";
   static final String PARTITION_KEY = "partition";
@@ -51,7 +50,7 @@ public class ReplicaNode {
 
   static final String MOVE_BROKER_KEY = "move to brokers";
 
-  static List<Map<String, Object>> allResult(ClusterInfo<Replica> clusterInfo) {
+  static List<Map<String, Object>> allResult(ClusterInfo clusterInfo) {
     // There are two leader replicas if the leader replica is moving to another folder
     var leaderSizes = ClusterInfo.leaderSize(clusterInfo);
     return clusterInfo
@@ -69,7 +68,7 @@ public class ReplicaNode {
               result.put("isPreferredLeader", replica.isPreferredLeader());
               result.put("isOffline", replica.isOffline());
               result.put("isFuture", replica.isFuture());
-              result.put("inSync", replica.inSync());
+              result.put("inSync", replica.isSync());
               result.put("isAdding", replica.isAdding());
               result.put("isRemoving", replica.isRemoving());
               result.put("lag", replica.lag());

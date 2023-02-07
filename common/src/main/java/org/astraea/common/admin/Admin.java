@@ -27,7 +27,6 @@ import java.util.concurrent.CompletionStage;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
-import org.apache.kafka.clients.CommonClientConfigs;
 import org.astraea.common.DataRate;
 import org.astraea.common.FutureUtils;
 import org.astraea.common.Utils;
@@ -39,7 +38,7 @@ import org.astraea.common.consumer.SeekStrategy;
 public interface Admin extends AutoCloseable {
 
   static Admin of(String bootstrap) {
-    return of(Map.of(CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG, bootstrap));
+    return of(Map.of(AdminConfigs.BOOTSTRAP_SERVERS_CONFIG, bootstrap));
   }
 
   static Admin of(Map<String, String> configs) {
@@ -66,6 +65,30 @@ public interface Admin extends AutoCloseable {
    * @return names of internal topics
    */
   CompletionStage<Set<String>> internalTopicNames();
+
+  /**
+   * Find out the topic names matched to input checkers.
+   *
+   * @param checkers used to predicate topic
+   * @return topic names accepted by all given checkers
+   */
+  default CompletionStage<Set<String>> topicNames(List<TopicChecker> checkers) {
+    if (checkers.isEmpty()) return topicNames(false);
+    return topicNames(false)
+        .thenCompose(
+            topicNames ->
+                FutureUtils.sequence(
+                        checkers.stream()
+                            .map(checker -> checker.test(this, topicNames).toCompletableFuture())
+                            .collect(Collectors.toUnmodifiableList()))
+                    .thenApply(
+                        all ->
+                            all.stream()
+                                .flatMap(Collection::stream)
+                                // return topics accepted by all checkers
+                                .filter(t -> all.stream().allMatch(ts -> ts.contains(t)))
+                                .collect(Collectors.toUnmodifiableSet())));
+  }
 
   CompletionStage<List<Topic>> topics(Set<String> topics);
 
@@ -181,33 +204,7 @@ public interface Admin extends AutoCloseable {
 
   CompletionStage<List<Transaction>> transactions(Set<String> transactionIds);
 
-  CompletionStage<ClusterInfo<Replica>> clusterInfo(Set<String> topics);
-
-  default CompletionStage<Set<String>> idleTopic(List<TopicChecker> checkers) {
-    if (checkers.isEmpty()) {
-      throw new RuntimeException("Can not check for idle topics because of no checkers!");
-    }
-
-    return topicNames(false)
-        .thenCompose(
-            topicNames ->
-                FutureUtils.sequence(
-                        checkers.stream()
-                            .map(
-                                checker ->
-                                    checker.usedTopics(this, topicNames).toCompletableFuture())
-                            .collect(Collectors.toUnmodifiableList()))
-                    .thenApply(
-                        s ->
-                            s.stream()
-                                .flatMap(Collection::stream)
-                                .collect(Collectors.toUnmodifiableSet()))
-                    .thenApply(
-                        usedTopics ->
-                            topicNames.stream()
-                                .filter(name -> !usedTopics.contains(name))
-                                .collect(Collectors.toUnmodifiableSet())));
-  }
+  CompletionStage<ClusterInfo> clusterInfo(Set<String> topics);
 
   /**
    * get the quotas associated to given target keys and target values. The available target types
@@ -282,6 +279,19 @@ public interface Admin extends AutoCloseable {
   CompletionStage<Void> moveToBrokers(Map<TopicPartition, List<Integer>> assignments);
 
   CompletionStage<Void> moveToFolders(Map<TopicPartitionReplica, String> assignments);
+
+  /**
+   * Declare the preferred data folder for the designated partition at a specific broker.
+   *
+   * <p>Preferred data folder is the data folder a partition will use when it is being placed on the
+   * specific broker({@link Admin#moveToBrokers(Map)}). This API won't trigger a folder-to-folder
+   * replica movement. To Perform folder-to-folder movement, consider use {@link
+   * Admin#moveToFolders(Map)}.
+   *
+   * <p>This API is not transactional. It may alter folders if the target broker has out-of-date
+   * metadata or running reassignments
+   */
+  CompletionStage<Void> declarePreferredDataFolders(Map<TopicPartitionReplica, String> assignments);
 
   /**
    * Perform preferred leader election for the specified topic/partitions. Let the first replica(the
@@ -386,8 +396,8 @@ public interface Admin extends AutoCloseable {
           var current =
               clusterInfo
                   .replicaStream()
-                  .filter(ReplicaInfo::isLeader)
-                  .collect(Collectors.groupingBy(ReplicaInfo::topic));
+                  .filter(Replica::isLeader)
+                  .collect(Collectors.groupingBy(Replica::topic));
           return topicAndNumberOfPartitions.entrySet().stream()
               .allMatch(
                   entry ->
@@ -413,7 +423,7 @@ public interface Admin extends AutoCloseable {
                 .replicaStream()
                 .filter(r -> topicPartitions.contains(r.topicPartition()))
                 .filter(Replica::isPreferredLeader)
-                .allMatch(ReplicaInfo::isLeader),
+                .allMatch(Replica::isLeader),
         timeout,
         2);
   }
@@ -433,7 +443,7 @@ public interface Admin extends AutoCloseable {
             clusterInfo
                 .replicaStream()
                 .filter(r -> replicas.contains(r.topicPartitionReplica()))
-                .allMatch(r -> r.inSync() && !r.isFuture()),
+                .allMatch(r -> r.isSync() && !r.isFuture()),
         timeout,
         2);
   }
@@ -450,10 +460,7 @@ public interface Admin extends AutoCloseable {
    * @return a background running loop
    */
   default CompletionStage<Boolean> waitCluster(
-      Set<String> topics,
-      Predicate<ClusterInfo<Replica>> predicate,
-      Duration timeout,
-      int debounce) {
+      Set<String> topics, Predicate<ClusterInfo> predicate, Duration timeout, int debounce) {
     return Utils.loop(
         () ->
             clusterInfo(topics)
