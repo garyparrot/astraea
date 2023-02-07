@@ -18,6 +18,7 @@ package org.astraea.common;
 
 import java.util.ArrayList;
 import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 import java.util.stream.IntStream;
 
@@ -63,7 +64,6 @@ public enum DistributionType implements EnumInfo {
     @Override
     public Supplier<Long> supplier(int n) {
       var cumulativeDensityTable = new ArrayList<Double>();
-      var rand = new Random();
       var H_N = IntStream.range(1, n + 1).mapToDouble(k -> 1D / k).sum();
       cumulativeDensityTable.add(1D / H_N);
       IntStream.range(1, n)
@@ -72,7 +72,7 @@ public enum DistributionType implements EnumInfo {
                   cumulativeDensityTable.add(
                       cumulativeDensityTable.get(i - 1) + 1D / (i + 1) / H_N));
       return () -> {
-        final double randNum = rand.nextDouble();
+        final double randNum = ThreadLocalRandom.current().nextDouble();
         for (int i = 0; i < cumulativeDensityTable.size(); ++i) {
           if (randNum < cumulativeDensityTable.get(i)) return (long) i;
         }
