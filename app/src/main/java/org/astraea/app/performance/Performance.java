@@ -85,14 +85,14 @@ public class Performance {
     System.out.println("seeking offsets");
     var latestOffsets = param.lastOffsets();
 
-    System.out.println("creating threads");
-    var producerThreads =
-        ProducerThread.create(
-            blockingQueues, param.producers, param::createProducer, param.interdependent);
+    System.out.println("creating threads (consumer fanout)");
     var consumerThreads =
         param.monkeys != null
             ? Collections.synchronizedList(new ArrayList<>(consumers(param, latestOffsets)))
             : consumers(param, latestOffsets);
+    var producerThreads =
+        ProducerThread.create(
+            blockingQueues, param.producers, param::createProducer, param.interdependent);
 
     System.out.println("creating data generator");
     var dataGenerator = DataGenerator.of(blockingQueues, param.topicPartitionSelector(), param);
