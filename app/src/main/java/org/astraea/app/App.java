@@ -36,6 +36,8 @@ public class App {
           Automation.class,
           "web",
           WebService.class,
+          "consumer",
+          DedicateConsumer.class,
           "version",
           Version.class,
           "metric_publisher",
