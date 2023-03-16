@@ -16,7 +16,9 @@
  */
 package org.astraea.app;
 
+import java.lang.ref.Cleaner;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -41,18 +43,14 @@ public class DedicateConsumer {
   public static final String realCluster =
       "192.168.103.177:25655,192.168.103.178:25655,192.168.103.179:25655,192.168.103.180:25655,192.168.103.181:25655,192.168.103.182:25655";
 
-  public static void main(String[] args) {
-    var bootstrap = args[0];
-    var topic = args[1];
-    var partition = Integer.parseInt(args[2]);
-    System.out.println("Bootstrap: " + bootstrap);
-    System.out.println("Subscribe Target: " + topic + "-" + partition);
+  public static final String RANDOM_GROUP = Utils.randomString();
 
-    try (var consumer =
-        new KafkaConsumer<>(
+  public static KafkaConsumer<byte[], byte[]> consumer(String bootstrap) {
+    return new KafkaConsumer<>(
             Map.ofEntries(
                 Map.entry(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap),
                 Map.entry(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest"),
+                Map.entry(ConsumerConfig.GROUP_ID_CONFIG, RANDOM_GROUP),
                 Map.entry(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, BytesDeserializer.class),
                 Map.entry(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, BytesDeserializer.class),
                 Map.entry(ConsumerConfig.RECEIVE_BUFFER_CONFIG, 4024000),
@@ -60,53 +58,51 @@ public class DedicateConsumer {
                 Map.entry(ConsumerConfig.FETCH_MAX_BYTES_CONFIG, 10485760),
                 Map.entry(ConsumerConfig.METRICS_SAMPLE_WINDOW_MS_CONFIG, 100),
                 Map.entry(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, 0),
-                // Map.entry(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 500),
-                // Map.entry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 5048576),
-                Map.entry(ConsumerConfig.CHECK_CRCS_CONFIG, false)))) {
-      consumer.assign(Set.of(new TopicPartition(topic, partition)));
-      // consumer.assign(consumer.partitionsFor(topic)
-      //     .stream()
-      //     .map(x -> new TopicPartition(x.topic(), x.partition()))
-      //     .collect(Collectors.toUnmodifiableList()));
+                Map.entry(ConsumerConfig.CHECK_CRCS_CONFIG, false)));
+  }
 
-      var counter = new LongAdder();
-      var consumerConsumedRate =
-          consumer.metrics().keySet().stream()
-              .filter(name -> name.name().equals("bytes-consumed-rate"))
-              .filter(name -> !name.tags().containsKey("topic"))
-              .findFirst()
-              .orElseThrow();
+  public static void main(String[] args) {
+    var bootstrap = args[0];
+    var topic = args[1];
+    var consumerGroupSize = 24;
+    System.out.println("Bootstrap: " + bootstrap);
+    System.out.println("Subscribe Target: " + topic);
 
-      CompletableFuture.runAsync(
-          () -> {
-            while (!Thread.currentThread().isInterrupted()) {
-              Utils.sleep(Duration.ofSeconds(1));
-              var consumeRate = ((Double) consumer.metrics().get(consumerConsumedRate).metricValue()).longValue();
-              System.out.println("Consume Rate: " + DataRate.Byte.of(consumeRate).perSecond());
-              System.out.println("Record Consumed: " + counter.longValue());
-              consumer.metrics().values()
-                      .stream()
-                      .filter(name -> name.metricName().name().equals("records-lag"))
-                      .forEach(metric -> {
-                        var tag = metric.metricName().tags();
-                        var topicName = tag.get("topic");
-                        var partitionIndex = tag.get("partition");
-                        var lag = ((Double) metric.metricValue());
-                        System.out.printf("Lag for \"%s-%s\": %f%n", topicName, partitionIndex, lag);
-                      });
-            }
-          })
-          .whenComplete((i, err) -> {
-            if(err != null)
-              err.printStackTrace();
-          });
+    var kafkaConsumers = IntStream.range(0, consumerGroupSize)
+        .mapToObj(i -> consumer(bootstrap))
+        .peek(consumer -> consumer.subscribe(Set.of(topic)))
+        .collect(Collectors.toUnmodifiableList());
 
-      for(int i = 0; i < 6; i++) {
+    var metrics = CompletableFuture.runAsync(
+        () -> {
           while (!Thread.currentThread().isInterrupted()) {
-            var a = consumer.poll(Duration.ofSeconds(1));
-            counter.add(a.count());
+            Utils.sleep(Duration.ofSeconds(1));
+            System.out.println("-------------------------------------");
+            kafkaConsumers.forEach(consumer ->
+                consumer.metrics().values()
+                .stream()
+                .filter(name -> name.metricName().name().equals("records-lag"))
+                .forEach(metric -> {
+                  var tag = metric.metricName().tags();
+                  var topicName = tag.get("topic");
+                  var partitionIndex = tag.get("partition");
+                  var lag = ((Double) metric.metricValue());
+                  System.out.printf("Lag for \"%s-%s\": %f%n", topicName, partitionIndex, lag);
+                }));
           }
-      }
-    }
+        });
+
+    var executors = Executors.newFixedThreadPool(consumerGroupSize);
+    kafkaConsumers.forEach(consumer -> {
+      executors.submit(() -> {
+        while (!Thread.currentThread().isInterrupted()) {
+          consumer.poll(Duration.ofSeconds(1));
+        }
+      });
+    });
+
+    metrics.join();
+    executors.shutdown();
+    kafkaConsumers.forEach(KafkaConsumer::close);
   }
 }
