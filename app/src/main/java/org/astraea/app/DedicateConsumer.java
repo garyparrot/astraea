@@ -81,6 +81,12 @@ public class DedicateConsumer {
               var consumeRate = ((Double) consumer.metrics().get(consumedRateKey).metricValue()).longValue();
               System.out.println("Consume Rate: " + DataRate.Byte.of(consumeRate).perSecond());
               System.out.println("Record Consumed: " + counter.longValue());
+              System.out.println("Lag: " + consumer.metrics().values()
+                  .stream()
+                  .filter(name -> name.metricName().name().equals("records-lag"))
+                  .findFirst()
+                  .map(x -> (Double) x.metricValue())
+                  .orElse(-1.0));
               Utils.sleep(Duration.ofSeconds(1));
             }
           })
