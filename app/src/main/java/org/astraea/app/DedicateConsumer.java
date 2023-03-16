@@ -43,6 +43,11 @@ public class DedicateConsumer {
     var partition = Integer.parseInt(args[2]);
     System.out.println("Bootstrap: " + bootstrap);
     System.out.println("Subscribe Target: " + topic + "-" + partition);
+
+    System.out.println("About to start");
+    Utils.sleep(Duration.ofSeconds(5));
+    System.out.println("Start");
+
     try (var consumer =
         new KafkaConsumer<>(
             Map.ofEntries(
