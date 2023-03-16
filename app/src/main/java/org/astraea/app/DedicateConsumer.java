@@ -55,7 +55,7 @@ public class DedicateConsumer {
                 Map.entry(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, BytesDeserializer.class),
                 Map.entry(ConsumerConfig.RECEIVE_BUFFER_CONFIG, 4024000),
                 Map.entry(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, 10485760),
-                // Map.entry(ConsumerConfig.FETCH_MAX_BYTES_CONFIG, 10485760),
+                Map.entry(ConsumerConfig.FETCH_MAX_BYTES_CONFIG, 10485760),
                 Map.entry(ConsumerConfig.METRICS_SAMPLE_WINDOW_MS_CONFIG, 100),
                 // Map.entry(ConsumerConfig.CHECK_CRCS_CONFIG, false),
                 Map.entry(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, 0)
