@@ -45,7 +45,7 @@ public class DedicateConsumer {
     System.out.println("Subscribe Target: " + topic + "-" + partition);
 
     System.out.println("About to start");
-    Utils.sleep(Duration.ofSeconds(5));
+    Utils.sleep(Duration.ofSeconds(10));
     System.out.println("Start");
 
     try (var consumer =
