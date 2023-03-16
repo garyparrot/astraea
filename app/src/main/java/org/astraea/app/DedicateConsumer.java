@@ -76,11 +76,10 @@ public class DedicateConsumer {
               err.printStackTrace();
           });
 
-      var service = Executors.newFixedThreadPool(3);
-      for(int i = 0; i < 3; i++) {
+      var service = Executors.newFixedThreadPool(6);
+      for(int i = 0; i < 6; i++) {
         service.submit(() -> {
           while (!Thread.currentThread().isInterrupted()) {
-            System.out.println("POPO");
             consumer.poll(Duration.ofSeconds(1));
           }
         });
