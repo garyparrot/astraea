@@ -46,7 +46,7 @@ public class DedicateConsumer {
     var topic = args[1];
     var partition = Integer.parseInt(args[2]);
     System.out.println("Bootstrap: " + bootstrap);
-    System.out.println("Subscribe Target: " + topic + "-" + partition);
+    System.out.println("Subscribe Target: " + topic);
 
     try (var consumer =
         new KafkaConsumer<>(
@@ -70,25 +70,30 @@ public class DedicateConsumer {
           .collect(Collectors.toUnmodifiableList()));
 
       var counter = new LongAdder();
-      var consumedRateKey =
+      var consumerConsumedRate =
           consumer.metrics().keySet().stream()
               .filter(name -> name.name().equals("bytes-consumed-rate"))
+              .filter(name -> !name.tags().containsKey("topic"))
               .findFirst()
               .orElseThrow();
 
       CompletableFuture.runAsync(
           () -> {
             while (!Thread.currentThread().isInterrupted()) {
-              var consumeRate = ((Double) consumer.metrics().get(consumedRateKey).metricValue()).longValue();
+              Utils.sleep(Duration.ofSeconds(1));
+              var consumeRate = ((Double) consumer.metrics().get(consumerConsumedRate).metricValue()).longValue();
               System.out.println("Consume Rate: " + DataRate.Byte.of(consumeRate).perSecond());
               System.out.println("Record Consumed: " + counter.longValue());
-              System.out.println("Lag: " + consumer.metrics().values()
-                  .stream()
-                  .filter(name -> name.metricName().name().equals("records-lag"))
-                  .findFirst()
-                  .map(x -> (Double) x.metricValue())
-                  .orElse(-1.0));
-              Utils.sleep(Duration.ofSeconds(1));
+              consumer.metrics().values()
+                      .stream()
+                      .filter(name -> name.metricName().name().equals("records-lag"))
+                      .forEach(metric -> {
+                        var tag = metric.metricName().tags();
+                        var topicName = tag.get("topic");
+                        var partitionIndex = tag.get("partition");
+                        var lag = ((Double) metric.metricValue());
+                        System.out.printf("Lag for \"%s-%s\": %f%n", topicName, partitionIndex, lag);
+                      });
             }
           })
           .whenComplete((i, err) -> {
