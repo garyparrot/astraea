@@ -40,7 +40,7 @@ public class DedicateConsumer {
             Map.entry(ConsumerConfig.GROUP_ID_CONFIG, RANDOM_GROUP),
             Map.entry(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, BytesDeserializer.class),
             Map.entry(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, BytesDeserializer.class),
-            Map.entry(ConsumerConfig.RECEIVE_BUFFER_CONFIG, 800000),
+            Map.entry(ConsumerConfig.RECEIVE_BUFFER_CONFIG, 20400320),
             Map.entry(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, 10400320),
             Map.entry(ConsumerConfig.FETCH_MAX_BYTES_CONFIG, 10400320),
             Map.entry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 10400320 / 2),
