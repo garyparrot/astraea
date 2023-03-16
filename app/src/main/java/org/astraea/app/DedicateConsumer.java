@@ -46,7 +46,7 @@ public class DedicateConsumer {
     var topic = args[1];
     var partition = Integer.parseInt(args[2]);
     System.out.println("Bootstrap: " + bootstrap);
-    System.out.println("Subscribe Target: " + topic);
+    System.out.println("Subscribe Target: " + topic + "-" + partition);
 
     try (var consumer =
         new KafkaConsumer<>(
@@ -63,11 +63,11 @@ public class DedicateConsumer {
                 // Map.entry(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 500),
                 // Map.entry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 5048576),
                 Map.entry(ConsumerConfig.CHECK_CRCS_CONFIG, false)))) {
-      // consumer.assign(Set.of(new TopicPartition(topic, partition)));
-      consumer.assign(consumer.partitionsFor(topic)
-          .stream()
-          .map(x -> new TopicPartition(x.topic(), x.partition()))
-          .collect(Collectors.toUnmodifiableList()));
+      consumer.assign(Set.of(new TopicPartition(topic, partition)));
+      // consumer.assign(consumer.partitionsFor(topic)
+      //     .stream()
+      //     .map(x -> new TopicPartition(x.topic(), x.partition()))
+      //     .collect(Collectors.toUnmodifiableList()));
 
       var counter = new LongAdder();
       var consumerConsumedRate =
