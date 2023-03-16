@@ -53,6 +53,7 @@ public class DedicateConsumer {
                 Map.entry(ConsumerConfig.RECEIVE_BUFFER_CONFIG, 402400),
                 Map.entry(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, 10485760),
                 Map.entry(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, 0),
+                Map.entry(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 999999999),
                 Map.entry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 5048576),
                 Map.entry(ConsumerConfig.CHECK_CRCS_CONFIG, false)))) {
       consumer.assign(Set.of(new TopicPartition(topic, partition)));
