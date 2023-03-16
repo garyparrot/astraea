@@ -26,6 +26,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -47,10 +48,6 @@ public class DedicateConsumer {
     System.out.println("Bootstrap: " + bootstrap);
     System.out.println("Subscribe Target: " + topic + "-" + partition);
 
-    System.out.println("About to start");
-    // Utils.sleep(Duration.ofSeconds(10));
-    System.out.println("Start");
-
     try (var consumer =
         new KafkaConsumer<>(
             Map.ofEntries(
@@ -66,7 +63,11 @@ public class DedicateConsumer {
                 // Map.entry(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 500),
                 // Map.entry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 5048576),
                 Map.entry(ConsumerConfig.CHECK_CRCS_CONFIG, false)))) {
-      consumer.assign(Set.of(new TopicPartition(topic, partition)));
+      // consumer.assign(Set.of(new TopicPartition(topic, partition)));
+      consumer.assign(consumer.partitionsFor(topic)
+          .stream()
+          .map(x -> new TopicPartition(x.topic(), x.partition()))
+          .collect(Collectors.toUnmodifiableList()));
 
       var counter = new LongAdder();
       var consumedRateKey =
