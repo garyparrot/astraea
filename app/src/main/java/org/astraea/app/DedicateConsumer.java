@@ -20,6 +20,10 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.stream.IntStream;
+
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.TopicPartition;
@@ -71,8 +75,13 @@ public class DedicateConsumer {
               err.printStackTrace();
           });
 
-      while (!Thread.currentThread().isInterrupted()) {
-        consumer.poll(Duration.ofSeconds(1));
+      var service = Executors.newFixedThreadPool(3);
+      for(int i = 0; i < 3; i++) {
+        service.submit(() -> {
+          while (!Thread.currentThread().isInterrupted()) {
+            consumer.poll(Duration.ofSeconds(1));
+          }
+        });
       }
     }
   }
