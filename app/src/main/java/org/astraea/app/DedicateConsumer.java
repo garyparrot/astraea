@@ -22,7 +22,9 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -82,11 +84,18 @@ public class DedicateConsumer {
               err.printStackTrace();
           });
 
-      var service = Executors.newFixedThreadPool(6);
+      var counter = new AtomicInteger(0);
+      var service = Executors.newFixedThreadPool(6, (run) -> {
+        Thread thread = new Thread(run);
+        thread.setName("ConsumerPollingThread #" + counter.getAndIncrement());
+        return thread;
+      });
       for(int i = 0; i < 6; i++) {
         service.submit(() -> {
           while (!Thread.currentThread().isInterrupted()) {
+            System.out.printf("[%s] Start%n", Thread.currentThread().getName());
             consumer.poll(Duration.ofSeconds(1));
+            System.out.printf("[%s] Stop%n", Thread.currentThread().getName());
           }
         });
       }
