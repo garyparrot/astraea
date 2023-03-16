@@ -80,6 +80,7 @@ public class DedicateConsumer {
       for(int i = 0; i < 3; i++) {
         service.submit(() -> {
           while (!Thread.currentThread().isInterrupted()) {
+            System.out.println("POPO");
             consumer.poll(Duration.ofSeconds(1));
           }
         });
