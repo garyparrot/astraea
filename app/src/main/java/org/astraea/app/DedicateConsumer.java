@@ -55,7 +55,7 @@ public class DedicateConsumer {
         new KafkaConsumer<>(
             Map.ofEntries(
                 Map.entry(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap),
-                Map.entry(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"),
+                Map.entry(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest"),
                 Map.entry(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, BytesDeserializer.class),
                 Map.entry(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, BytesDeserializer.class),
                 Map.entry(ConsumerConfig.RECEIVE_BUFFER_CONFIG, 4024000),
