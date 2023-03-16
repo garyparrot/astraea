@@ -16,32 +16,20 @@
  */
 package org.astraea.app;
 
-import java.lang.ref.Cleaner;
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.LongAdder;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
-import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.BytesDeserializer;
-import org.astraea.common.DataRate;
 import org.astraea.common.Utils;
 
 public class DedicateConsumer {
-
-  public static final String realCluster =
-      "192.168.103.177:25655,192.168.103.178:25655,192.168.103.179:25655,192.168.103.180:25655,192.168.103.181:25655,192.168.103.182:25655";
 
   public static final String RANDOM_GROUP = Utils.randomString();
 
@@ -56,6 +44,7 @@ public class DedicateConsumer {
                 Map.entry(ConsumerConfig.RECEIVE_BUFFER_CONFIG, 4024000),
                 Map.entry(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, 10485760),
                 Map.entry(ConsumerConfig.FETCH_MAX_BYTES_CONFIG, 10485760),
+                Map.entry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 5048576),
                 Map.entry(ConsumerConfig.METRICS_SAMPLE_WINDOW_MS_CONFIG, 100),
                 Map.entry(ConsumerConfig.CHECK_CRCS_CONFIG, false),
                 Map.entry(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, 0)
