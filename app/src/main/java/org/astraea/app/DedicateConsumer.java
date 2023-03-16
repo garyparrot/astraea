@@ -25,6 +25,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.stream.IntStream;
 
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -47,24 +48,27 @@ public class DedicateConsumer {
     System.out.println("Subscribe Target: " + topic + "-" + partition);
 
     System.out.println("About to start");
-    Utils.sleep(Duration.ofSeconds(10));
+    // Utils.sleep(Duration.ofSeconds(10));
     System.out.println("Start");
 
     try (var consumer =
         new KafkaConsumer<>(
             Map.ofEntries(
-                Map.entry(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, realCluster),
+                Map.entry(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrap),
                 Map.entry(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest"),
                 Map.entry(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, BytesDeserializer.class),
                 Map.entry(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, BytesDeserializer.class),
-                // Map.entry(ConsumerConfig.RECEIVE_BUFFER_CONFIG, 402400),
-                // Map.entry(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, 10485760),
+                Map.entry(ConsumerConfig.RECEIVE_BUFFER_CONFIG, 4024000),
+                Map.entry(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, 10485760),
+                Map.entry(ConsumerConfig.FETCH_MAX_BYTES_CONFIG, 10485760),
+                Map.entry(ConsumerConfig.METRICS_SAMPLE_WINDOW_MS_CONFIG, 100),
                 Map.entry(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, 0),
-                // Map.entry(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 999999999),
+                // Map.entry(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 500),
                 // Map.entry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 5048576),
                 Map.entry(ConsumerConfig.CHECK_CRCS_CONFIG, false)))) {
       consumer.assign(Set.of(new TopicPartition(topic, partition)));
 
+      var counter = new LongAdder();
       var consumedRateKey =
           consumer.metrics().keySet().stream()
               .filter(name -> name.name().equals("bytes-consumed-rate"))
@@ -76,6 +80,7 @@ public class DedicateConsumer {
             while (!Thread.currentThread().isInterrupted()) {
               var consumeRate = ((Double) consumer.metrics().get(consumedRateKey).metricValue()).longValue();
               System.out.println("Consume Rate: " + DataRate.Byte.of(consumeRate).perSecond());
+              System.out.println("Record Consumed: " + counter.longValue());
               Utils.sleep(Duration.ofSeconds(1));
             }
           })
@@ -84,24 +89,12 @@ public class DedicateConsumer {
               err.printStackTrace();
           });
 
-      var counter = new AtomicInteger(0);
-      var service = Executors.newFixedThreadPool(6, (run) -> {
-        Thread thread = new Thread(run);
-        thread.setName("ConsumerPollingThread #" + counter.getAndIncrement());
-        return thread;
-      });
       for(int i = 0; i < 6; i++) {
-        service.submit(() -> {
           while (!Thread.currentThread().isInterrupted()) {
-            System.out.printf("[%s] Start%n", Thread.currentThread().getName());
-            consumer.poll(Duration.ofSeconds(1));
-            System.out.printf("[%s] Stop%n", Thread.currentThread().getName());
+            var a = consumer.poll(Duration.ofSeconds(1));
+            counter.add(a.count());
           }
-        });
       }
-      service.awaitTermination(1000, TimeUnit.DAYS);
-    } catch (InterruptedException e) {
-      throw new RuntimeException(e);
     }
   }
 }

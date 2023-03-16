@@ -19,11 +19,15 @@ package org.astraea.common.consumer;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toList;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.astraea.common.DataRate;
+import org.astraea.common.Utils;
 import org.astraea.common.admin.TopicPartition;
 
 public class PartitionsBuilder<Key, Value> extends Builder<Key, Value> {
