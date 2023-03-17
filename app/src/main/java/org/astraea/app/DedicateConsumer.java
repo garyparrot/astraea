@@ -52,7 +52,7 @@ public class DedicateConsumer {
   public static void main(String[] args) {
     var bootstrap = args[0];
     var topic = args[1];
-    var consumerGroupSize = 24;
+    var consumerGroupSize = Integer.parseInt(args[2]);
     System.out.println("Bootstrap: " + bootstrap);
     System.out.println("Subscribe Target: " + topic);
 
