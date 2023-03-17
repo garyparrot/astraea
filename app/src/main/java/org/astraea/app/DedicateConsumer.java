@@ -90,7 +90,7 @@ public class DedicateConsumer {
           executors.submit(
               () -> {
                 while (!Thread.currentThread().isInterrupted()) {
-                  consumer.poll(Duration.ofMillis(100));
+                  consumer.poll(Duration.ofMillis(1000));
                 }
               });
         });
