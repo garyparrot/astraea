@@ -40,13 +40,13 @@ public class DedicateConsumer {
             Map.entry(ConsumerConfig.GROUP_ID_CONFIG, RANDOM_GROUP),
             Map.entry(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, BytesDeserializer.class),
             Map.entry(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, BytesDeserializer.class),
-            Map.entry(ConsumerConfig.RECEIVE_BUFFER_CONFIG, 204003200),
-            Map.entry(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, 20400320),
-            Map.entry(ConsumerConfig.FETCH_MAX_BYTES_CONFIG, 20400320),
-            Map.entry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 20400320 / 2),
+            Map.entry(ConsumerConfig.RECEIVE_BUFFER_CONFIG, 1002400),
+            Map.entry(ConsumerConfig.MAX_PARTITION_FETCH_BYTES_CONFIG, 200000000),
+            Map.entry(ConsumerConfig.FETCH_MAX_BYTES_CONFIG, 200000000),
+            // Map.entry(ConsumerConfig.FETCH_MIN_BYTES_CONFIG, 20400320 / 2),
             Map.entry(ConsumerConfig.METRICS_SAMPLE_WINDOW_MS_CONFIG, 100),
             Map.entry(ConsumerConfig.CHECK_CRCS_CONFIG, false),
-            Map.entry(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, 0)));
+            Map.entry(ConsumerConfig.FETCH_MAX_WAIT_MS_CONFIG, 5)));
   }
 
   public static void main(String[] args) {
