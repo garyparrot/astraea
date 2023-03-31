@@ -272,10 +272,14 @@ public interface MetricFetcher extends AutoCloseable {
       lock.readLock().lock();
       Collection<BeanObject> beans;
       try {
+        long s = System.nanoTime();
         beans =
             QUERIES.stream()
                 .flatMap(q -> clients.get(identity.id).beans(q, e -> {}).stream())
                 .collect(Collectors.toUnmodifiableList());
+        long t = System.nanoTime();
+        System.out.println("[" + identity.id  +"]MetricsFetcher#updateData " + Duration.ofNanos(t - s).toMillis() + "ms, sample " + beans.size() + " mbeans");
+
       } finally {
         lock.readLock().unlock();
       }
