@@ -170,6 +170,7 @@ public class GreedyBalancer implements Balancer {
                             clusterCostFunction.clusterCost(newAllocation, clusterBean),
                             moveCostFunction.moveCost(
                                 currentClusterInfo, newAllocation, clusterBean)))
+                .peek(plan -> System.out.println(plan.proposalClusterCost().value()))
                 .filter(
                     plan ->
                         config.clusterConstraint().test(currentCost, plan.proposalClusterCost()))

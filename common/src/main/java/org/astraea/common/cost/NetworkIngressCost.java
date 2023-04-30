@@ -16,8 +16,8 @@
  */
 package org.astraea.common.cost;
 
-import java.util.Collection;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -27,7 +27,6 @@ import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.TopicPartition;
-import org.astraea.common.admin.TopicPartitionReplica;
 import org.astraea.common.metrics.broker.ServerMetrics;
 
 /**
@@ -43,6 +42,12 @@ public class NetworkIngressCost extends NetworkCost implements HasPartitionCost 
     super(config, BandwidthType.Ingress);
     this.config = config;
     this.trafficInterval = config.dataSize(TRAFFIC_INTERVAL).orElse(DataSize.MB.of(10));
+  }
+
+  @Override
+  public List<ResourceUsageHint> clusterResourceHint(
+      ClusterInfo sourceCluster, ClusterBean clusterBean) {
+    return List.of(ingressUsageHint(sourceCluster, clusterBean));
   }
 
   @Override
@@ -139,27 +144,5 @@ public class NetworkIngressCost extends NetworkCost implements HasPartitionCost 
   @Override
   public String toString() {
     return this.getClass().getSimpleName();
-  }
-
-  @Override
-  public ResourceUsage evaluateClusterResourceUsage(
-      ClusterInfo clusterInfo, ClusterBean clusterBean, Replica target) {
-    double value = this.evaluateIngressResourceUsage(clusterBean, target.topicPartitionReplica());
-    return new ResourceUsage(
-        Map.of(NetworkCost.NETWORK_COST_BROKER_RESOURCE_PREFIX_INGRESS + target.nodeInfo().id(), value));
-  }
-
-  @Override
-  public ResourceUsage evaluateReplicaResourceUsage(
-      ClusterInfo clusterInfo, ClusterBean clusterBean, Replica target) {
-    double value = this.evaluateIngressResourceUsage(clusterBean, target.topicPartitionReplica());
-    return new ResourceUsage(
-        Map.of(NetworkCost.NETWORK_COST_REPLICA_RESOURCE_PREFIX_INGRESS, value));
-  }
-
-  @Override
-  public Collection<ResourceCapacity> evaluateClusterResourceCapacity(
-      ClusterInfo clusterInfo, ClusterBean clusterBean) {
-    return this.evaluateIngressResourceCapacity(clusterInfo, clusterBean);
   }
 }

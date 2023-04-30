@@ -21,7 +21,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.time.Duration;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -29,7 +28,6 @@ import java.util.Scanner;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-
 import org.astraea.balancer.bench.BalancerBenchmark;
 import org.astraea.common.Configuration;
 import org.astraea.common.Utils;
@@ -42,23 +40,18 @@ import org.astraea.common.balancer.AlgorithmConfig;
 import org.astraea.common.balancer.Balancer;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
 import org.astraea.common.balancer.algorithms.ResourceBalancer;
-import org.astraea.common.balancer.algorithms.ResourceGreedyBalancer;
 import org.astraea.common.balancer.executor.StraightPlanExecutor;
 import org.astraea.common.cost.HasClusterCost;
-import org.astraea.common.cost.HasMoveCost;
 import org.astraea.common.cost.NetworkEgressCost;
 import org.astraea.common.cost.NetworkIngressCost;
 import org.astraea.common.cost.NoSufficientMetricsException;
-import org.astraea.common.cost.ReplicaLeaderCost;
 import org.astraea.common.cost.ReplicaNumberCost;
-import org.astraea.common.cost.ResourceUsage;
 import org.astraea.common.metrics.ClusterBeanSerializer;
 import org.astraea.common.metrics.ClusterInfoSerializer;
 import org.astraea.common.metrics.MBeanClient;
 import org.astraea.common.metrics.collector.MetricStore;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-import scala.math.Equiv;
 
 public class BalancerExperimentTest {
 
@@ -69,24 +62,6 @@ public class BalancerExperimentTest {
 
   public static void main(String[] args) {
     new BalancerExperimentTest().testProfiling();
-  }
-
-  @Disabled
-  @Test
-  void testRuntime() {
-    try(
-    var stream0 = new FileInputStream(fileName0);
-    var stream1 = new FileInputStream(fileName1)) {
-      System.out.println("Serialize ClusterInfo");
-      ClusterInfo clusterInfo = ClusterInfoSerializer.deserialize(stream0);
-      System.out.println("Serialize ClusterBean");
-      ClusterBean clusterBean = ClusterBeanSerializer.deserialize(stream1);
-      ReplicaLeaderCost replicaLeaderCost = new ReplicaLeaderCost(Configuration.of(Map.of(
-          ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "30" )));
-      System.out.println(replicaLeaderCost.resourceUsageHint().size());
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
   }
 
   @Disabled
@@ -110,20 +85,21 @@ public class BalancerExperimentTest {
               new NetworkEgressCost(Configuration.EMPTY), 3.0);
       var costFunction = HasClusterCost.of(costMap);
 
-      var balancer = new ResourceGreedyBalancer();
+      var balancer = new ResourceBalancer();
       var result =
           BalancerBenchmark.costProfiling()
               .setClusterInfo(clusterInfo)
               .setClusterBean(clusterBean)
               .setBalancer(balancer)
               .setExecutionTimeout(Duration.ofSeconds(180))
-              .setAlgorithmConfig(AlgorithmConfig.builder()
-                  .clusterCost(costFunction)
-                  // .moveCost(
-                  //     new ReplicaLeaderCost(Configuration.of(Map.of(
-                  //        ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60"
-                  //     ))))
-                  .build())
+              .setAlgorithmConfig(
+                  AlgorithmConfig.builder()
+                      .clusterCost(costFunction)
+                      // .moveCost(
+                      //     new ReplicaLeaderCost(Configuration.of(Map.of(
+                      //        ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60"
+                      //     ))))
+                      .build())
               .start()
               .toCompletableFuture()
               .join();
@@ -278,13 +254,16 @@ public class BalancerExperimentTest {
   @Disabled
   @Test
   void testDominantSort() {
-    int[] base = new int[] {1000,300,600};
-    List<int[]> collect = IntStream.range(0, 10000)
-        .mapToObj(i -> new int[]{
-            ThreadLocalRandom.current().nextInt(0, 10000),
-            ThreadLocalRandom.current().nextInt(0, 500),
-            ThreadLocalRandom.current().nextInt(0, 900)})
-        .collect(Collectors.toUnmodifiableList());
-
+    int[] base = new int[] {1000, 300, 600};
+    List<int[]> collect =
+        IntStream.range(0, 10000)
+            .mapToObj(
+                i ->
+                    new int[] {
+                      ThreadLocalRandom.current().nextInt(0, 10000),
+                      ThreadLocalRandom.current().nextInt(0, 500),
+                      ThreadLocalRandom.current().nextInt(0, 900)
+                    })
+            .collect(Collectors.toUnmodifiableList());
   }
 }

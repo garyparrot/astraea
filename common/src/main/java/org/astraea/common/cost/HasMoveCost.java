@@ -17,8 +17,8 @@
 package org.astraea.common.cost;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.stream.Collectors;
 import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
@@ -55,10 +55,11 @@ public interface HasMoveCost extends CostFunction {
       }
 
       @Override
-      public Set<ResourceUsageHint> resourceUsageHint() {
+      public Collection<ResourceUsageHint> movementResourceHint(
+          ClusterInfo sourceCluster, ClusterBean clusterBean) {
         return hasMoveCosts.stream()
-            .flatMap(x -> x.resourceUsageHint().stream())
-            .collect(Collectors.toUnmodifiableSet());
+            .flatMap(x -> x.movementResourceHint(sourceCluster, clusterBean).stream())
+            .collect(Collectors.toUnmodifiableList());
       }
 
       @Override
@@ -82,10 +83,8 @@ public interface HasMoveCost extends CostFunction {
    */
   MoveCost moveCost(ClusterInfo before, ClusterInfo after, ClusterBean clusterBean);
 
-  default Set<? extends ResourceUsageHint> resourceUsageHint() {
-    if(this instanceof ResourceUsageHint)
-      return Set.of((ResourceUsageHint) this);
-    else
-      return Set.of();
+  default Collection<ResourceUsageHint> movementResourceHint(
+      ClusterInfo sourceCluster, ClusterBean clusterBean) {
+    return List.of();
   }
 }

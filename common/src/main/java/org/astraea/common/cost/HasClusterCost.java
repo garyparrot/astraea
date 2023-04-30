@@ -16,9 +16,7 @@
  */
 package org.astraea.common.cost;
 
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,7 +29,7 @@ import org.astraea.common.metrics.collector.MetricSensor;
 @FunctionalInterface
 public interface HasClusterCost extends CostFunction {
 
-  static CompositeClusterCost of(Map<HasClusterCost, Double> costAndWeight) {
+  static HasClusterCost of(Map<HasClusterCost, Double> costAndWeight) {
     var sensor =
         MetricSensor.of(
             costAndWeight.keySet().stream()
@@ -40,7 +38,7 @@ public interface HasClusterCost extends CostFunction {
                 .map(Optional::get)
                 .collect(Collectors.toUnmodifiableList()));
 
-    return new CompositeClusterCost() {
+    return new HasClusterCost() {
 
       @Override
       public ClusterCost clusterCost(ClusterInfo clusterInfo, ClusterBean clusterBean) {
@@ -84,18 +82,11 @@ public interface HasClusterCost extends CostFunction {
       }
 
       @Override
-      public Collection<? extends HasClusterCost> functions() {
-        var queue = new LinkedList<HasClusterCost>(costAndWeight.keySet());
-        var functions = new ArrayList<HasClusterCost>();
-
-        while (!queue.isEmpty()) {
-          var next = queue.pop();
-          if (next instanceof CompositeClusterCost)
-            functions.addAll(((CompositeClusterCost) next).functions());
-          else functions.add(next);
-        }
-
-        return List.copyOf(functions);
+      public Collection<ResourceUsageHint> clusterResourceHint(
+          ClusterInfo sourceCluster, ClusterBean clusterBean) {
+        return costAndWeight.keySet().stream()
+            .flatMap(func -> func.clusterResourceHint(sourceCluster, clusterBean).stream())
+            .collect(Collectors.toUnmodifiableList());
       }
 
       @Override
@@ -124,4 +115,10 @@ public interface HasClusterCost extends CostFunction {
    * @return the score of cluster.
    */
   ClusterCost clusterCost(ClusterInfo clusterInfo, ClusterBean clusterBean);
+
+  // TODO: add javadoc
+  default Collection<ResourceUsageHint> clusterResourceHint(
+      ClusterInfo sourceCluster, ClusterBean clusterBean) {
+    return List.of();
+  }
 }

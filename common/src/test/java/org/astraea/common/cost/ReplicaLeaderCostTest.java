@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
-
 import org.astraea.common.Configuration;
 import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
@@ -38,23 +37,43 @@ public class ReplicaLeaderCostTest {
 
   @Test
   void testLeaderCount() {
-    var baseCluster = ClusterInfoBuilder.builder()
-        .addNode(Set.of(1, 2))
-        .addFolders(Map.of(1, Set.of("/folder")))
-        .addFolders(Map.of(2, Set.of("/folder")))
-        .build();
-    var sourceCluster = ClusterInfoBuilder.builder(baseCluster)
-        .addTopic("topic1", 3, (short) 1, r -> Replica.builder(r).nodeInfo(baseCluster.node(1)).build())
-        .addTopic("topic2", 3, (short) 1, r -> Replica.builder(r).nodeInfo(baseCluster.node(2)).build())
-        .build();
-    var targetCluster = ClusterInfoBuilder.builder(baseCluster)
-        .addTopic("topic1", 3, (short) 1, r -> Replica.builder(r).nodeInfo(baseCluster.node(2)).build())
-        .addTopic("topic2", 3, (short) 1, r -> Replica.builder(r).nodeInfo(baseCluster.node(1)).build())
-        .build();
+    var baseCluster =
+        ClusterInfoBuilder.builder()
+            .addNode(Set.of(1, 2))
+            .addFolders(Map.of(1, Set.of("/folder")))
+            .addFolders(Map.of(2, Set.of("/folder")))
+            .build();
+    var sourceCluster =
+        ClusterInfoBuilder.builder(baseCluster)
+            .addTopic(
+                "topic1",
+                3,
+                (short) 1,
+                r -> Replica.builder(r).nodeInfo(baseCluster.node(1)).build())
+            .addTopic(
+                "topic2",
+                3,
+                (short) 1,
+                r -> Replica.builder(r).nodeInfo(baseCluster.node(2)).build())
+            .build();
+    var targetCluster =
+        ClusterInfoBuilder.builder(baseCluster)
+            .addTopic(
+                "topic1",
+                3,
+                (short) 1,
+                r -> Replica.builder(r).nodeInfo(baseCluster.node(2)).build())
+            .addTopic(
+                "topic2",
+                3,
+                (short) 1,
+                r -> Replica.builder(r).nodeInfo(baseCluster.node(1)).build())
+            .build();
 
-    MoveCost moveCost = new ReplicaLeaderCost(Configuration.of(Map.of(
-        ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "1"
-    ))).moveCost(sourceCluster, targetCluster, ClusterBean.EMPTY);
+    MoveCost moveCost =
+        new ReplicaLeaderCost(
+                Configuration.of(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "1")))
+            .moveCost(sourceCluster, targetCluster, ClusterBean.EMPTY);
 
     System.out.println(moveCost.overflow());
   }

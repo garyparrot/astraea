@@ -16,13 +16,10 @@
  */
 package org.astraea.common.cost;
 
-import java.util.Collection;
-import java.util.Map;
+import java.util.List;
 import org.astraea.common.Configuration;
 import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.admin.Replica;
-import org.astraea.common.admin.TopicPartitionReplica;
 
 /**
  * A cost function to evaluate cluster load balance score in terms of message egress data rate. See
@@ -34,29 +31,13 @@ public class NetworkEgressCost extends NetworkCost {
   }
 
   @Override
+  public List<ResourceUsageHint> clusterResourceHint(
+      ClusterInfo sourceCluster, ClusterBean clusterBean) {
+    return List.of(egressUsageHint(sourceCluster, clusterBean));
+  }
+
+  @Override
   public String toString() {
     return this.getClass().getSimpleName();
-  }
-
-  @Override
-  public ResourceUsage evaluateClusterResourceUsage(
-      ClusterInfo clusterInfo, ClusterBean clusterBean, Replica target) {
-    double value = this.evaluateEgressResourceUsage(clusterBean, target.topicPartitionReplica());
-    return new ResourceUsage(
-        Map.of(NetworkCost.NETWORK_COST_BROKER_RESOURCE_PREFIX_EGRESS + target.nodeInfo().id(), value));
-  }
-
-  @Override
-  public ResourceUsage evaluateReplicaResourceUsage(
-      ClusterInfo clusterInfo, ClusterBean clusterBean, Replica target) {
-    double value = this.evaluateEgressResourceUsage(clusterBean, target.topicPartitionReplica());
-    return new ResourceUsage(
-        Map.of(NetworkCost.NETWORK_COST_REPLICA_RESOURCE_PREFIX_EGRESS, value));
-  }
-
-  @Override
-  public Collection<ResourceCapacity> evaluateClusterResourceCapacity(
-      ClusterInfo clusterInfo, ClusterBean clusterBean) {
-    return this.evaluateEgressResourceCapacity(clusterInfo, clusterBean);
   }
 }

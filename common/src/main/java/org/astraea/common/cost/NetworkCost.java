@@ -22,10 +22,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.astraea.common.Configuration;
@@ -72,13 +70,9 @@ import org.astraea.common.metrics.platform.HostMetrics;
  *       this cost with metrics from the servers in steady state.
  * </ol>
  */
-public abstract class NetworkCost implements HasClusterCost, ResourceUsageHint {
+public abstract class NetworkCost implements HasClusterCost {
 
   public static final String NETWORK_COST_ESTIMATION_METHOD = "network.cost.estimation.method";
-  public static final String NETWORK_COST_REPLICA_RESOURCE_PREFIX_INGRESS = "NetworkIngress";
-  public static final String NETWORK_COST_REPLICA_RESOURCE_PREFIX_EGRESS = "NetworkEgress";
-  public static final String NETWORK_COST_BROKER_RESOURCE_PREFIX_INGRESS = "NetworkIngress_Broker_";
-  public static final String NETWORK_COST_BROKER_RESOURCE_PREFIX_EGRESS = "NetworkEgress_Broker_";
 
   private final EstimationMethod estimationMethod;
   private final BandwidthType bandwidthType;
@@ -230,44 +224,6 @@ public abstract class NetworkCost implements HasClusterCost, ResourceUsageHint {
     return cachedCalculation.partitionEgressRate.get(target.topicPartition()).doubleValue();
   }
 
-  Collection<ResourceCapacity> evaluateIngressResourceCapacity(
-      ClusterInfo clusterInfo, ClusterBean clusterBean) {
-    final var cachedCalculation =
-        calculationCache.computeIfAbsent(clusterBean, CachedCalculation::new);
-    final var sumIngress =
-        cachedCalculation.partitionIngressRate.values().stream().mapToDouble(x -> x).sum();
-    final var avgIngressPerBroker = sumIngress / clusterInfo.brokers().size();
-
-    Set<ResourceCapacity> a = clusterInfo.brokers().stream()
-        .map(
-            broker ->
-                new NetworkResourceCapacity(
-                    NETWORK_COST_BROKER_RESOURCE_PREFIX_INGRESS + broker.id(), avgIngressPerBroker))
-        .collect(Collectors.toSet());
-
-    a.add(new NetworkResourceCapacity(NETWORK_COST_REPLICA_RESOURCE_PREFIX_INGRESS, 0));
-    return a;
-  }
-
-  Collection<ResourceCapacity> evaluateEgressResourceCapacity(
-      ClusterInfo clusterInfo, ClusterBean clusterBean) {
-    final var cachedCalculation =
-        calculationCache.computeIfAbsent(clusterBean, CachedCalculation::new);
-    final var sumEgress =
-        cachedCalculation.partitionEgressRate.values().stream().mapToDouble(x -> x).sum();
-    final var avgEgressPerBroker = sumEgress / clusterInfo.brokers().size();
-
-    Set<ResourceCapacity> a = clusterInfo.brokers().stream()
-        .map(
-            broker ->
-                new NetworkResourceCapacity(
-                    NETWORK_COST_BROKER_RESOURCE_PREFIX_EGRESS + broker.id(), avgEgressPerBroker))
-        .collect(Collectors.toSet());
-
-    a.add(new NetworkResourceCapacity(NETWORK_COST_REPLICA_RESOURCE_PREFIX_EGRESS, 0));
-    return a;
-  }
-
   private Map<BrokerTopic, List<Replica>> mapLeaderAllocation(ClusterInfo clusterInfo) {
     return clusterInfo
         .replicaStream()
@@ -363,6 +319,117 @@ public abstract class NetworkCost implements HasClusterCost, ResourceUsageHint {
     return value;
   }
 
+  ResourceUsageHint ingressUsageHint(ClusterInfo sourceCluster, ClusterBean clusterBean) {
+    final var cachedCalculation =
+        calculationCache.computeIfAbsent(clusterBean, CachedCalculation::new);
+    final var ingressMax =
+        cachedCalculation.partitionIngressRate.values().stream()
+            .mapToDouble(x -> x)
+            .max()
+            .orElse(1);
+    final var ingressSum =
+        cachedCalculation.partitionIngressRate.values().stream().mapToDouble(x -> x).sum();
+    final var ingressAvgPerBroker = ingressSum / sourceCluster.brokers().size();
+
+    return new ResourceUsageHint() {
+      @Override
+      public String description() {
+        return "balance network ingress usage of kafka brokers";
+      }
+
+      @Override
+      public ResourceUsage evaluateReplicaResourceUsage(Replica target) {
+        return new ResourceUsage(
+            Map.of("NetworkIngress", (double) ingress(cachedCalculation, target.topicPartition())));
+      }
+
+      @Override
+      public ResourceUsage evaluateClusterResourceUsage(Replica target) {
+        return new ResourceUsage(
+            Map.of(
+                "NetworkIngress_Broker_" + target.nodeInfo().id(),
+                (double) ingress(cachedCalculation, target.topicPartition())));
+      }
+
+      @Override
+      public double importance(ResourceUsage replicaResourceUsage) {
+        return 1 - replicaResourceUsage.usage().getOrDefault("NetworkIngress", 0.0) / ingressMax;
+      }
+
+      @Override
+      public double idealness(ResourceUsage clusterResourceUsage) {
+        return sourceCluster.brokers().stream()
+            .map(b -> "NetworkIngress_Broker_" + b.id())
+            .mapToDouble(name -> clusterResourceUsage.usage().getOrDefault(name, 0.0))
+            .map(ingress -> Math.abs(ingress - ingressAvgPerBroker))
+            .map(ingressDiff -> ingressDiff / ingressSum)
+            .average()
+            .orElseThrow();
+      }
+    };
+  }
+
+  ResourceUsageHint egressUsageHint(ClusterInfo sourceCluster, ClusterBean clusterBean) {
+    final var cachedCalculation =
+        calculationCache.computeIfAbsent(clusterBean, CachedCalculation::new);
+    final var egressMax =
+        cachedCalculation.partitionEgressRate.values().stream().mapToDouble(x -> x).max().orElse(1);
+    final var replicationSum =
+        cachedCalculation.partitionIngressRate.entrySet().stream()
+            .mapToDouble(e -> e.getValue() * (sourceCluster.replicas(e.getKey()).size() - 1))
+            .sum();
+    final var fetchSum =
+        cachedCalculation.partitionEgressRate.values().stream().mapToDouble(x -> x).sum();
+    final var egressAvgPerBroker = (fetchSum + replicationSum) / sourceCluster.brokers().size();
+
+    return new ResourceUsageHint() {
+      @Override
+      public String description() {
+        return "balance network egress usage of kafka brokers";
+      }
+
+      @Override
+      public ResourceUsage evaluateReplicaResourceUsage(Replica target) {
+        if (target.isLeader())
+          return new ResourceUsage(
+              Map.of(
+                  "NetworkEgress",
+                  (double) egress(cachedCalculation, target.topicPartition())
+                      + ingress(cachedCalculation, target.topicPartition())
+                          * (sourceCluster.replicas(target.topicPartition()).size() - 1)));
+        else return new ResourceUsage(Map.of());
+      }
+
+      @Override
+      public ResourceUsage evaluateClusterResourceUsage(Replica target) {
+        if (target.isLeader())
+          return new ResourceUsage(
+              Map.of(
+                  "NetworkEgress_Broker_" + target.nodeInfo().id(),
+                  (double) egress(cachedCalculation, target.topicPartition())
+                      + ingress(cachedCalculation, target.topicPartition())
+                          * (sourceCluster.replicas(target.topicPartition()).size() - 1)));
+        else return new ResourceUsage(Map.of());
+      }
+
+      @Override
+      public double importance(ResourceUsage replicaResourceUsage) {
+        return 1 - replicaResourceUsage.usage().getOrDefault("NetworkEgress", 0.0) / egressMax;
+      }
+
+      @Override
+      public double idealness(ResourceUsage clusterResourceUsage) {
+        return sourceCluster.brokers().stream()
+            .map(b -> "NetworkEgress_Broker_" + b.id())
+            .mapToDouble(name -> clusterResourceUsage.usage().getOrDefault(name, 0.0))
+            .map(egress -> Math.abs(egress - egressAvgPerBroker))
+            .map(egressDiff -> egressDiff / (fetchSum + replicationSum))
+            .average()
+            .orElseThrow();
+      }
+    };
+  }
+
   private <T> T fail(String reason) {
     throw new NoSufficientMetricsException(this, Duration.ofSeconds(1), reason);
   }
@@ -452,42 +519,6 @@ public abstract class NetworkCost implements HasClusterCost, ResourceUsageHint {
           .map(DataRate.Byte::of)
           .map(DataRate::toString)
           .collect(Collectors.joining(", ", "{", "}"));
-    }
-  }
-
-  static class NetworkResourceCapacity implements ResourceCapacity {
-
-    private final String resourceName;
-    private final double optimal;
-
-    NetworkResourceCapacity(String resourceName, double optimal) {
-      this.resourceName = resourceName;
-      this.optimal = optimal;
-    }
-
-    @Override
-    public String resourceName() {
-      return resourceName;
-    }
-
-    @Override
-    public double optimalUsage() {
-      return optimal;
-    }
-
-    @Override
-    public double idealness(ResourceUsage usage) {
-      return Math.abs(usage.usage().getOrDefault(resourceName, 0.0) - optimal) / 1e12;
-    }
-
-    @Override
-    public Comparator<ResourceUsage> usageIdealnessComparator() {
-      return Comparator.comparingDouble(ru -> Math.abs(ru.usage().getOrDefault(resourceName, 0.0) - optimal));
-    }
-
-    @Override
-    public Predicate<ResourceUsage> usageValidnessPredicate() {
-      return ignore -> true;
     }
   }
 }

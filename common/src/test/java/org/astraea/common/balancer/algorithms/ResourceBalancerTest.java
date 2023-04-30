@@ -16,18 +16,4 @@
  */
 package org.astraea.common.balancer.algorithms;
 
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
-import java.util.function.Predicate;
-import org.astraea.common.admin.NodeInfo;
-import org.astraea.common.admin.Replica;
-import org.astraea.common.cost.ResourceCapacity;
-import org.astraea.common.cost.ResourceUsage;
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.Test;
-
-class ResourceBalancerTest {
-
-}
+class ResourceBalancerTest {}

@@ -16,20 +16,27 @@
  */
 package org.astraea.common.cost;
 
-import java.util.Collection;
-import org.astraea.common.admin.ClusterBean;
-import org.astraea.common.admin.ClusterInfo;
+import java.util.Comparator;
+import java.util.function.Predicate;
 import org.astraea.common.admin.Replica;
-import org.astraea.common.admin.TopicPartitionReplica;
 
 public interface ResourceUsageHint {
 
-  ResourceUsage evaluateClusterResourceUsage(
-      ClusterInfo clusterInfo, ClusterBean clusterBean, Replica target);
+  String description();
 
-  ResourceUsage evaluateReplicaResourceUsage(
-      ClusterInfo clusterInfo, ClusterBean clusterBean, Replica target);
+  ResourceUsage evaluateReplicaResourceUsage(Replica target);
 
-  Collection<ResourceCapacity> evaluateClusterResourceCapacity(
-      ClusterInfo clusterInfo, ClusterBean clusterBean);
+  ResourceUsage evaluateClusterResourceUsage(Replica target);
+
+  double importance(ResourceUsage replicaResourceUsage);
+
+  double idealness(ResourceUsage clusterResourceUsage);
+
+  default Comparator<ResourceUsage> usageIdealnessComparator() {
+    return Comparator.comparingDouble(this::idealness);
+  }
+
+  default Predicate<ResourceUsage> usageValidityPredicate() {
+    return (usage) -> true;
+  }
 }
