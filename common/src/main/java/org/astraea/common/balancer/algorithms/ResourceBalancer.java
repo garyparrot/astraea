@@ -27,6 +27,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
@@ -203,7 +204,7 @@ public class ResourceBalancer implements Balancer {
                 .filter(e -> feasibleUsage.test(e.getKey()))
                 .sorted(
                     Map.Entry.comparingByKey(
-                        usageIdealnessDominationComparator(currentResourceUsage, this.usageHints)))
+                        usageIdealnessDominationComparator2(currentResourceUsage, this.usageHints)))
                 // TODO: maybe change to probability style
                 .limit(trials(next))
                 .collect(Collectors.toUnmodifiableList());
@@ -243,6 +244,18 @@ public class ResourceBalancer implements Balancer {
               replica -> currentAllocation.get(replica.topicPartition()).add(replica));
         }
       }
+    }
+
+    private List<Tweak> puts(Replica replica) {
+      return sourceCluster.brokers().stream()
+          .flatMap(broker -> sourceCluster.brokerFolders().get(broker.id())
+              .stream()
+              .map(path -> Replica.builder(replica)
+                  .nodeInfo(broker)
+                  .path(path)
+                  .build()))
+          .map(newReplica -> new Tweak(List.of(), List.of(newReplica)))
+          .collect(Collectors.toUnmodifiableList());
     }
 
     private List<Tweak> tweaks(
@@ -352,82 +365,50 @@ public class ResourceBalancer implements Balancer {
       return Comparator.comparing(replicaResourceUsage, cmp);
     }
 
-    static Comparator<ResourceUsage> usageIdealnessDominationComparator(
-        List<ResourceUsageHint> usageHints) {
-      var comparators =
-          usageHints.stream()
-              .map(ResourceUsageHint::usageIdealnessComparator)
-              .collect(Collectors.toUnmodifiableSet());
+    // static Comparator<ResourceUsage> usageIdealnessDominationComparator(
+    //     ResourceUsage base, List<ResourceUsageHint> usageHints) {
+    //   var comparators =
+    //       usageHints.stream()
+    //           .map(ResourceUsageHint::usageIdealnessComparator)
+    //           .collect(Collectors.toUnmodifiableSet());
+
+    //   Comparator<ResourceUsage> dominatedCmp =
+    //       (lhs, rhs) -> {
+    //         var dominatedByL = comparators.stream().filter(e -> e.compare(lhs, rhs) <= 0).count();
+    //         var dominatedByR = comparators.stream().filter(e -> e.compare(rhs, lhs) <= 0).count();
+
+    //         return -Long.compare(dominatedByL, dominatedByR);
+    //       };
+
+    //   // return usageIdealnessDominationComparator(resourceCapacities)
+    //   //     .thenComparingDouble(usage -> resourceCapacities.stream()
+    //   //         .mapToDouble(ca -> ca.idealness(usage))
+    //   //         .average()
+    //   //         .orElseThrow());
+    //   return dominatedCmp.thenComparingDouble(
+    //       usage ->
+    //           usageHints.stream().mapToDouble(ca -> ca.idealness(usage)).average().orElseThrow());
+    // }
+
+    static Comparator<ResourceUsage> usageIdealnessDominationComparator2(ResourceUsage baseUsage, List<ResourceUsageHint> usageHints) {
+      var baseIdealness = usageHints.stream()
+          .map(hint -> hint.idealness(baseUsage))
+          .collect(Collectors.toUnmodifiableList());
 
       return (lhs, rhs) -> {
-        //  TODO: change this logic
-        var dominatedByL = comparators.stream().filter(e -> e.compare(lhs, rhs) < 0).count();
-        var dominatedByR = comparators.stream().filter(e -> e.compare(rhs, lhs) < 0).count();
+        var idealnessVectorL = IntStream.range(0, usageHints.size())
+            .mapToObj(index -> usageHints.get(index).idealness(lhs) - baseIdealness.get(index))
+            .collect(Collectors.toUnmodifiableList());
+        var idealnessVectorR = IntStream.range(0, usageHints.size())
+            .mapToObj(index -> usageHints.get(index).idealness(rhs) - baseIdealness.get(index))
+            .collect(Collectors.toUnmodifiableList());
 
-        return -Long.compare(dominatedByL, dominatedByR);
+        var sumL = idealnessVectorL.stream().mapToDouble(x -> x).sum();
+        var sumR = idealnessVectorR.stream().mapToDouble(x -> x).sum();
+
+        return Double.compare(sumL, sumR);
       };
     }
-
-    static Comparator<ResourceUsage> usageIdealnessDominationComparator(
-        ResourceUsage base, List<ResourceUsageHint> usageHints) {
-      var comparators =
-          usageHints.stream()
-              .map(ResourceUsageHint::usageIdealnessComparator)
-              .collect(Collectors.toUnmodifiableSet());
-
-      Comparator<ResourceUsage> dominatedCmp =
-          (lhs, rhs) -> {
-            var dominatedByL = comparators.stream().filter(e -> e.compare(lhs, rhs) <= 0).count();
-            var dominatedByR = comparators.stream().filter(e -> e.compare(rhs, lhs) <= 0).count();
-
-            return -Long.compare(dominatedByL, dominatedByR);
-          };
-
-      // return usageIdealnessDominationComparator(resourceCapacities)
-      //     .thenComparingDouble(usage -> resourceCapacities.stream()
-      //         .mapToDouble(ca -> ca.idealness(usage))
-      //         .average()
-      //         .orElseThrow());
-      return dominatedCmp.thenComparingDouble(
-          usage ->
-              usageHints.stream().mapToDouble(ca -> ca.idealness(usage)).average().orElseThrow());
-    }
-
-    // static Comparator<ResourceUsage> usageIdealnessDominationComparator(ResourceUsage baseUsage,
-    // List<ResourceCapacity> resourceCapacities) {
-    //   var comparators =
-    //       resourceCapacities.stream()
-    //           .map(ResourceCapacity::usageIdealnessComparator)
-    //           .collect(Collectors.toUnmodifiableSet());
-    //   var baseIdealness = resourceCapacities.stream()
-    //       .collect(Collectors.toUnmodifiableMap(
-    //           ResourceCapacity::resourceName,
-    //           c -> c.idealness(baseUsage)));
-
-    //   return (lhs, rhs) -> {
-    //     var idealnessVectorL = resourceCapacities.stream()
-    //         .collect(Collectors.toUnmodifiableMap(
-    //             ResourceCapacity::resourceName,
-    //             c -> c.idealness(lhs) - baseIdealness.get(c.resourceName())));
-    //     var idealnessVectorR = resourceCapacities.stream()
-    //         .collect(Collectors.toUnmodifiableMap(
-    //             ResourceCapacity::resourceName,
-    //             c -> c.idealness(rhs) - baseIdealness.get(c.resourceName())));
-
-    //     var sumL = idealnessVectorL.entrySet()
-    //         .stream()
-    //         .mapToDouble(e -> e.getKey().startsWith("Network") ? e.getValue() / 6.0 :
-    // e.getValue())
-    //         .sum();
-    //     var sumR = idealnessVectorR.entrySet()
-    //         .stream()
-    //         .mapToDouble(e -> e.getKey().startsWith("Network") ? e.getValue() / 6.0 :
-    // e.getValue())
-    //         .sum();
-
-    //     return Double.compare(sumL, sumR);
-    //   };
-    // }
   }
 
   private static class Tweak {
