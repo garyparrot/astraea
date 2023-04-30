@@ -32,10 +32,6 @@ public interface ResourceUsageHint {
 
   double idealness(ResourceUsage clusterResourceUsage);
 
-  default Comparator<ResourceUsage> usageIdealnessComparator() {
-    return Comparator.comparingDouble(this::idealness);
-  }
-
   default Predicate<ResourceUsage> usageValidityPredicate() {
     return (usage) -> true;
   }
