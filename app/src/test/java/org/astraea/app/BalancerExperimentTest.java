@@ -17,7 +17,6 @@
 package org.astraea.app;
 
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -38,7 +37,6 @@ import org.astraea.common.admin.Broker;
 import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.NodeInfo;
-import org.astraea.common.admin.Replica;
 import org.astraea.common.balancer.AlgorithmConfig;
 import org.astraea.common.balancer.Balancer;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
@@ -71,24 +69,40 @@ public class BalancerExperimentTest {
 
   @Test
   void test() {
-    try(var stream0 = new FileInputStream(fileName0); var stream1 = new FileInputStream(fileName1)) {
+    try (var stream0 = new FileInputStream(fileName0);
+        var stream1 = new FileInputStream(fileName1)) {
       System.out.println("Serialize ClusterInfo");
       ClusterInfo clusterInfo = ClusterInfoSerializer.deserialize(stream0);
       System.out.println("Serialize ClusterBean");
       ClusterBean clusterBean = ClusterBeanSerializer.deserialize(stream1);
-      var hints = List.of(
-          new NetworkIngressCost(Configuration.EMPTY).clusterResourceHint(clusterInfo, clusterBean).get(0),
-          new NetworkEgressCost(Configuration.EMPTY).clusterResourceHint(clusterInfo, clusterBean).get(0));
+      var hints =
+          List.of(
+              new NetworkIngressCost(Configuration.EMPTY)
+                  .clusterResourceHint(clusterInfo, clusterBean)
+                  .get(0),
+              new NetworkEgressCost(Configuration.EMPTY)
+                  .clusterResourceHint(clusterInfo, clusterBean)
+                  .get(0));
       var counter = new LongAdder();
       var start = System.nanoTime();
       while (true) {
-        var usage = new ResourceUsage();
-        for (Replica replica : clusterInfo.replicas()) {
-          hints.forEach(hint -> usage.mergeUsage(hint.evaluateClusterResourceUsage(replica)));
-        }
+        var usage =
+            ResourceUsage.EMPTY.mergeUsage(
+                clusterInfo.replicas().stream()
+                    .flatMap(
+                        replica ->
+                            hints.stream()
+                                .map(hint -> hint.evaluateClusterResourceUsage(replica))));
+        if (usage.hashCode() == 0) System.out.print("");
+        // for (Replica replica : clusterInfo.replicas()) {
+        //   hints.forEach(hint -> usage.mergeUsage(hint.evaluateClusterResourceUsage(replica)));
+        // }
         counter.increment();
-        if(ThreadLocalRandom.current().nextInt(0, 1000) == 0) {
-          System.out.println("Rate: " + (counter.sum()) / (Duration.ofNanos(System.nanoTime() - start).toSeconds()) + " op/s");
+        if (ThreadLocalRandom.current().nextInt(0, 1000) == 0) {
+          System.out.println(
+              "Rate: "
+                  + (counter.sum()) / (Duration.ofNanos(System.nanoTime() - start).toSeconds())
+                  + " op/s");
         }
       }
     } catch (IOException e) {
@@ -128,9 +142,9 @@ public class BalancerExperimentTest {
                   AlgorithmConfig.builder()
                       .clusterCost(costFunction)
                       .moveCost(
-                          new ReplicaLeaderCost(Configuration.of(Map.of(
-                             ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60"
-                          ))))
+                          new ReplicaLeaderCost(
+                              Configuration.of(
+                                  Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60"))))
                       .build())
               .start()
               .toCompletableFuture()

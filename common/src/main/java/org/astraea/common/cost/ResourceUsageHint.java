@@ -16,7 +16,6 @@
  */
 package org.astraea.common.cost;
 
-import java.util.Comparator;
 import java.util.function.Predicate;
 import org.astraea.common.admin.Replica;
 

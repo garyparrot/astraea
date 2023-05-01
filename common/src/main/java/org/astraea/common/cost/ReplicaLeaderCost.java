@@ -113,7 +113,7 @@ public class ReplicaLeaderCost implements HasBrokerCost, HasClusterCost, HasMove
 
           @Override
           public ResourceUsage evaluateReplicaResourceUsage(Replica target) {
-            return new ResourceUsage();
+            return ResourceUsage.EMPTY;
           }
 
           @Override

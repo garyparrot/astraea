@@ -18,34 +18,35 @@ package org.astraea.common.cost;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.stream.Stream;
 
 /** A collection of resource usage stat. */
 public class ResourceUsage {
 
+  public static final ResourceUsage EMPTY = new ResourceUsage(Map.of());
+
   private final Map<String, Double> usage;
 
-  public ResourceUsage() {
-    this.usage = new HashMap<>();
-  }
-
   public ResourceUsage(Map<String, Double> usage) {
-    this.usage = new HashMap<>(usage);
+    this.usage = Map.copyOf(usage);
   }
 
   public Map<String, Double> usage() {
     return usage;
   }
 
-  public void mergeUsage(ResourceUsage resourceUsage) {
-    resourceUsage.usage.forEach(
-        (resource, usage) ->
-            this.usage.put(resource, this.usage.getOrDefault(resource, 0.0) + usage));
+  public ResourceUsage mergeUsage(Stream<ResourceUsage> usages) {
+    var sum = new HashMap<>(usage);
+    usages.forEach(
+        usage -> usage.usage().forEach((k, v) -> sum.put(k, sum.getOrDefault(k, 0.0) + v)));
+    return new ResourceUsage(sum);
   }
 
-  public void removeUsage(ResourceUsage resourceUsage) {
-    resourceUsage.usage.forEach(
-        (resource, usage) ->
-            this.usage.put(resource, this.usage.getOrDefault(resource, 0.0) - usage));
+  public ResourceUsage removeUsage(Stream<ResourceUsage> usages) {
+    var sum = new HashMap<>(usage);
+    usages.forEach(
+        usage -> usage.usage().forEach((k, v) -> sum.put(k, sum.getOrDefault(k, 0.0) - v)));
+    return new ResourceUsage(sum);
   }
 
   @Override

@@ -98,13 +98,10 @@ public class ResourceBalancer implements Balancer {
               .sorted(
                   usageDominationComparator(
                       usageHints,
-                      (r) -> {
-                        var resource = new ResourceUsage();
-                        usageHints.stream()
-                            .map(hint -> hint.evaluateReplicaResourceUsage(r))
-                            .forEach(rrr -> resource.mergeUsage(rrr));
-                        return resource;
-                      }))
+                      (r) ->
+                          ResourceUsage.EMPTY.mergeUsage(
+                              usageHints.stream()
+                                  .map(hint -> hint.evaluateReplicaResourceUsage(r)))))
               .collect(Collectors.toUnmodifiableList());
 
       this.feasibleUsage =
@@ -115,10 +112,9 @@ public class ResourceBalancer implements Balancer {
     }
 
     ClusterInfo execute() {
-      var clusterResourceUsage = new ResourceUsage();
-      sourceCluster.replicas().stream()
-          .flatMap(this::evaluateReplicaUsage)
-          .forEach(clusterResourceUsage::mergeUsage);
+      var clusterResourceUsage =
+          ResourceUsage.EMPTY.mergeUsage(
+              sourceCluster.replicas().stream().flatMap(this::evaluateReplicaUsage));
 
       var bestAllocation = new AtomicReference<ClusterInfo>();
       var bestAllocationScore = new AtomicReference<Double>();
@@ -191,14 +187,12 @@ public class ResourceBalancer implements Balancer {
             tweaks(currentAllocation, nextReplica).stream()
                 .map(
                     tweaks -> {
-                      var usageAfterTweaked = new ResourceUsage(currentResourceUsage.usage());
-                      tweaks.toRemove.stream()
-                          .flatMap(this::evaluateReplicaUsage)
-                          .forEach(usageAfterTweaked::removeUsage);
-                      tweaks.toReplace.stream()
-                          .flatMap(this::evaluateReplicaUsage)
-                          .forEach(usageAfterTweaked::mergeUsage);
-
+                      var usageAfterTweaked =
+                          currentResourceUsage
+                              .mergeUsage(
+                                  tweaks.toReplace.stream().flatMap(this::evaluateReplicaUsage))
+                              .removeUsage(
+                                  tweaks.toRemove.stream().flatMap(this::evaluateReplicaUsage));
                       return Map.entry(usageAfterTweaked, tweaks);
                     })
                 .filter(e -> feasibleUsage.test(e.getKey()))
@@ -248,12 +242,10 @@ public class ResourceBalancer implements Balancer {
 
     private List<Tweak> puts(Replica replica) {
       return sourceCluster.brokers().stream()
-          .flatMap(broker -> sourceCluster.brokerFolders().get(broker.id())
-              .stream()
-              .map(path -> Replica.builder(replica)
-                  .nodeInfo(broker)
-                  .path(path)
-                  .build()))
+          .flatMap(
+              broker ->
+                  sourceCluster.brokerFolders().get(broker.id()).stream()
+                      .map(path -> Replica.builder(replica).nodeInfo(broker).path(path).build()))
           .map(newReplica -> new Tweak(List.of(), List.of(newReplica)))
           .collect(Collectors.toUnmodifiableList());
     }
@@ -374,8 +366,10 @@ public class ResourceBalancer implements Balancer {
 
     //   Comparator<ResourceUsage> dominatedCmp =
     //       (lhs, rhs) -> {
-    //         var dominatedByL = comparators.stream().filter(e -> e.compare(lhs, rhs) <= 0).count();
-    //         var dominatedByR = comparators.stream().filter(e -> e.compare(rhs, lhs) <= 0).count();
+    //         var dominatedByL = comparators.stream().filter(e -> e.compare(lhs, rhs) <=
+    // 0).count();
+    //         var dominatedByR = comparators.stream().filter(e -> e.compare(rhs, lhs) <=
+    // 0).count();
 
     //         return -Long.compare(dominatedByL, dominatedByR);
     //       };
@@ -387,21 +381,26 @@ public class ResourceBalancer implements Balancer {
     //   //         .orElseThrow());
     //   return dominatedCmp.thenComparingDouble(
     //       usage ->
-    //           usageHints.stream().mapToDouble(ca -> ca.idealness(usage)).average().orElseThrow());
+    //           usageHints.stream().mapToDouble(ca ->
+    // ca.idealness(usage)).average().orElseThrow());
     // }
 
-    static Comparator<ResourceUsage> usageIdealnessDominationComparator2(ResourceUsage baseUsage, List<ResourceUsageHint> usageHints) {
-      var baseIdealness = usageHints.stream()
-          .map(hint -> hint.idealness(baseUsage))
-          .collect(Collectors.toUnmodifiableList());
+    static Comparator<ResourceUsage> usageIdealnessDominationComparator2(
+        ResourceUsage baseUsage, List<ResourceUsageHint> usageHints) {
+      var baseIdealness =
+          usageHints.stream()
+              .map(hint -> hint.idealness(baseUsage))
+              .collect(Collectors.toUnmodifiableList());
 
       return (lhs, rhs) -> {
-        var idealnessVectorL = IntStream.range(0, usageHints.size())
-            .mapToObj(index -> usageHints.get(index).idealness(lhs) - baseIdealness.get(index))
-            .collect(Collectors.toUnmodifiableList());
-        var idealnessVectorR = IntStream.range(0, usageHints.size())
-            .mapToObj(index -> usageHints.get(index).idealness(rhs) - baseIdealness.get(index))
-            .collect(Collectors.toUnmodifiableList());
+        var idealnessVectorL =
+            IntStream.range(0, usageHints.size())
+                .mapToObj(index -> usageHints.get(index).idealness(lhs) - baseIdealness.get(index))
+                .collect(Collectors.toUnmodifiableList());
+        var idealnessVectorR =
+            IntStream.range(0, usageHints.size())
+                .mapToObj(index -> usageHints.get(index).idealness(rhs) - baseIdealness.get(index))
+                .collect(Collectors.toUnmodifiableList());
 
         var sumL = idealnessVectorL.stream().mapToDouble(x -> x).sum();
         var sumR = idealnessVectorR.stream().mapToDouble(x -> x).sum();
