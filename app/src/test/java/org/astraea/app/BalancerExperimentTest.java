@@ -17,6 +17,7 @@
 package org.astraea.app;
 
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -26,6 +27,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Scanner;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.astraea.balancer.bench.BalancerBenchmark;
@@ -36,6 +38,7 @@ import org.astraea.common.admin.Broker;
 import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.NodeInfo;
+import org.astraea.common.admin.Replica;
 import org.astraea.common.balancer.AlgorithmConfig;
 import org.astraea.common.balancer.Balancer;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
@@ -47,6 +50,7 @@ import org.astraea.common.cost.NetworkIngressCost;
 import org.astraea.common.cost.NoSufficientMetricsException;
 import org.astraea.common.cost.ReplicaLeaderCost;
 import org.astraea.common.cost.ReplicaNumberCost;
+import org.astraea.common.cost.ResourceUsage;
 import org.astraea.common.metrics.ClusterBeanSerializer;
 import org.astraea.common.metrics.ClusterInfoSerializer;
 import org.astraea.common.metrics.MBeanClient;
@@ -63,6 +67,33 @@ public class BalancerExperimentTest {
 
   public static void main(String[] args) {
     new BalancerExperimentTest().testProfiling();
+  }
+
+  @Test
+  void test() {
+    try(var stream0 = new FileInputStream(fileName0); var stream1 = new FileInputStream(fileName1)) {
+      System.out.println("Serialize ClusterInfo");
+      ClusterInfo clusterInfo = ClusterInfoSerializer.deserialize(stream0);
+      System.out.println("Serialize ClusterBean");
+      ClusterBean clusterBean = ClusterBeanSerializer.deserialize(stream1);
+      var hints = List.of(
+          new NetworkIngressCost(Configuration.EMPTY).clusterResourceHint(clusterInfo, clusterBean).get(0),
+          new NetworkEgressCost(Configuration.EMPTY).clusterResourceHint(clusterInfo, clusterBean).get(0));
+      var counter = new LongAdder();
+      var start = System.nanoTime();
+      while (true) {
+        var usage = new ResourceUsage();
+        for (Replica replica : clusterInfo.replicas()) {
+          hints.forEach(hint -> usage.mergeUsage(hint.evaluateClusterResourceUsage(replica)));
+        }
+        counter.increment();
+        if(ThreadLocalRandom.current().nextInt(0, 1000) == 0) {
+          System.out.println("Rate: " + (counter.sum()) / (Duration.ofNanos(System.nanoTime() - start).toSeconds()) + " op/s");
+        }
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   @Disabled
