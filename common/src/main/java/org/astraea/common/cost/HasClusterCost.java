@@ -116,7 +116,10 @@ public interface HasClusterCost extends CostFunction {
    */
   ClusterCost clusterCost(ClusterInfo clusterInfo, ClusterBean clusterBean);
 
-  // TODO: add javadoc
+  /**
+   * @return a collection of {@link ResourceUsageHint} that associated with this cluster cost
+   *     function.
+   */
   default Collection<ResourceUsageHint> clusterResourceHint(
       ClusterInfo sourceCluster, ClusterBean clusterBean) {
     return List.of();
