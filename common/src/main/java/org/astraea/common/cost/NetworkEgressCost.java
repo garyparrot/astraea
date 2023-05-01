@@ -18,8 +18,8 @@ package org.astraea.common.cost;
 
 import java.util.List;
 import org.astraea.common.Configuration;
-import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.metrics.ClusterBean;
 
 /**
  * A cost function to evaluate cluster load balance score in terms of message egress data rate. See

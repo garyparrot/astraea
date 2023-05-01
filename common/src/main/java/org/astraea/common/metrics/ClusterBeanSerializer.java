@@ -23,7 +23,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import org.astraea.common.Utils;
-import org.astraea.common.admin.ClusterBean;
 
 public class ClusterBeanSerializer {
 

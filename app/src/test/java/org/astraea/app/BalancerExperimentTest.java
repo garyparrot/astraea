@@ -34,7 +34,6 @@ import org.astraea.common.Configuration;
 import org.astraea.common.Utils;
 import org.astraea.common.admin.Admin;
 import org.astraea.common.admin.Broker;
-import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.balancer.AlgorithmConfig;
@@ -49,9 +48,10 @@ import org.astraea.common.cost.NoSufficientMetricsException;
 import org.astraea.common.cost.ReplicaLeaderCost;
 import org.astraea.common.cost.ReplicaNumberCost;
 import org.astraea.common.cost.ResourceUsage;
+import org.astraea.common.metrics.ClusterBean;
 import org.astraea.common.metrics.ClusterBeanSerializer;
 import org.astraea.common.metrics.ClusterInfoSerializer;
-import org.astraea.common.metrics.MBeanClient;
+import org.astraea.common.metrics.JndiClient;
 import org.astraea.common.metrics.collector.MetricStore;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -141,10 +141,10 @@ public class BalancerExperimentTest {
               .setAlgorithmConfig(
                   AlgorithmConfig.builder()
                       .clusterCost(costFunction)
-                      .moveCost(
-                          new ReplicaLeaderCost(
-                              Configuration.of(
-                                  Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60"))))
+                      // .moveCost(
+                      //     new ReplicaLeaderCost(
+                      //         Configuration.of(
+                      //             Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60"))))
                       .build())
               .start()
               .toCompletableFuture()
@@ -239,7 +239,7 @@ public class BalancerExperimentTest {
                                       .collect(
                                           Collectors.toUnmodifiableMap(
                                               NodeInfo::id,
-                                              (Broker b) -> MBeanClient.jndi(b.host(), 16926)))))
+                                              (Broker b) -> JndiClient.of(b.host(), 16926)))))
               .build()) {
         var clusterBean = (ClusterBean) null;
         var balancer = new GreedyBalancer();

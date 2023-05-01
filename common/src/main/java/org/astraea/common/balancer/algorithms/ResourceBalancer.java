@@ -29,7 +29,6 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
-import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.TopicPartition;
@@ -37,6 +36,7 @@ import org.astraea.common.balancer.AlgorithmConfig;
 import org.astraea.common.balancer.Balancer;
 import org.astraea.common.cost.ResourceUsage;
 import org.astraea.common.cost.ResourceUsageHint;
+import org.astraea.common.metrics.ClusterBean;
 
 public class ResourceBalancer implements Balancer {
 

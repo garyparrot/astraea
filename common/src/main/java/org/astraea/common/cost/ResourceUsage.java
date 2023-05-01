@@ -20,7 +20,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Stream;
 
-/** A collection of resource usage stat. */
+/** A collection of resource usage. */
 public class ResourceUsage {
 
   public static final ResourceUsage EMPTY = new ResourceUsage(Map.of());
