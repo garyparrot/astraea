@@ -194,7 +194,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # rejectProperty "node.id"
-rejectProperty "controller.quorum.voters"
+# rejectProperty "controller.quorum.voters"
 rejectProperty "listeners"
 rejectProperty "process.roles"
 rejectProperty "controller.listener.names"
