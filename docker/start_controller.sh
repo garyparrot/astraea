@@ -193,7 +193,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-rejectProperty "node.id"
+# rejectProperty "node.id"
 rejectProperty "controller.quorum.voters"
 rejectProperty "listeners"
 rejectProperty "process.roles"
@@ -201,7 +201,7 @@ rejectProperty "controller.listener.names"
 rejectProperty "advertised.listeners"
 rejectProperty "zookeeper.connect"
 rejectProperty "log.dirs"
-rejectProperty "broker.id"
+# rejectProperty "broker.id"
 # we don't use this property as kraft can use head of log.dirs instead
 rejectProperty "metadata.log.dir"
 
