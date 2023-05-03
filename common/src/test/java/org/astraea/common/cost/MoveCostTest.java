@@ -17,14 +17,13 @@
 package org.astraea.common.cost;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import org.astraea.common.admin.Admin;
-import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.metrics.MBeanClient;
+import org.astraea.common.metrics.ClusterBean;
 import org.astraea.common.metrics.broker.ServerMetrics;
+import org.astraea.common.metrics.collector.BeanObjectClient;
 import org.astraea.common.metrics.collector.MetricSensor;
 import org.astraea.it.Service;
 import org.junit.jupiter.api.AfterAll;
@@ -40,34 +39,6 @@ public class MoveCostTest {
   }
 
   @Test
-  void testMerge() {
-    HasMoveCost cost0 =
-        (before, after, clusterBean) ->
-            new MoveCost() {
-              @Override
-              public Map<Integer, Integer> changedReplicaCount() {
-                return Map.of(1, 10, 2, 20, 3, 30);
-              }
-            };
-    HasMoveCost cost1 =
-        (before, after, clusterBean) ->
-            new MoveCost() {
-              @Override
-              public Map<Integer, Integer> changedReplicaLeaderCount() {
-                return Map.of(1, 100, 2, 200, 3, 300);
-              }
-            };
-    var merged = HasMoveCost.of(List.of(cost0, cost1));
-    var result = merged.moveCost(null, null, ClusterBean.EMPTY);
-    Assertions.assertEquals(10, result.changedReplicaCount().get(1));
-    Assertions.assertEquals(20, result.changedReplicaCount().get(2));
-    Assertions.assertEquals(30, result.changedReplicaCount().get(3));
-    Assertions.assertEquals(100, result.changedReplicaLeaderCount().get(1));
-    Assertions.assertEquals(200, result.changedReplicaLeaderCount().get(2));
-    Assertions.assertEquals(300, result.changedReplicaLeaderCount().get(3));
-  }
-
-  @Test
   void testSensor() {
     // create topic partition to get metrics
     try (var admin = Admin.of(SERVICE.bootstrapServers())) {
@@ -78,7 +49,11 @@ public class MoveCostTest {
     var mergeCost = HasMoveCost.of(List.of(cost1, cost2));
     var metrics =
         mergeCost.metricSensor().stream()
-            .map(x -> x.fetch(MBeanClient.of(SERVICE.jmxServiceURL()), ClusterBean.EMPTY))
+            .map(
+                x ->
+                    x.fetch(
+                        BeanObjectClient.local(SERVICE.dataFolders().keySet().iterator().next()),
+                        ClusterBean.EMPTY))
             .collect(Collectors.toSet());
     Assertions.assertEquals(3, metrics.iterator().next().size());
     Assertions.assertTrue(

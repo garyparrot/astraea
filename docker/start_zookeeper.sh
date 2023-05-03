@@ -62,7 +62,7 @@ RUN tar -zxvf apache-zookeeper-${VERSION}-bin.tar.gz -C /opt/zookeeper --strip-c
 FROM ubuntu:22.04
 
 # install tools
-RUN apt-get update && apt-get install -y openjdk-11-jre
+RUN apt-get update && apt-get install -y openjdk-17-jre
 
 # copy zookeeper
 COPY --from=build /opt/zookeeper /opt/zookeeper
@@ -125,5 +125,4 @@ fi
 echo "================================================="
 echo "jmx address: ${ADDRESS}:$ZOOKEEPER_JMX_PORT"
 echo "run $DOCKER_FOLDER/start_broker.sh zookeeper.connect=$ADDRESS:$ZOOKEEPER_PORT to join kafka broker"
-echo "run env CONFLUENT_BROKER=true $DOCKER_FOLDER/start_broker.sh zookeeper.connect=$ADDRESS:$ZOOKEEPER_PORT to join confluent kafka broker"
 echo "================================================="

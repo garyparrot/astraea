@@ -22,9 +22,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
-import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.NodeInfo;
+import org.astraea.common.metrics.ClusterBean;
 import org.astraea.common.metrics.client.HasNodeMetrics;
 import org.astraea.common.metrics.client.producer.ProducerMetrics;
 import org.astraea.common.metrics.collector.MetricSensor;
@@ -72,6 +72,6 @@ public abstract class NodeMetricsCost implements HasBrokerCost {
 
   @Override
   public Optional<MetricSensor> metricSensor() {
-    return Optional.of((client, clusterBean) -> ProducerMetrics.nodes(client));
+    return Optional.of((client, clusterBean) -> ProducerMetrics.node(client));
   }
 }

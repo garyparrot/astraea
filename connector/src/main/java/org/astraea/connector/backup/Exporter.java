@@ -16,16 +16,19 @@
  */
 package org.astraea.connector.backup;
 
-import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import org.astraea.common.Configuration;
 import org.astraea.common.DataSize;
 import org.astraea.common.Utils;
@@ -43,32 +46,32 @@ public class Exporter extends SinkConnector {
       Definition.builder()
           .name("fs.schema")
           .type(Definition.Type.STRING)
-          .documentation("decide which file system to use, such as FTP.")
+          .documentation("decide which file system to use, such as FTP, HDFS.")
           .required()
           .build();
   static Definition HOSTNAME_KEY =
       Definition.builder()
-          .name("fs.ftp.hostname")
+          .name("fs.<schema>.hostname")
           .type(Definition.Type.STRING)
-          .documentation("the host name of the ftp server used.")
+          .documentation("the host name of the <schema> server used.")
           .build();
   static Definition PORT_KEY =
       Definition.builder()
-          .name("fs.ftp.port")
+          .name("fs.<schema>.port")
           .type(Definition.Type.STRING)
-          .documentation("the port of the ftp server used.")
+          .documentation("the port of the <schema> server used.")
           .build();
   static Definition USER_KEY =
       Definition.builder()
-          .name("fs.ftp.user")
+          .name("fs.<schema>.user")
           .type(Definition.Type.STRING)
-          .documentation("the user name required to login to the FTP server.")
+          .documentation("the user name required to login to the <schema> server.")
           .build();
   static Definition PASSWORD_KEY =
       Definition.builder()
-          .name("fs.ftp.password")
+          .name("fs.<schema>.password")
           .type(Definition.Type.PASSWORD)
-          .documentation("the password required to login to the ftp server.")
+          .documentation("the password required to login to the <schema> server.")
           .build();
   static Definition PATH_KEY =
       Definition.builder()
@@ -94,6 +97,23 @@ public class Exporter extends SinkConnector {
           .defaultValue("3s")
           .documentation("the maximum time before a new archive file is rolling out.")
           .build();
+
+  static Definition OVERRIDE_KEY =
+      Definition.builder()
+          .name("fs.<schema>.override.<property_name>")
+          .type(Definition.Type.STRING)
+          .documentation("a value that needs to be overridden in the file system.")
+          .build();
+
+  static Definition BUFFER_SIZE_KEY =
+      Definition.builder()
+          .name("writer.buffer.size")
+          .type(Definition.Type.STRING)
+          .validator((name, obj) -> DataSize.of(obj.toString()))
+          .documentation(
+              "a value that represents the capacity of a blocking queue from which the writer can take records.")
+          .defaultValue("300MB")
+          .build();
   private Configuration configs;
 
   @Override
@@ -113,21 +133,123 @@ public class Exporter extends SinkConnector {
 
   @Override
   protected List<Definition> definitions() {
-    return List.of(SCHEMA_KEY, HOSTNAME_KEY, PORT_KEY, USER_KEY, PASSWORD_KEY, PATH_KEY, SIZE_KEY);
+    return List.of(
+        SCHEMA_KEY,
+        HOSTNAME_KEY,
+        PORT_KEY,
+        USER_KEY,
+        PASSWORD_KEY,
+        PATH_KEY,
+        SIZE_KEY,
+        OVERRIDE_KEY,
+        BUFFER_SIZE_KEY);
   }
 
   public static class Task extends SinkTask {
-    private String topicName;
-    private String path;
-    private DataSize size;
 
     private CompletableFuture<Void> writerFuture;
 
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
-    private Duration interval;
+    final BlockingQueue<Record<byte[], byte[]>> recordsQueue = new LinkedBlockingQueue<>();
 
-    private final BlockingQueue<Record<byte[], byte[]>> recordsQueue = new LinkedBlockingQueue<>();
+    final LongAdder bufferSize = new LongAdder();
+
+    private final Object putLock = new Object();
+
+    private long bufferSizeLimit;
+
+    FileSystem fs;
+    String topicName;
+    String path;
+    DataSize size;
+    long interval;
+
+    RecordWriter createRecordWriter(TopicPartition tp, long offset) {
+      var fileName = String.valueOf(offset);
+      return RecordWriter.builder(
+              fs.write(String.join("/", path, topicName, String.valueOf(tp.partition()), fileName)))
+          .build();
+    }
+
+    /**
+     * Remove writers that have not appended any records in the past <code>interval</code>
+     * milliseconds.
+     *
+     * @param writers a map of <code>TopicPartition</code> to <code>RecordWriter</code> objects
+     */
+    void removeOldWriters(HashMap<TopicPartition, RecordWriter> writers) {
+      var itr = writers.values().iterator();
+      var currentTime = System.currentTimeMillis();
+      while (itr.hasNext()) {
+        var writer = itr.next();
+        if (currentTime - writer.latestAppendTimestamp() > interval) {
+          writer.close();
+          itr.remove();
+        }
+      }
+    }
+
+    /**
+     * Writes a list {@link Record} objects to the specified {@link RecordWriter} objects. If a
+     * writer for the specified {@link TopicPartition} does not exist, it is created using the given
+     * {@link FileSystem}, path. topic name, partition, and offset.
+     *
+     * @param writers a {@link HashMap} that maps a {@link TopicPartition} to a {@link RecordWriter}
+     *     object
+     */
+    void writeRecords(HashMap<TopicPartition, RecordWriter> writers) {
+
+      var records = recordsFromBuffer();
+
+      removeOldWriters(writers);
+
+      records.forEach(
+          record -> {
+            var writer =
+                writers.computeIfAbsent(
+                    record.topicPartition(), tp -> createRecordWriter(tp, record.offset()));
+            writer.append(record);
+            if (writer.size().greaterThan(size)) {
+              writers.remove(record.topicPartition()).close();
+            }
+          });
+    }
+
+    Runnable createWriter() {
+      return () -> {
+        var writers = new HashMap<TopicPartition, RecordWriter>();
+
+        try {
+          while (!closed.get()) {
+            writeRecords(writers);
+          }
+        } finally {
+          writers.forEach((tp, writer) -> writer.close());
+        }
+      };
+    }
+
+    /**
+     * Retrieves a list of records from the buffer and empties the records queue.
+     *
+     * @return a {@link List} of records retrieved from the buffer
+     */
+    List<Record<byte[], byte[]>> recordsFromBuffer() {
+      var list = new ArrayList<Record<byte[], byte[]>>(recordsQueue.size());
+      recordsQueue.drainTo(list);
+      if (list.size() > 0) {
+        var drainedSize =
+            list.stream()
+                .mapToInt(record -> record.serializedKeySize() + record.serializedValueSize())
+                .sum();
+        bufferSize.add(-drainedSize);
+        synchronized (putLock) {
+          putLock.notify();
+        }
+      }
+      return list;
+    }
 
     @Override
     protected void init(Configuration configuration) {
@@ -138,63 +260,43 @@ public class Exporter extends SinkConnector {
               configuration.string(SIZE_KEY.name()).orElse(SIZE_KEY.defaultValue().toString()));
       this.interval =
           Utils.toDuration(
-              configuration.string(TIME_KEY.name()).orElse(TIME_KEY.defaultValue().toString()));
+                  configuration.string(TIME_KEY.name()).orElse(TIME_KEY.defaultValue().toString()))
+              .toMillis();
 
-      this.writerFuture =
-          CompletableFuture.runAsync(
-              () -> {
-                var fs =
-                    FileSystem.of(configuration.requireString(SCHEMA_KEY.name()), configuration);
-                var writers = new HashMap<TopicPartition, RecordWriter>();
-                var intervalTimeInMillis = interval.toMillis();
-                var sleepTime = Math.min(intervalTimeInMillis, 1000);
-                var lastWriteTime = System.currentTimeMillis();
-                try {
-                  while (!closed.get()) {
-                    var record = recordsQueue.poll(sleepTime, TimeUnit.MILLISECONDS);
-                    var currentTime = System.currentTimeMillis();
+      this.bufferSize.reset();
 
-                    if (record == null) {
-                      // close all writers if they have been idle over roll.duration.
-                      if (currentTime - lastWriteTime > intervalTimeInMillis) {
-                        writers.values().forEach(RecordWriter::close);
-                        writers.clear();
-                      }
-                      continue;
-                    }
-                    var writer =
-                        writers.computeIfAbsent(
-                            record.topicPartition(),
-                            ignored -> {
-                              var fileName = String.valueOf(record.offset());
-                              return RecordWriter.builder(
-                                      fs.write(
-                                          String.join(
-                                              "/",
-                                              path,
-                                              topicName,
-                                              String.valueOf(record.partition()),
-                                              fileName)))
-                                  .build();
-                            });
-                    writer.append(record);
-                    lastWriteTime = System.currentTimeMillis();
-                    if (writer.size().greaterThan(size)) {
-                      writers.remove(record.topicPartition()).close();
-                    }
-                  }
-                } catch (InterruptedException ignored) {
-                  // swallow
-                } finally {
-                  writers.forEach((tp, writer) -> writer.close());
-                  fs.close();
-                }
-              });
+      this.bufferSizeLimit =
+          DataSize.of(
+                  configuration
+                      .string(BUFFER_SIZE_KEY.name())
+                      .orElse(BUFFER_SIZE_KEY.defaultValue().toString()))
+              .bytes();
+
+      this.fs = FileSystem.of(configuration.requireString(SCHEMA_KEY.name()), configuration);
+      this.writerFuture = CompletableFuture.runAsync(createWriter());
     }
 
     @Override
     protected void put(List<Record<byte[], byte[]>> records) {
-      recordsQueue.addAll(records);
+      records.forEach(
+          r ->
+              Utils.packException(
+                  () -> {
+                    int recordLength =
+                        Stream.of(r.key(), r.value())
+                            .filter(Objects::nonNull)
+                            .map(i -> i.length)
+                            .reduce(0, Integer::sum);
+
+                    synchronized (putLock) {
+                      while (this.bufferSize.sum() + recordLength >= this.bufferSizeLimit) {
+                        putLock.wait();
+                      }
+                    }
+                    recordsQueue.put(r);
+
+                    this.bufferSize.add(recordLength);
+                  }));
     }
 
     @Override

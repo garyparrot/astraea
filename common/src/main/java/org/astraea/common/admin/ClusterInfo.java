@@ -25,61 +25,22 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BinaryOperator;
-import java.util.function.Function;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
-import org.astraea.common.Lazy;
 
 public interface ClusterInfo {
+
+  static ClusterInfoBuilder builder() {
+    return builder(empty());
+  }
+
+  static ClusterInfoBuilder builder(ClusterInfo clusterInfo) {
+    return new ClusterInfoBuilder(clusterInfo);
+  }
+
   static ClusterInfo empty() {
-    return of("unknown", List.of(), List.of());
-  }
-
-  // ---------------------[helpers]---------------------//
-
-  /** Mask specific topics from a {@link ClusterInfo}. */
-  static ClusterInfo masked(ClusterInfo clusterInfo, Predicate<String> topicFilter) {
-    final var nodes = List.copyOf(clusterInfo.nodes());
-    final var replicas =
-        clusterInfo
-            .replicaStream()
-            .filter(replica -> topicFilter.test(replica.topic()))
-            .collect(Collectors.toUnmodifiableList());
-    return of(clusterInfo.clusterId(), nodes, replicas);
-  }
-
-  /**
-   * Update the replicas of ClusterInfo according to the given ClusterLogAllocation. The returned
-   * {@link ClusterInfo} will have some of its replicas replaced by the replicas inside the given
-   * {@link ClusterInfo}. Since {@link ClusterInfo} might only cover a subset of topic/partition in
-   * the associated cluster. Only the replicas related to the covered topic/partition get updated.
-   *
-   * <p>This method intended to offer a way to describe a cluster with some of its state modified
-   * manually.
-   *
-   * @param clusterInfo to get updated
-   * @param replacement offers new host and data folder
-   * @return new cluster info
-   */
-  static ClusterInfo update(
-      ClusterInfo clusterInfo, Function<TopicPartition, Collection<Replica>> replacement) {
-    var newReplicas =
-        clusterInfo.replicas().stream()
-            .collect(Collectors.groupingBy(r -> TopicPartition.of(r.topic(), r.partition())))
-            .entrySet()
-            .stream()
-            .map(
-                entry -> {
-                  var replaced = replacement.apply(entry.getKey());
-                  if (replaced.isEmpty()) return entry.getValue();
-                  return replaced;
-                })
-            .flatMap(Collection::stream)
-            .collect(Collectors.toUnmodifiableList());
-
-    return ClusterInfo.of(clusterInfo.clusterId(), clusterInfo.nodes(), newReplicas);
+    return of("unknown", List.of(), Map.of(), List.of());
   }
 
   /**
@@ -179,12 +140,15 @@ public interface ClusterInfo {
    * replica list might result in data loss or unintended replica drop during rebalance plan
    * proposing & execution.
    *
+   * @param clusterId the id of the Kafka cluster
    * @param nodes the node information of the cluster info
+   * @param topics topics
    * @param replicas used to build cluster info
    * @return cluster info
    */
-  static ClusterInfo of(String clusterId, List<NodeInfo> nodes, List<Replica> replicas) {
-    return new Optimized(clusterId, nodes, replicas);
+  static ClusterInfo of(
+      String clusterId, List<NodeInfo> nodes, Map<String, Topic> topics, List<Replica> replicas) {
+    return new OptimizedClusterInfo(clusterId, nodes, topics, replicas);
   }
 
   // ---------------------[for leader]---------------------//
@@ -321,7 +285,7 @@ public interface ClusterInfo {
    *
    * @return return a set of topic names
    */
-  default Set<String> topics() {
+  default Set<String> topicNames() {
     return replicaStream().map(Replica::topic).collect(Collectors.toUnmodifiableSet());
   }
 
@@ -408,149 +372,8 @@ public interface ClusterInfo {
    */
   Stream<Replica> replicaStream();
 
-  /** It optimizes all queries by pre-allocated Map collection. */
-  class Optimized implements ClusterInfo {
-    private final String clusterId;
-    private final List<NodeInfo> nodeInfos;
-    private final List<Replica> all;
-
-    private final Lazy<Map<BrokerTopic, List<Replica>>> byBrokerTopic;
-
-    private final Lazy<Map<BrokerTopic, List<Replica>>> byBrokerTopicForLeader;
-    private final Lazy<Map<Integer, List<Replica>>> byBroker;
-    private final Lazy<Map<String, List<Replica>>> byTopic;
-
-    private final Lazy<Map<String, List<Replica>>> byTopicForLeader;
-    private final Lazy<Map<TopicPartition, List<Replica>>> byPartition;
-    private final Lazy<Map<TopicPartitionReplica, List<Replica>>> byReplica;
-
-    protected Optimized(String clusterId, List<NodeInfo> nodeInfos, List<Replica> replicas) {
-      this.clusterId = clusterId;
-      this.nodeInfos = nodeInfos;
-      this.all = replicas;
-      this.byBrokerTopic =
-          Lazy.of(
-              () ->
-                  all.stream()
-                      .collect(
-                          Collectors.groupingBy(
-                              r -> BrokerTopic.of(r.nodeInfo().id(), r.topic()),
-                              Collectors.toUnmodifiableList())));
-      this.byBrokerTopicForLeader =
-          Lazy.of(
-              () ->
-                  all.stream()
-                      .filter(Replica::isOnline)
-                      .filter(Replica::isLeader)
-                      .collect(
-                          Collectors.groupingBy(
-                              r -> BrokerTopic.of(r.nodeInfo().id(), r.topic()),
-                              Collectors.toUnmodifiableList())));
-
-      this.byBroker =
-          Lazy.of(
-              () ->
-                  all.stream()
-                      .collect(
-                          Collectors.groupingBy(
-                              r -> r.nodeInfo().id(), Collectors.toUnmodifiableList())));
-
-      this.byTopic =
-          Lazy.of(
-              () ->
-                  all.stream()
-                      .collect(
-                          Collectors.groupingBy(Replica::topic, Collectors.toUnmodifiableList())));
-
-      this.byTopicForLeader =
-          Lazy.of(
-              () ->
-                  all.stream()
-                      .filter(Replica::isOnline)
-                      .filter(Replica::isLeader)
-                      .collect(
-                          Collectors.groupingBy(Replica::topic, Collectors.toUnmodifiableList())));
-
-      this.byPartition =
-          Lazy.of(
-              () ->
-                  all.stream()
-                      .collect(
-                          Collectors.groupingBy(
-                              Replica::topicPartition, Collectors.toUnmodifiableList())));
-
-      this.byReplica =
-          Lazy.of(
-              () ->
-                  all.stream()
-                      .collect(
-                          Collectors.groupingBy(
-                              Replica::topicPartitionReplica, Collectors.toUnmodifiableList())));
-    }
-
-    @Override
-    public Stream<Replica> replicaStream(String topic) {
-      return byTopic.get().getOrDefault(topic, List.of()).stream();
-    }
-
-    @Override
-    public Stream<Replica> replicaStream(TopicPartition partition) {
-      return byPartition.get().getOrDefault(partition, List.of()).stream();
-    }
-
-    @Override
-    public Stream<Replica> replicaStream(TopicPartitionReplica replica) {
-      return byReplica.get().getOrDefault(replica, List.of()).stream();
-    }
-
-    @Override
-    public Stream<Replica> replicaStream(int broker) {
-      return byBroker.get().getOrDefault(broker, List.of()).stream();
-    }
-
-    @Override
-    public Stream<Replica> replicaStream(BrokerTopic brokerTopic) {
-      return byBrokerTopic.get().getOrDefault(brokerTopic, List.of()).stream();
-    }
-
-    @Override
-    public Set<TopicPartition> topicPartitions() {
-      return byPartition.get().keySet();
-    }
-
-    @Override
-    public Set<TopicPartitionReplica> topicPartitionReplicas() {
-      return byReplica.get().keySet();
-    }
-
-    @Override
-    public String clusterId() {
-      return clusterId;
-    }
-
-    @Override
-    public Set<String> topics() {
-      return byTopic.get().keySet();
-    }
-
-    @Override
-    public List<NodeInfo> nodes() {
-      return nodeInfos;
-    }
-
-    @Override
-    public Stream<Replica> replicaStream() {
-      return all.stream();
-    }
-
-    @Override
-    public List<Replica> replicaLeaders(String topic) {
-      return byTopicForLeader.get().getOrDefault(topic, List.of());
-    }
-
-    @Override
-    public List<Replica> replicaLeaders(BrokerTopic brokerTopic) {
-      return byBrokerTopicForLeader.get().getOrDefault(brokerTopic, List.of());
-    }
-  }
+  /**
+   * @return a map of topic description
+   */
+  Map<String, Topic> topics();
 }

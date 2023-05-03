@@ -16,13 +16,17 @@
  */
 package org.astraea.common.balancer.algorithms;
 
-import java.time.Duration;
 import java.util.Comparator;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Predicate;
+import java.util.regex.Pattern;
 import org.astraea.common.Utils;
-import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.balancer.AlgorithmConfig;
 import org.astraea.common.balancer.Balancer;
+import org.astraea.common.balancer.BalancerConfigs;
 import org.astraea.common.balancer.tweakers.ShuffleTweaker;
 
 /** This algorithm proposes rebalance plan by tweaking the log allocation once. */
@@ -32,67 +36,80 @@ public class SingleStepBalancer implements Balancer {
   public static final String SHUFFLE_TWEAKER_MAX_STEP_CONFIG = "shuffle.tweaker.max.step";
   public static final String ITERATION_CONFIG = "iteration";
   public static final Set<String> ALL_CONFIGS =
-      new TreeSet<>(Utils.constants(SingleStepBalancer.class, name -> name.endsWith("CONFIG")));
+      new TreeSet<>(
+          Utils.constants(SingleStepBalancer.class, name -> name.endsWith("CONFIG"), String.class));
 
-  private final AlgorithmConfig config;
-  private final int minStep;
-  private final int maxStep;
-  private final int iteration;
-
-  public SingleStepBalancer(AlgorithmConfig algorithmConfig) {
-    this.config = algorithmConfig;
-
-    minStep =
+  @Override
+  public Optional<Plan> offer(AlgorithmConfig config) {
+    final var minStep =
         config
-            .config()
+            .balancerConfig()
             .string(SHUFFLE_TWEAKER_MIN_STEP_CONFIG)
             .map(Integer::parseInt)
             .map(Utils::requirePositive)
             .orElse(1);
-    maxStep =
+    final var maxStep =
         config
-            .config()
+            .balancerConfig()
             .string(SHUFFLE_TWEAKER_MAX_STEP_CONFIG)
             .map(Integer::parseInt)
             .map(Utils::requirePositive)
             .orElse(30);
-    iteration =
+    final var iteration =
         config
-            .config()
+            .balancerConfig()
             .string(ITERATION_CONFIG)
             .map(Integer::parseInt)
             .map(Utils::requirePositive)
             .orElse(Integer.MAX_VALUE);
-  }
+    final var allowedTopics =
+        config
+            .balancerConfig()
+            .regexString(BalancerConfigs.BALANCER_ALLOWED_TOPICS_REGEX)
+            .map(Pattern::asMatchPredicate)
+            .orElse((ignore) -> true);
+    final var allowedBrokers =
+        config
+            .balancerConfig()
+            .regexString(BalancerConfigs.BALANCER_ALLOWED_BROKERS_REGEX)
+            .map(Pattern::asMatchPredicate)
+            .<Predicate<Integer>>map(
+                predicate -> (brokerId) -> predicate.test(Integer.toString(brokerId)))
+            .orElse((ignore) -> true);
 
-  @Override
-  public Plan offer(ClusterInfo currentClusterInfo, Duration timeout) {
-    final var allocationTweaker = new ShuffleTweaker(minStep, maxStep);
-    final var currentClusterBean = config.metricSource().get();
+    final var currentClusterInfo = config.clusterInfo();
+    final var clusterBean = config.clusterBean();
+    final var allocationTweaker =
+        ShuffleTweaker.builder()
+            .numberOfShuffle(() -> ThreadLocalRandom.current().nextInt(minStep, maxStep))
+            .allowedTopics(allowedTopics)
+            .allowedBrokers(allowedBrokers)
+            .build();
     final var clusterCostFunction = config.clusterCostFunction();
     final var moveCostFunction = config.moveCostFunction();
     final var currentCost =
-        config.clusterCostFunction().clusterCost(currentClusterInfo, currentClusterBean);
-    final var generatorClusterInfo = ClusterInfo.masked(currentClusterInfo, config.topicFilter());
+        config.clusterCostFunction().clusterCost(currentClusterInfo, clusterBean);
 
     var start = System.currentTimeMillis();
     return allocationTweaker
-        .generate(generatorClusterInfo)
+        .generate(currentClusterInfo)
         .parallel()
         .limit(iteration)
-        .takeWhile(ignored -> System.currentTimeMillis() - start <= timeout.toMillis())
+        .takeWhile(ignored -> System.currentTimeMillis() - start <= config.timeout().toMillis())
+        .filter(
+            newAllocation ->
+                config
+                    .movementConstraint()
+                    .test(
+                        moveCostFunction.moveCost(currentClusterInfo, newAllocation, clusterBean)))
         .map(
-            newAllocation -> {
-              var newClusterInfo = ClusterInfo.update(currentClusterInfo, newAllocation::replicas);
-              return new Solution(
-                  clusterCostFunction.clusterCost(newClusterInfo, currentClusterBean),
-                  moveCostFunction.moveCost(currentClusterInfo, newClusterInfo, currentClusterBean),
-                  newAllocation);
-            })
+            newAllocation ->
+                new Plan(
+                    config.clusterInfo(),
+                    currentCost,
+                    newAllocation,
+                    clusterCostFunction.clusterCost(newAllocation, clusterBean)))
         .filter(plan -> config.clusterConstraint().test(currentCost, plan.proposalClusterCost()))
-        .filter(plan -> config.movementConstraint().test(plan.moveCost()))
-        .min(Comparator.comparing(plan -> plan.proposalClusterCost().value()))
-        .map(solution -> new Plan(currentCost, solution))
-        .orElse(new Plan(currentCost));
+        .min(Comparator.comparing(plan -> plan.proposalClusterCost().value()));
   }
 }

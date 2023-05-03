@@ -35,11 +35,12 @@ public class HdfsFileSystem implements FileSystem {
   public static final String HOSTNAME_KEY = "fs.hdfs.hostname";
   public static final String PORT_KEY = "fs.hdfs.port";
   public static final String USER_KEY = "fs.hdfs.user";
+  public static final String OVERRIDE_KEY = "fs.hdfs.override";
 
-  private org.apache.hadoop.fs.FileSystem fs;
+  private final org.apache.hadoop.fs.FileSystem fs;
 
-  public HdfsFileSystem(Configuration config) {
-    Utils.packException(
+  static org.apache.hadoop.fs.FileSystem create(Configuration config) {
+    return Utils.packException(
         () -> {
           var uri =
               new URI(
@@ -48,8 +49,19 @@ public class HdfsFileSystem implements FileSystem {
                       + ":"
                       + config.requireString(PORT_KEY));
 
-          fs = org.apache.hadoop.fs.FileSystem.get(uri, new org.apache.hadoop.conf.Configuration());
+          var conf = new org.apache.hadoop.conf.Configuration();
+
+          config
+              .filteredPrefixConfigs(OVERRIDE_KEY)
+              .entrySet()
+              .forEach(configItem -> conf.set(configItem.getKey(), configItem.getValue()));
+
+          return org.apache.hadoop.fs.FileSystem.get(uri, conf, config.requireString(USER_KEY));
         });
+  }
+
+  public HdfsFileSystem(Configuration config) {
+    fs = create(config);
   }
 
   @Override
@@ -78,7 +90,7 @@ public class HdfsFileSystem implements FileSystem {
     return Utils.packException(
         () -> {
           if (type(path) != Type.FOLDER)
-            throw new IllegalArgumentException(path + " is nto a folder");
+            throw new IllegalArgumentException(path + " is not a folder");
           return Arrays.stream(fs.listStatus(new Path(path)))
               .filter(FileStatus::isFile)
               .map(f -> f.getPath().toUri().getPath())
@@ -91,10 +103,10 @@ public class HdfsFileSystem implements FileSystem {
     return Utils.packException(
         () -> {
           if (type(path) != Type.FOLDER)
-            throw new IllegalArgumentException(path + " is nto a folder");
+            throw new IllegalArgumentException(path + " is not a folder");
           return Arrays.stream(fs.listStatus(new Path(path)))
               .filter(FileStatus::isDirectory)
-              .map(f -> f.getPath().getName())
+              .map(f -> FileSystem.path(path, f.getPath().getName()))
               .collect(Collectors.toList());
         });
   }
@@ -132,6 +144,6 @@ public class HdfsFileSystem implements FileSystem {
 
   @Override
   public void close() {
-    Utils.packException(() -> fs.close());
+    Utils.close(fs);
   }
 }

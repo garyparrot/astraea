@@ -16,11 +16,23 @@
  */
 package org.astraea.common.balancer.algorithms;
 
+import java.util.Map;
+import org.astraea.common.Configuration;
 import org.astraea.common.Utils;
+import org.astraea.common.balancer.BalancerConfigTestSuite;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-class SingleStepBalancerTest {
+class SingleStepBalancerTest extends BalancerConfigTestSuite {
+
+  public SingleStepBalancerTest() {
+    super(
+        SingleStepBalancer.class,
+        Configuration.of(
+            Map.of(
+                "shuffle.tweaker.min.step", "1000",
+                "shuffle.tweaker.max.step", "2000")));
+  }
 
   @Test
   void testConfig() {
@@ -36,7 +48,8 @@ class SingleStepBalancerTest {
 
     Assertions.assertEquals(
         SingleStepBalancer.ALL_CONFIGS.size(),
-        Utils.constants(SingleStepBalancer.class, name -> name.endsWith("CONFIG")).size(),
+        Utils.constants(SingleStepBalancer.class, name -> name.endsWith("CONFIG"), String.class)
+            .size(),
         "No duplicate element");
   }
 }

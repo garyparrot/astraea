@@ -22,7 +22,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ThreadLocalRandom;
@@ -66,7 +65,11 @@ public class TopicHandlerTest {
       request.topics = List.of(topic);
 
       try (var service =
-          new WebService(Admin.of(SERVICE.bootstrapServers()), 0, id -> Optional.empty())) {
+          new WebService(
+              Admin.of(SERVICE.bootstrapServers()),
+              0,
+              id -> SERVICE.jmxServiceURL().getPort(),
+              Duration.ofMillis(5))) {
         Response<TopicHandler.Topics> response =
             HttpExecutor.builder()
                 .build()
@@ -82,7 +85,7 @@ public class TopicHandlerTest {
         Assertions.assertEquals(200, response.statusCode());
         Assertions.assertEquals(1, response.body().topics.size());
         Assertions.assertEquals(topicName, response.body().topics.get(0).name);
-        Assertions.assertEquals(Set.of(topicName), clusterInfo.topics());
+        Assertions.assertEquals(Set.of(topicName), clusterInfo.topicNames());
         Assertions.assertEquals(partitions, clusterInfo.topicPartitions().size());
         Assertions.assertEquals(partitions * replicas, clusterInfo.replicas().size());
       }
@@ -373,7 +376,7 @@ public class TopicHandlerTest {
           .join();
 
       // try poll
-      Assertions.assertEquals(1, consumer.poll(1, Duration.ofSeconds(5)).size());
+      Assertions.assertEquals(1, consumer.poll(Duration.ofSeconds(5)).size());
       consumer.commitOffsets(Duration.ofSeconds(2));
       Assertions.assertEquals(1, consumer.assignments().size());
 

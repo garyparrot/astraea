@@ -27,7 +27,7 @@ import java.util.function.ToDoubleFunction;
 import org.astraea.common.DataSize;
 import org.astraea.common.Utils;
 import org.astraea.common.metrics.HasBeanObject;
-import org.astraea.common.metrics.MBeanClient;
+import org.astraea.common.metrics.JndiClient;
 import org.astraea.common.metrics.client.consumer.ConsumerMetrics;
 import org.astraea.common.metrics.client.consumer.HasConsumerCoordinatorMetrics;
 import org.astraea.common.metrics.client.producer.HasProducerTopicMetrics;
@@ -37,7 +37,7 @@ import org.astraea.common.metrics.client.producer.ProducerMetrics;
 public interface TrackerThread extends AbstractThread {
 
   class ProducerPrinter {
-    private final MBeanClient mBeanClient = MBeanClient.local();
+    private final JndiClient mBeanClient = JndiClient.local();
     private final Supplier<List<Report>> reportSupplier;
     private long lastRecords = 0;
 
@@ -70,7 +70,7 @@ public interface TrackerThread extends AbstractThread {
       System.out.printf(
           "  error rate: %.1f records/second%n",
           sumOfAttribute(
-              ProducerMetrics.topics(mBeanClient), HasProducerTopicMetrics::recordErrorRate));
+              ProducerMetrics.topic(mBeanClient), HasProducerTopicMetrics::recordErrorRate));
       reports.stream()
           .mapToLong(Report::maxLatency)
           .max()
@@ -97,7 +97,7 @@ public interface TrackerThread extends AbstractThread {
   }
 
   class ConsumerPrinter {
-    private final MBeanClient mBeanClient = MBeanClient.local();
+    private final JndiClient mBeanClient = JndiClient.local();
     private final Supplier<List<Report>> reportSupplier;
     private long lastRecords = 0;
 
@@ -128,14 +128,10 @@ public interface TrackerThread extends AbstractThread {
                       .filter(d -> !Double.isNaN(d))
                       .sum()));
       reports.stream()
-          .mapToLong(Report::maxLatency)
-          .max()
-          .ifPresent(i -> System.out.printf("  end-to-end max latency: %d ms%n", i));
-      reports.stream()
-          .mapToDouble(Report::avgLatency)
+          .mapToDouble(r -> r.e2eLatency().orElse(Double.NaN))
           .average()
           .ifPresent(i -> System.out.printf("  end-to-end average latency: %.3f ms%n", i));
-      var metrics = ConsumerMetrics.coordinators(mBeanClient);
+      var metrics = ConsumerMetrics.coordinator(mBeanClient);
       metrics.stream()
           .mapToDouble(HasConsumerCoordinatorMetrics::rebalanceLatencyMax)
           .max()
@@ -165,7 +161,8 @@ public interface TrackerThread extends AbstractThread {
             "  consumed[%d] average throughput: %s%n",
             i, DataSize.Byte.of((long) reports.get(i).avgThroughput()));
         System.out.printf(
-            "  consumer[%d] average ene-to-end latency: %.3f ms%n", i, report.avgLatency());
+            "  consumer[%d] average end-to-end latency: %.3f ms%n",
+            i, report.e2eLatency().orElse(Double.NaN));
       }
       return true;
     }

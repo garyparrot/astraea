@@ -16,23 +16,18 @@
  */
 package org.astraea.common.cost;
 
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
-import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.admin.ClusterInfoBuilder;
-import org.astraea.common.admin.ClusterInfoTest;
-import org.astraea.common.admin.NodeInfo;
-import org.astraea.common.admin.Replica;
+import org.astraea.common.metrics.ClusterBean;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 class ReplicaNumberCostTest {
 
   private static final ClusterInfo BASE =
-      ClusterInfoBuilder.builder()
+      ClusterInfo.builder()
           .addNode(Set.of(1, 2, 3, 4, 5, 6))
           .addFolders(
               Map.ofEntries(
@@ -44,7 +39,7 @@ class ReplicaNumberCostTest {
                   Map.entry(6, Set.of("/folder0", "/folder1", "/folder2"))))
           .build();
   private static final ClusterInfo BASE_1 =
-      ClusterInfoBuilder.builder()
+      ClusterInfo.builder()
           .addNode(Set.of(1))
           .addFolders(Map.of(1, Set.of("/folder0", "/folder1", "/folder2")))
           .build();
@@ -54,7 +49,7 @@ class ReplicaNumberCostTest {
     var cost = new ReplicaNumberCost();
 
     // (1,1,1,1,1,1)
-    var evenCluster = ClusterInfoBuilder.builder(BASE).addTopic("topic", 6, (short) 1).build();
+    var evenCluster = ClusterInfo.builder(BASE).addTopic("topic", 6, (short) 1).build();
     Assertions.assertEquals(0, cost.clusterCost(evenCluster, ClusterBean.EMPTY).value());
 
     // (0)
@@ -65,22 +60,22 @@ class ReplicaNumberCostTest {
 
     // (any)
     var singleNodeCluster =
-        ClusterInfoBuilder.builder(BASE_1)
+        ClusterInfo.builder(BASE_1)
             .addTopic("topic", ThreadLocalRandom.current().nextInt(1, 100), (short) 1)
             .build();
     Assertions.assertEquals(0, cost.clusterCost(singleNodeCluster, ClusterBean.EMPTY).value());
 
-    // (all, 0, 0, 0, 0, 0)
+    // (all >= 2, 0, 0, 0, 0, 0)
     var expandedCluster =
-        ClusterInfoBuilder.builder(BASE_1)
-            .addTopic("topic", ThreadLocalRandom.current().nextInt(1, 100), (short) 1)
+        ClusterInfo.builder(BASE_1)
+            .addTopic("topic", ThreadLocalRandom.current().nextInt(2, 100), (short) 1)
             .addNode(Set.of(2, 3, 4, 5, 6))
             .build();
     Assertions.assertEquals(1, cost.clusterCost(expandedCluster, ClusterBean.EMPTY).value());
 
     // (40, 30, 20, 10)
     var skewCluster0 =
-        ClusterInfoBuilder.builder()
+        ClusterInfo.builder()
             .addNode(Set.of(1))
             .addFolders(Map.of(1, Set.of("/folder")))
             .addTopic("topicA", 10, (short) 1)
@@ -104,132 +99,8 @@ class ReplicaNumberCostTest {
     // Given a (1,1,1,1,1,2) this should be considered as a balance case, so 0 should be return.
     for (int i = 7; i <= 11; i++) {
       var cost = new ReplicaNumberCost();
-      var evenCluster = ClusterInfoBuilder.builder(BASE).addTopic("topic", i, (short) 1).build();
+      var evenCluster = ClusterInfo.builder(BASE).addTopic("topic", i, (short) 1).build();
       Assertions.assertEquals(0, cost.clusterCost(evenCluster, ClusterBean.EMPTY).value());
     }
-  }
-
-  @Test
-  void testMoveCost() {
-    var costFunction = new ReplicaNumberCost();
-    var before =
-        List.of(
-            Replica.builder()
-                .topic("topic1")
-                .partition(0)
-                .nodeInfo(NodeInfo.of(0, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(true)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build(),
-            Replica.builder()
-                .topic("topic1")
-                .partition(0)
-                .nodeInfo(NodeInfo.of(1, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(false)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build(),
-            Replica.builder()
-                .topic("topic1")
-                .partition(1)
-                .nodeInfo(NodeInfo.of(0, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(true)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build(),
-            Replica.builder()
-                .topic("topic1")
-                .partition(1)
-                .nodeInfo(NodeInfo.of(1, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(false)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build());
-    var after =
-        List.of(
-            Replica.builder()
-                .topic("topic1")
-                .partition(0)
-                .nodeInfo(NodeInfo.of(2, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(true)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build(),
-            Replica.builder()
-                .topic("topic1")
-                .partition(0)
-                .nodeInfo(NodeInfo.of(1, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(false)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build(),
-            Replica.builder()
-                .topic("topic1")
-                .partition(1)
-                .nodeInfo(NodeInfo.of(0, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(true)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build(),
-            Replica.builder()
-                .topic("topic1")
-                .partition(1)
-                .nodeInfo(NodeInfo.of(2, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(false)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build());
-    var beforeClusterInfo = ClusterInfoTest.of(before);
-    var afterClusterInfo = ClusterInfoTest.of(after);
-    var moveCost = costFunction.moveCost(beforeClusterInfo, afterClusterInfo, ClusterBean.EMPTY);
-    Assertions.assertEquals(
-        3, moveCost.changedReplicaCount().size(), moveCost.changedReplicaCount().toString());
-    Assertions.assertTrue(moveCost.changedReplicaCount().containsKey(0));
-    Assertions.assertTrue(moveCost.changedReplicaCount().containsKey(1));
-    Assertions.assertTrue(moveCost.changedReplicaCount().containsKey(2));
-    Assertions.assertEquals(-1, moveCost.changedReplicaCount().get(0));
-    Assertions.assertEquals(-1, moveCost.changedReplicaCount().get(1));
-    Assertions.assertEquals(2, moveCost.changedReplicaCount().get(2));
   }
 }

@@ -22,13 +22,16 @@ import java.io.StringWriter;
 import java.io.UncheckedIOException;
 import java.net.InetAddress;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
@@ -39,7 +42,7 @@ import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
+import javax.management.AttributeNotFoundException;
 import javax.management.InstanceNotFoundException;
 import org.astraea.common.cost.CostFunction;
 
@@ -128,14 +131,22 @@ public final class Utils {
       return getter.get();
     } catch (IOException exception) {
       throw new UncheckedIOException(exception);
-    } catch (InstanceNotFoundException e) {
-      throw new NoSuchElementException(e.getMessage());
+    } catch (InstanceNotFoundException | AttributeNotFoundException exception) {
+      var e = new NoSuchElementException(exception.getMessage());
+      e.initCause(exception);
+      throw e;
     } catch (RuntimeException exception) {
       throw exception;
     } catch (ExecutionException exception) {
       throw new ExecutionRuntimeException(exception);
     } catch (Throwable exception) {
       throw new RuntimeException(exception);
+    }
+  }
+
+  public static void close(Object obj) {
+    if (obj instanceof AutoCloseable) {
+      packException(() -> ((AutoCloseable) obj).close());
     }
   }
 
@@ -175,8 +186,37 @@ public final class Utils {
             path + " class is not sub class of " + baseClass.getName());
       return construct((Class<T>) clz, configuration);
     } catch (ClassNotFoundException e) {
-      throw new RuntimeException(e);
+      throw new IllegalArgumentException(e);
     }
+  }
+
+  public static <T extends CostFunction> Set<T> costFunctions(
+      Set<String> names, Class<T> baseClass, Configuration config) {
+    return costFunctions(
+            names.stream().collect(Collectors.toUnmodifiableMap(n -> n, ignored -> "1")),
+            baseClass,
+            config)
+        .keySet();
+  }
+
+  public static <T extends CostFunction> Map<T, Double> costFunctions(
+      Map<String, String> nameAndWeight, Class<T> baseClass, Configuration config) {
+    return nameAndWeight.entrySet().stream()
+        .collect(
+            Collectors.toUnmodifiableMap(
+                entry -> construct(entry.getKey(), baseClass, config),
+                entry -> {
+                  try {
+                    var weight = Double.parseDouble(entry.getValue());
+                    if (weight < 0.0)
+                      throw new IllegalArgumentException(
+                          "the weight of cost function should be bigger than zero");
+                    return weight;
+                  } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException(
+                        "the weight of cost function must be positive number", e);
+                  }
+                }));
   }
 
   public static <T> T construct(Class<T> target, Configuration configuration) {
@@ -234,6 +274,18 @@ public final class Utils {
       }
     if (lastError != null) throw new RuntimeException(lastError);
     throw new RuntimeException("Timeout to wait procedure");
+  }
+
+  public static <E> List<E> wait(
+      Supplier<Iterable<E>> supplier, int expectedSize, Duration timeout) {
+    var end = System.currentTimeMillis() + timeout.toMillis();
+    var list = new ArrayList<E>(expectedSize);
+    while (list.size() < expectedSize) {
+      var remaining = end - System.currentTimeMillis();
+      if (remaining <= 0) break;
+      supplier.get().forEach(list::add);
+    }
+    return Collections.unmodifiableList(list);
   }
 
   public static int requirePositive(int value) {
@@ -329,12 +381,13 @@ public final class Utils {
     throw new RuntimeException(attribute + " is not existent in " + object.getClass().getName());
   }
 
-  public static List<String> constants(Class<?> clz, Predicate<String> variableNameFilter) {
+  public static <T> List<T> constants(
+      Class<?> clz, Predicate<String> variableNameFilter, Class<T> cast) {
     return Arrays.stream(clz.getFields())
         .filter(field -> variableNameFilter.test(field.getName()))
         .map(field -> packException(() -> field.get(null)))
-        .filter(obj -> obj instanceof String)
-        .map(obj -> (String) obj)
+        .filter(cast::isInstance)
+        .map(cast::cast)
         .collect(Collectors.toCollection(LinkedList::new));
   }
 
@@ -393,31 +446,6 @@ public final class Utils {
     return input.stream()
         .collect(Collectors.groupingBy(s -> counter.getAndIncrement() % numberOfChunks))
         .values();
-  }
-
-  @SuppressWarnings("unchecked")
-  public static <T extends CostFunction> Map<T, Double> costFunctions(
-      Configuration config, Class<T> costClz) {
-    return config.entrySet().stream()
-        .flatMap(
-            nameAndWeight -> {
-              try {
-                var clz = Class.forName(nameAndWeight.getKey());
-                if (!costClz.isAssignableFrom(clz)) return Stream.of();
-                var weight = Double.parseDouble(nameAndWeight.getValue());
-                if (weight < 0.0)
-                  throw new IllegalArgumentException(
-                      "the weight of cost function should be bigger than zero");
-                return Stream.of(Map.entry((Class<T>) clz, weight));
-              } catch (ClassNotFoundException ignore) {
-                // this config is not cost function, so we just skip it.
-                return Stream.of();
-              } catch (NumberFormatException e) {
-                throw new IllegalArgumentException(
-                    "the weight of cost function must be positive number", e);
-              }
-            })
-        .collect(Collectors.toMap(e -> Utils.construct(e.getKey(), config), Map.Entry::getValue));
   }
 
   private Utils() {}

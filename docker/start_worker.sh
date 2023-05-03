@@ -20,10 +20,8 @@ source $DOCKER_FOLDER/docker_build_common.sh
 # ===============================[global variables]===============================
 declare -r ACCOUNT=${ACCOUNT:-skiptests}
 declare -r KAFKA_ACCOUNT=${KAFKA_ACCOUNT:-apache}
-declare -r VERSION=${REVISION:-${VERSION:-3.3.2}}
+declare -r VERSION=${REVISION:-${VERSION:-3.4.0}}
 declare -r DOCKERFILE=$DOCKER_FOLDER/worker.dockerfile
-declare -r CONFLUENT_WORKER=${CONFLUENT_WORKER:-false}
-declare -r CONFLUENT_VERSION=${CONFLUENT_VERSION:-7.0.1}
 declare -r WORKER_PORT=${WORKER_PORT:-"$(getRandomPort)"}
 declare -r CONTAINER_NAME="worker-$WORKER_PORT"
 declare -r WORKER_JMX_PORT="${WORKER_JMX_PORT:-"$(getRandomPort)"}"
@@ -36,13 +34,8 @@ declare -r JMX_OPTS="-Dcom.sun.management.jmxremote \
 declare -r HEAP_OPTS="${HEAP_OPTS:-"-Xmx2G -Xms2G"}"
 declare -r WORKER_PROPERTIES="/tmp/worker-${WORKER_PORT}.properties"
 declare -r WORKER_PLUGIN_PATH=${WORKER_PLUGIN_PATH:-/tmp/worker-plugins}
-if [[ "$CONFLUENT_WORKER" = "true" ]]; then
-    declare -r IMAGE_NAME="ghcr.io/${ACCOUNT}/astraea/confluent.worker:$CONFLUENT_VERSION"
-    declare -r SCRIPT_LOCATION_IN_CONTAINER="./bin/connect-distributed"
-else
-    declare -r IMAGE_NAME="ghcr.io/${ACCOUNT}/astraea/worker:$VERSION"
-    declare -r SCRIPT_LOCATION_IN_CONTAINER="./bin/connect-distributed.sh"
-fi
+declare -r IMAGE_NAME="ghcr.io/${ACCOUNT}/astraea/worker:$VERSION"
+declare -r SCRIPT_LOCATION_IN_CONTAINER="./bin/connect-distributed.sh"
 # cleanup the file if it is existent
 [[ -f "$WORKER_PROPERTIES" ]] && rm -f "$WORKER_PROPERTIES"
 
@@ -57,7 +50,7 @@ function showHelp() {
   echo "    ACCOUNT=skiptests                      set the github account for astraea repo"
   echo "    HEAP_OPTS=\"-Xmx2G -Xms2G\"              set worker JVM memory"
   echo "    REVISION=trunk                           set revision of kafka source code to build container"
-  echo "    VERSION=3.3.2                            set version of kafka distribution"
+  echo "    VERSION=3.4.0                            set version of kafka distribution"
   echo "    BUILD=false                              set true if you want to build image locally"
   echo "    RUN=false                                set false if you want to build/pull image only"
   echo "    WORKER_PLUGIN_PATH=/tmp/worker-plugins   set plugin path to kafka worker"
@@ -77,19 +70,6 @@ function requireProperty() {
     echo "$key is required"
     exit 2
   fi
-}
-
-function generateConfluentDockerfile() {
-  echo "# this dockerfile is generated dynamically
-FROM confluentinc/cp-server-connect:$CONFLUENT_VERSION
-USER root
-RUN usermod -l $USER appuser && groupadd $USER && usermod -a -G $USER $USER
-
-# change user
-USER $USER
-
-WORKDIR /
-" >"$DOCKERFILE"
 }
 
 function generateDockerfileBySource() {
@@ -116,7 +96,7 @@ RUN cp /tmp/astraea/connector/build/libs/astraea-*-all.jar /opt/kafka/libs/
 FROM ubuntu:22.04
 
 # install tools
-RUN apt-get update && apt-get install -y openjdk-11-jre
+RUN apt-get update && apt-get install -y openjdk-17-jre
 
 # copy kafka
 COPY --from=build /opt/kafka /opt/kafka
@@ -155,7 +135,7 @@ RUN cp /tmp/astraea/connector/build/libs/astraea-*-all.jar /opt/kafka/libs/
 FROM ubuntu:22.04
 
 # install tools
-RUN apt-get update && apt-get install -y openjdk-11-jre
+RUN apt-get update && apt-get install -y openjdk-17-jre
 
 # copy kafka
 COPY --from=build /opt/kafka /opt/kafka
@@ -174,14 +154,10 @@ WORKDIR /opt/kafka
 }
 
 function generateDockerfile() {
-  if [[ "$CONFLUENT_WORKER" = "true" ]]; then
-    generateConfluentDockerfile
+  if [[ -n "$REVISION" ]]; then
+    generateDockerfileBySource
   else
-    if [[ -n "$REVISION" ]]; then
-      generateDockerfileBySource
-    else
-      generateDockerfileByVersion
-    fi
+    generateDockerfileByVersion
   fi
 }
 

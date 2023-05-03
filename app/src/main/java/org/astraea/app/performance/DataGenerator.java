@@ -16,44 +16,54 @@
  */
 package org.astraea.app.performance;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
-import org.astraea.common.DataRate;
+import java.util.stream.LongStream;
+import org.astraea.common.Configuration;
 import org.astraea.common.DataUnit;
 import org.astraea.common.Utils;
 import org.astraea.common.admin.TopicPartition;
 import org.astraea.common.producer.Record;
+import org.astraea.common.producer.RecordGenerator;
 
 public interface DataGenerator extends AbstractThread {
   static DataGenerator of(
       List<ArrayBlockingQueue<List<Record<byte[], byte[]>>>> queues,
       Supplier<TopicPartition> partitionSelector,
       Performance.Argument argument) {
+    if (queues.size() == 0) return terminatedGenerator();
+
+    var keyDistConfig = Configuration.of(argument.keyDistributionConfig);
+    var keySizeDistConfig = Configuration.of(argument.keySizeDistributionConfig);
+    var valueDistConfig = Configuration.of(argument.valueDistributionConfig);
     var dataSupplier =
-        supplier(
-            argument.transactionSize,
-            argument.keyDistributionType.create(10000),
-            argument.keyDistributionType.create(
-                argument.keySize.measurement(DataUnit.Byte).intValue()),
-            argument.valueDistributionType.create(10000),
-            argument.valueDistributionType.create(
-                argument.valueSize.measurement(DataUnit.Byte).intValue()),
-            argument.throttles,
-            argument.throughput);
+        RecordGenerator.builder()
+            .batchSize(argument.transactionSize)
+            .keyTableSeed(argument.recordKeyTableSeed)
+            .keyRange(
+                LongStream.rangeClosed(0, 10000).boxed().collect(Collectors.toUnmodifiableList()))
+            .keyDistribution(argument.keyDistributionType.create(10000, keyDistConfig))
+            .keySizeDistribution(
+                argument.keySizeDistributionType.create(
+                    (int) argument.keySize.bytes(), keySizeDistConfig))
+            .valueTableSeed(argument.recordValueTableSeed)
+            .valueRange(
+                LongStream.rangeClosed(0, 10000).boxed().collect(Collectors.toUnmodifiableList()))
+            .valueDistribution(argument.valueDistributionType.create(10000, valueDistConfig))
+            .valueSizeDistribution(
+                argument.valueDistributionType.create(
+                    argument.valueSize.measurement(DataUnit.Byte).intValue(), valueDistConfig))
+            .throughput(tp -> argument.throttles.getOrDefault(tp, argument.throughput))
+            .build();
     var closeLatch = new CountDownLatch(1);
     var executor = Executors.newFixedThreadPool(1);
     var closed = new AtomicBoolean(false);
@@ -119,92 +129,18 @@ public interface DataGenerator extends AbstractThread {
     };
   }
 
-  static Function<TopicPartition, List<Record<byte[], byte[]>>> supplier(
-      int batchSize,
-      Supplier<Long> keyDistribution,
-      Supplier<Long> keySizeDistribution,
-      Supplier<Long> valueDistribution,
-      Supplier<Long> valueSizeDistribution,
-      Map<TopicPartition, DataRate> throughput,
-      DataRate defaultThroughput) {
-    final Map<TopicPartition, Throttler> throttlers =
-        throughput.entrySet().stream()
-            .collect(Collectors.toMap(Map.Entry::getKey, e -> new Throttler(e.getValue())));
-    final var defaultThrottler = new Throttler(defaultThroughput);
-    final Random rand = new Random();
-    final Map<Long, byte[]> recordKeyTable = new ConcurrentHashMap<>();
-    final Map<Long, byte[]> recordValueTable = new ConcurrentHashMap<>();
-    Supplier<byte[]> keySupplier =
-        () -> getOrNew(recordKeyTable, keyDistribution, keySizeDistribution.get().intValue(), rand);
-    Supplier<byte[]> valueSupplier =
-        () ->
-            getOrNew(
-                recordValueTable, valueDistribution, valueSizeDistribution.get().intValue(), rand);
+  static DataGenerator terminatedGenerator() {
+    return new DataGenerator() {
+      @Override
+      public void waitForDone() {}
 
-    return (tp) -> {
-      var throttler = throttlers.getOrDefault(tp, defaultThrottler);
-      var records = new ArrayList<Record<byte[], byte[]>>(batchSize);
-
-      for (int i = 0; i < batchSize; i++) {
-        var key = keySupplier.get();
-        var value = valueSupplier.get();
-        if (throttler.throttled(
-            (value != null ? value.length : 0) + (key != null ? key.length : 0))) return List.of();
-        records.add(
-            Record.builder()
-                .key(key)
-                .value(value)
-                .topicPartition(tp)
-                .timestamp(System.currentTimeMillis())
-                .build());
-      }
-      return records;
-    };
-  }
-
-  // Find the key from the table, if the record has been produced before. Randomly generate a
-  // byte array if
-  // the record has not been produced.
-  static byte[] getOrNew(
-      Map<Long, byte[]> table, Supplier<Long> distribution, int size, Random rand) {
-    return table.computeIfAbsent(
-        distribution.get(),
-        ignore -> {
-          if (size == 0) return null;
-          var value = new byte[size];
-          rand.nextBytes(value);
-          return value;
-        });
-  }
-
-  class Throttler {
-    private final long start = System.currentTimeMillis();
-    private final long throughput;
-    private final AtomicLong totalBytes = new AtomicLong();
-
-    Throttler(DataRate max) {
-      throughput = Double.valueOf(max.byteRate()).longValue();
-    }
-
-    /**
-     * @param payloadLength of new data
-     * @return true if the data need to be throttled. Otherwise, false
-     */
-    boolean throttled(long payloadLength) {
-      var duration = durationInSeconds();
-      if (duration <= 0) return false;
-      var current = totalBytes.addAndGet(payloadLength);
-      // too much -> slow down
-      if ((current / duration) > throughput) {
-        totalBytes.addAndGet(-payloadLength);
+      @Override
+      public boolean closed() {
         return true;
       }
-      return false;
-    }
 
-    // visible for testing
-    long durationInSeconds() {
-      return (System.currentTimeMillis() - start) / 1000;
-    }
+      @Override
+      public void close() {}
+    };
   }
 }

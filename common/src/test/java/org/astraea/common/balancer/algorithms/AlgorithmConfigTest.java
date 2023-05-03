@@ -17,7 +17,9 @@
 package org.astraea.common.balancer.algorithms;
 
 import java.util.Map;
-import org.astraea.common.Configuration;
+import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.balancer.AlgorithmConfig;
+import org.astraea.common.metrics.ClusterBean;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -27,17 +29,20 @@ public class AlgorithmConfigTest {
   void testCopy() {
     var config0 =
         AlgorithmConfig.builder()
+            .clusterInfo(ClusterInfo.empty())
+            .clusterBean(ClusterBean.EMPTY)
+            .configs(Map.of("A", "AA", "B", "BB"))
+            .config("C", "CC")
             .clusterCost((i, j) -> () -> 100)
-            .config(Configuration.of(Map.of()))
             .build();
     var config1 = AlgorithmConfig.builder(config0).build();
     Assertions.assertSame(config0.executionId(), config1.executionId());
     Assertions.assertSame(config0.clusterCostFunction(), config1.clusterCostFunction());
     Assertions.assertSame(config0.moveCostFunction(), config1.moveCostFunction());
     Assertions.assertSame(config0.clusterConstraint(), config1.clusterConstraint());
-    Assertions.assertSame(config0.movementConstraint(), config1.movementConstraint());
-    Assertions.assertSame(config0.topicFilter(), config1.topicFilter());
-    Assertions.assertSame(config0.metricSource(), config1.metricSource());
-    Assertions.assertSame(config0.config(), config1.config());
+    Assertions.assertEquals(config0.balancerConfig().raw(), config1.balancerConfig().raw());
+    Assertions.assertSame(config0.clusterInfo(), config1.clusterInfo());
+    Assertions.assertSame(config0.clusterBean(), config1.clusterBean());
+    Assertions.assertSame(config0.timeout(), config1.timeout());
   }
 }

@@ -17,10 +17,9 @@
 package org.astraea.common.cost;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.metrics.ClusterBean;
 import org.astraea.common.metrics.collector.MetricSensor;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -33,10 +32,9 @@ public class HasMoveCostTest {
     var sensor = Mockito.mock(MetricSensor.class);
     var function =
         new HasMoveCost() {
-
           @Override
           public MoveCost moveCost(ClusterInfo before, ClusterInfo after, ClusterBean clusterBean) {
-            return MoveCost.movedRecordSize(Map.of());
+            return () -> false;
           }
 
           @Override

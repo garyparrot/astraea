@@ -22,22 +22,25 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.astraea.common.Configuration;
 import org.astraea.common.DataRate;
 import org.astraea.common.EnumInfo;
 import org.astraea.common.admin.BrokerTopic;
-import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.TopicPartition;
+import org.astraea.common.cost.utils.ClusterInfoSensor;
+import org.astraea.common.metrics.ClusterBean;
 import org.astraea.common.metrics.HasBeanObject;
-import org.astraea.common.metrics.broker.HasRate;
 import org.astraea.common.metrics.broker.LogMetrics;
 import org.astraea.common.metrics.broker.ServerMetrics;
 import org.astraea.common.metrics.collector.MetricSensor;
+import org.astraea.common.metrics.platform.HostMetrics;
 
 /**
  * This cost function calculate the load balance score in terms of network ingress or network
@@ -57,15 +60,32 @@ import org.astraea.common.metrics.collector.MetricSensor;
  *       every consumer fetches data from the leader(which is the default behavior of Kafka). For
  *       more detail about consumer rack awareness or how consumer can fetch data from the closest
  *       replica, see <a href="https://cwiki.apache.org/confluence/x/go_zBQ">KIP-392<a>.
+ *   <li>NetworkCost implementation use broker-topic bandwidth rate and some other info to estimate
+ *       the broker-topic-partition bandwidth rate. The implementation assume the broker-topic
+ *       bandwidth is correct and steadily reflect the actual resource usage. This is generally true
+ *       when the broker has reach its steady state, but to reach that state might takes awhile. And
+ *       based on our observation this probably won't happen at the early broker start (see <a
+ *       href="https://github.com/skiptests/astraea/issues/1641">Issue #1641</a>). We suggest use
+ *       this cost with metrics from the servers in steady state.
  * </ol>
  */
 public abstract class NetworkCost implements HasClusterCost {
 
-  private final AtomicReference<ClusterInfo> currentCluster = new AtomicReference<>();
-  private final BandwidthType bandwidthType;
+  public static final String NETWORK_COST_ESTIMATION_METHOD = "network.cost.estimation.method";
 
-  NetworkCost(BandwidthType bandwidthType) {
+  private final EstimationMethod estimationMethod;
+  private final BandwidthType bandwidthType;
+  private final Map<ClusterBean, CachedCalculation> calculationCache;
+  private final ClusterInfoSensor clusterInfoSensor = new ClusterInfoSensor();
+
+  NetworkCost(Configuration config, BandwidthType bandwidthType) {
     this.bandwidthType = bandwidthType;
+    this.calculationCache = new ConcurrentHashMap<>();
+    this.estimationMethod =
+        config
+            .string(NETWORK_COST_ESTIMATION_METHOD)
+            .map(EstimationMethod::ofAlias)
+            .orElse(EstimationMethod.BROKER_TOPIC_ONE_MINUTE_RATE);
   }
 
   void noMetricCheck(ClusterBean clusterBean) {
@@ -81,64 +101,71 @@ public abstract class NetworkCost implements HasClusterCost {
           "The following brokers have no metric available: " + noMetricBrokers);
   }
 
-  void updateCurrentCluster(
-      ClusterInfo clusterInfo, ClusterBean clusterBean, AtomicReference<ClusterInfo> ref) {
-    // TODO: We need a reliable way to access the actual current cluster info. The following method
-    //  try to compare the equality of cluster info and cluster bean in terms of replica set. But it
-    //  didn't consider the data folder info. See the full discussion:
-    //  https://github.com/skiptests/astraea/pull/1240#discussion_r1044487473
-    var metricReplicas = clusterBean.replicas();
-    var mismatchSet =
-        clusterInfo.topicPartitionReplicas().stream()
-            .filter(tpr -> !metricReplicas.contains(tpr))
-            .collect(Collectors.toUnmodifiableSet());
-    if (mismatchSet.isEmpty()) ref.set(clusterInfo);
-    if (ref.get() == null)
-      fail("Initial clusterInfo required, the following replicas are mismatch: " + mismatchSet);
-  }
-
   @Override
   public ClusterCost clusterCost(ClusterInfo clusterInfo, ClusterBean clusterBean) {
     noMetricCheck(clusterBean);
-    updateCurrentCluster(clusterInfo, clusterBean, currentCluster);
 
-    var ingressRate =
-        estimateRate(currentCluster.get(), clusterBean, ServerMetrics.Topic.BYTES_IN_PER_SEC);
-    var egressRate =
-        estimateRate(currentCluster.get(), clusterBean, ServerMetrics.Topic.BYTES_OUT_PER_SEC);
-    var brokerRate =
-        clusterInfo
-            .replicaStream()
-            .filter(Replica::isOnline)
+    // The partition load calculation takes considerable time with many partitions. cache the
+    // calculation result to speed things up
+    final var cachedCalculation =
+        calculationCache.computeIfAbsent(clusterBean, CachedCalculation::new);
+
+    // Evaluate the score of the balancer-tweaked cluster(clusterInfo)
+    var brokerIngressRate =
+        clusterInfo.brokers().stream()
             .collect(
-                Collectors.groupingBy(
-                    replica -> clusterInfo.node(replica.nodeInfo().id()),
-                    Collectors.mapping(
-                        replica -> {
-                          var tp = replica.topicPartition();
-                          switch (bandwidthType) {
-                            case Ingress:
-                              // ingress might come from producer-send or follower-fetch.
-                              return notNull(ingressRate.get(tp));
-                            case Egress:
-                              // egress is composed of consumer-fetch and follower-fetch.
-                              // this implementation assumes no consumer rack awareness fetcher
-                              // enabled so all consumers fetch data from the leader only.
-                              return replica.isLeader()
-                                  ? notNull(egressRate.get(tp))
-                                      + notNull(ingressRate.get(tp))
-                                          // Multiply by the number of follower replicas. This
-                                          // number considers both online replicas and offline
-                                          // replicas since an offline replica is probably a
-                                          // transient behavior. So the offline state should get
-                                          // resolved in the near future, we count it in advance.
-                                          * (clusterInfo.replicas(tp).size() - 1)
-                                  : 0;
-                            default:
-                              throw new RuntimeException();
-                          }
-                        },
-                        Collectors.summingDouble(x -> x))));
+                Collectors.toMap(
+                    NodeInfo::id,
+                    broker ->
+                        clusterInfo
+                            .replicaStream(broker.id())
+                            .mapToLong(
+                                replica -> {
+                                  // ingress might come from producer-send or follower-fetch.
+                                  return ingress(cachedCalculation, replica.topicPartition());
+                                })
+                            .sum()));
+    var brokerEgressRate =
+        clusterInfo.brokers().stream()
+            .collect(
+                Collectors.toMap(
+                    NodeInfo::id,
+                    broker ->
+                        clusterInfo
+                            .replicaStream(broker.id())
+                            .mapToLong(
+                                replica -> {
+                                  // egress is composed of consumer-fetch and follower-fetch.
+                                  // this implementation assumes no consumer rack awareness fetcher
+                                  // enabled so all consumers fetch data from the leader only.
+                                  return replica.isLeader()
+                                      ? egress(cachedCalculation, replica.topicPartition())
+                                          + ingress(cachedCalculation, replica.topicPartition())
+                                              // Multiply by the number of follower replicas. This
+                                              // number considers both online replicas and offline
+                                              // replicas since an offline replica is probably a
+                                              // transient behavior. So the offline state should get
+                                              // resolved in the near future, we count it in
+                                              // advance.
+                                              * (clusterInfo
+                                                      .replicas(replica.topicPartition())
+                                                      .size()
+                                                  - 1)
+                                      : 0;
+                                })
+                            .sum()));
+    // add the brokers having no replicas into map
+    clusterInfo.nodes().stream()
+        .filter(node -> !brokerIngressRate.containsKey(node.id()))
+        .forEach(
+            node -> {
+              brokerIngressRate.put(node.id(), 0L);
+              brokerEgressRate.put(node.id(), 0L);
+            });
+
+    // the rate we are measuring
+    var brokerRate =
+        (bandwidthType == BandwidthType.Ingress) ? brokerIngressRate : brokerEgressRate;
 
     var summary = brokerRate.values().stream().mapToDouble(x -> x).summaryStatistics();
     if (summary.getMax() < 0)
@@ -150,14 +177,17 @@ public abstract class NetworkCost implements HasClusterCost {
     if (summary.getMax() == 0)
       return ClusterCost.of(
           0, () -> "network load zero"); // edge case to avoid divided by zero error
-    double score = (summary.getMax() - summary.getMin()) / (summary.getMax());
-    return ClusterCost.of(
-        score,
-        () ->
-            brokerRate.values().stream()
-                .map(x -> DataRate.Byte.of(x.longValue()).perSecond())
-                .map(DataRate::toString)
-                .collect(Collectors.joining(", ", "{", "}")));
+
+    // evaluate the max possible load of ingress & egress
+    var maxIngress = brokerIngressRate.values().stream().mapToDouble(x -> x).sum();
+    var maxEgress = brokerEgressRate.values().stream().mapToDouble(x -> x).sum();
+    var maxRate = Math.max(maxIngress, maxEgress);
+    // the score is measured as the ratio of targeting network throughput related to the maximum
+    // ingress or egress throughput. See https://github.com/skiptests/astraea/issues/1285 for the
+    // reason to do this.
+    double score = (summary.getMax() - summary.getMin()) / (maxRate);
+
+    return new NetworkClusterCost(score, brokerRate);
   }
 
   @Override
@@ -168,9 +198,11 @@ public abstract class NetworkCost implements HasClusterCost {
     return Optional.of(
         (client, clusterBean) ->
             Stream.of(
+                    List.of(HostMetrics.jvmMemory(client)),
                     ServerMetrics.Topic.BYTES_IN_PER_SEC.fetch(client),
                     ServerMetrics.Topic.BYTES_OUT_PER_SEC.fetch(client),
-                    LogMetrics.Log.SIZE.fetch(client))
+                    LogMetrics.Log.SIZE.fetch(client),
+                    clusterInfoSensor.fetch(client, clusterBean))
                 .flatMap(Collection::stream)
                 .collect(Collectors.toUnmodifiableList()));
   }
@@ -204,7 +236,20 @@ public abstract class NetworkCost implements HasClusterCost {
                           .brokerTopicMetrics(bt, ServerMetrics.Topic.Meter.class)
                           .filter(bean -> bean.type().equals(metric))
                           .max(Comparator.comparingLong(HasBeanObject::createdTimestamp))
-                          .map(HasRate::fifteenMinuteRate)
+                          .map(
+                              hasRate -> {
+                                switch (estimationMethod) {
+                                  case BROKER_TOPIC_ONE_MINUTE_RATE:
+                                    return hasRate.oneMinuteRate();
+                                  case BROKER_TOPIC_FIVE_MINUTE_RATE:
+                                    return hasRate.fiveMinuteRate();
+                                  case BROKER_TOPIC_FIFTEEN_MINUTE_RATE:
+                                    return hasRate.fifteenMinuteRate();
+                                  default:
+                                    throw new IllegalStateException(
+                                        "Unknown estimation method: " + estimationMethod);
+                                }
+                              })
                           // no load metric for this partition, treat as zero load
                           .orElse(0.0);
               if (Double.isNaN(totalShare) || totalShare < 0)
@@ -227,9 +272,33 @@ public abstract class NetworkCost implements HasClusterCost {
         .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
-  private <T> T notNull(T value) {
-    if (value == null)
-      throw new NoSufficientMetricsException(this, Duration.ofSeconds(1), "No metric");
+  private long ingress(CachedCalculation calculation, TopicPartition topicPartition) {
+    var value = calculation.partitionIngressRate.get(topicPartition);
+    if (value == null) {
+      // Maybe the user run into this bug: https://github.com/skiptests/astraea/issues/1388
+      throw new NoSufficientMetricsException(
+          this,
+          Duration.ofSeconds(1),
+          "Unable to resolve the network ingress rate of "
+              + topicPartition
+              + ". "
+              + "If this issue persists for a while. Consider looking into the Astraea troubleshooting page.");
+    }
+    return value;
+  }
+
+  private long egress(CachedCalculation calculation, TopicPartition topicPartition) {
+    var value = calculation.partitionEgressRate.get(topicPartition);
+    if (value == null) {
+      // Maybe the user run into this bug: https://github.com/skiptests/astraea/issues/1388
+      throw new NoSufficientMetricsException(
+          this,
+          Duration.ofSeconds(1),
+          "Unable to resolve the network egress rate of "
+              + topicPartition
+              + ". "
+              + "If this issue persists for a while. Consider looking into the Astraea troubleshooting page.");
+    }
     return value;
   }
 
@@ -256,6 +325,50 @@ public abstract class NetworkCost implements HasClusterCost {
     @Override
     public String toString() {
       return alias();
+    }
+  }
+
+  private class CachedCalculation {
+    private final Map<TopicPartition, Long> partitionIngressRate;
+    private final Map<TopicPartition, Long> partitionEgressRate;
+
+    private CachedCalculation(ClusterBean sourceMetric) {
+      ClusterInfo metricViewCluster;
+      try {
+        metricViewCluster = ClusterInfoSensor.metricViewCluster(sourceMetric);
+      } catch (IllegalStateException e) {
+        // ClusterInfoSensor#metricViewCluster throws IllegalStateException when the given metrics
+        // contain conflict information(for example there is a partition at one broker, but its size
+        // metrics is not present in the given metrics. This might happen due to metric truncation.
+        throw new NoSufficientMetricsException(
+            NetworkCost.this, Duration.ofSeconds(1), "There ClusterBean is not ready yet", e);
+      }
+      this.partitionIngressRate =
+          estimateRate(metricViewCluster, sourceMetric, ServerMetrics.Topic.BYTES_IN_PER_SEC);
+      this.partitionEgressRate =
+          estimateRate(metricViewCluster, sourceMetric, ServerMetrics.Topic.BYTES_OUT_PER_SEC);
+    }
+  }
+
+  static class NetworkClusterCost implements ClusterCost {
+    final double score;
+    final Map<Integer, Long> brokerRate;
+
+    NetworkClusterCost(double score, Map<Integer, Long> brokerRate) {
+      this.score = score;
+      this.brokerRate = brokerRate;
+    }
+
+    public double value() {
+      return score;
+    }
+
+    @Override
+    public String toString() {
+      return brokerRate.values().stream()
+          .map(DataRate.Byte::of)
+          .map(DataRate::toString)
+          .collect(Collectors.joining(", ", "{", "}"));
     }
   }
 }

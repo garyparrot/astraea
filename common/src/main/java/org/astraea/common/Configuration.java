@@ -16,6 +16,7 @@
  */
 package org.astraea.common;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -24,6 +25,7 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public interface Configuration {
@@ -84,10 +86,38 @@ public interface Configuration {
 
   /**
    * @param key the key whose associated value is to be returned
+   * @return optional {@link Pattern} compiled from the string associated with the key. never null
+   */
+  default Optional<Pattern> regexString(String key) {
+    return string(key).map(Pattern::compile);
+  }
+
+  /**
+   * @param key the key whose associated value is to be returned
    * @return integer value. never null
    */
   default Optional<Integer> integer(String key) {
     return string(key).map(Integer::parseInt);
+  }
+
+  default Optional<Long> longInteger(String key) {
+    return string(key).map(Long::parseLong);
+  }
+
+  /**
+   * @param key the key whose associated value is to be returned
+   * @return duration value. If there is no key, return Optional.Empty
+   */
+  default Optional<Duration> duration(String key) {
+    return string(key).map(Utils::toDuration);
+  }
+
+  /**
+   * @param key the key whose associated value is to be returned
+   * @return DataSize value. If there is no key, return Optional.Empty
+   */
+  default Optional<DataSize> dataSize(String key) {
+    return string(key).map(DataSize::of);
   }
 
   default int requireInteger(String key) {
@@ -100,6 +130,20 @@ public interface Configuration {
    */
   default String requireString(String key) {
     return string(key).orElseThrow(() -> new NoSuchElementException(key + " is nonexistent"));
+  }
+
+  /**
+   * @param prefix the string to be filtered and removed
+   * @return new Configuration only contains which the key value starts with the prefix, and the
+   *     prefix string and the following dot will be removed from the key
+   */
+  default Configuration filteredPrefixConfigs(String prefix) {
+    return of(
+        entrySet().stream()
+            .filter(k -> k.getKey().startsWith(prefix))
+            .collect(
+                Collectors.toMap(
+                    i -> i.getKey().replaceFirst(prefix + '.', ""), Map.Entry::getValue)));
   }
 
   /**

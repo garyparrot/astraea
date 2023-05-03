@@ -17,12 +17,12 @@
 package org.astraea.common.cost;
 
 import java.util.List;
-import java.util.stream.Collectors;
-import org.astraea.common.admin.ClusterBean;
+import java.util.Map;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.TopicPartition;
+import org.astraea.common.metrics.ClusterBean;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -35,6 +35,7 @@ public class RecordSizeCostTest {
       ClusterInfo.of(
           "fake",
           List.of(NodeInfo.of(0, "aa", 22), NodeInfo.of(1, "aa", 22), NodeInfo.of(2, "aa", 22)),
+          Map.of(),
           List.of(
               Replica.builder()
                   .topic("topic")
@@ -57,23 +58,6 @@ public class RecordSizeCostTest {
                   .size(11)
                   .path("/tmp/aa")
                   .buildLeader()));
-
-  @Test
-  void testMoveCost() {
-    var before =
-        ClusterInfo.of(
-            "fake",
-            clusterInfo.nodes(),
-            clusterInfo.replicas().stream()
-                .filter(r -> !r.isLeader())
-                .map(r -> Replica.builder(r).nodeInfo(NodeInfo.of(0, "aa", 22)).build())
-                .collect(Collectors.toList()));
-
-    var result = function.moveCost(before, clusterInfo, ClusterBean.EMPTY);
-    Assertions.assertEquals(3, result.movedRecordSize().size());
-    Assertions.assertEquals(-99, result.movedRecordSize().get(0).bytes());
-    Assertions.assertEquals(99, result.movedRecordSize().get(2).bytes());
-  }
 
   @Test
   void testBrokerCost() {

@@ -18,21 +18,67 @@ package org.astraea.common.cost;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
-import org.astraea.common.admin.ClusterBean;
+import org.astraea.common.Configuration;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.admin.ClusterInfoTest;
 import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
-import org.astraea.common.metrics.BeanObject;
-import org.astraea.common.metrics.HasBeanObject;
-import org.astraea.common.metrics.broker.ServerMetrics;
+import org.astraea.common.metrics.ClusterBean;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 
 public class ReplicaLeaderCostTest {
   private final Dispersion dispersion = Dispersion.cov();
+
+  @Test
+  void testLeaderCount() {
+    var baseCluster =
+        ClusterInfo.builder()
+            .addNode(Set.of(1, 2))
+            .addFolders(Map.of(1, Set.of("/folder")))
+            .addFolders(Map.of(2, Set.of("/folder")))
+            .build();
+    var sourceCluster =
+        ClusterInfo.builder(baseCluster)
+            .addTopic(
+                "topic1",
+                3,
+                (short) 1,
+                r -> Replica.builder(r).nodeInfo(baseCluster.node(1)).build())
+            .addTopic(
+                "topic2",
+                3,
+                (short) 1,
+                r -> Replica.builder(r).nodeInfo(baseCluster.node(2)).build())
+            .build();
+    var overFlowTargetCluster =
+        ClusterInfo.builder(baseCluster)
+            .addTopic(
+                "topic1",
+                3,
+                (short) 1,
+                r -> Replica.builder(r).nodeInfo(baseCluster.node(2)).build())
+            .addTopic(
+                "topic2",
+                3,
+                (short) 1,
+                r -> Replica.builder(r).nodeInfo(baseCluster.node(1)).build())
+            .build();
+
+    var overFlowMoveCost =
+        new ReplicaLeaderCost(
+                Configuration.of(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "5")))
+            .moveCost(sourceCluster, overFlowTargetCluster, ClusterBean.EMPTY);
+
+    var noOverFlowMoveCost =
+        new ReplicaLeaderCost(
+                Configuration.of(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "10")))
+            .moveCost(sourceCluster, overFlowTargetCluster, ClusterBean.EMPTY);
+
+    Assertions.assertTrue(overFlowMoveCost.overflow());
+    Assertions.assertFalse(noOverFlowMoveCost.overflow());
+  }
 
   @Test
   void testNoMetrics() {
@@ -63,6 +109,7 @@ public class ReplicaLeaderCostTest {
                 NodeInfo.of(10, "host1", 8080),
                 NodeInfo.of(11, "host1", 8080),
                 NodeInfo.of(12, "host1", 8080)),
+            Map.of(),
             replicas);
     var brokerCost = ReplicaLeaderCost.leaderCount(clusterInfo);
     var clusterCost =
@@ -74,158 +121,5 @@ public class ReplicaLeaderCostTest {
     Assertions.assertTrue(brokerCost.get(10) > brokerCost.get(11));
     Assertions.assertEquals(brokerCost.get(12), 0);
     Assertions.assertEquals(clusterCost, 0.816496580927726);
-  }
-
-  @Test
-  void testWithMetrics() {
-    var costFunction = new ReplicaLeaderCost();
-    var LeaderCount1 = mockResult(ServerMetrics.ReplicaManager.LEADER_COUNT.metricName(), 3);
-    var LeaderCount2 = mockResult(ServerMetrics.ReplicaManager.LEADER_COUNT.metricName(), 4);
-    var LeaderCount3 = mockResult(ServerMetrics.ReplicaManager.LEADER_COUNT.metricName(), 5);
-
-    var broker1 = List.of((HasBeanObject) LeaderCount1);
-    var broker2 = List.of((HasBeanObject) LeaderCount2);
-    var broker3 = List.of((HasBeanObject) LeaderCount3);
-    var clusterBean = ClusterBean.of(Map.of(1, broker1, 2, broker2, 3, broker3));
-    var brokerLoad = costFunction.brokerCost(ClusterInfo.empty(), clusterBean);
-    var clusterLoad = costFunction.clusterCost(ClusterInfo.empty(), clusterBean);
-
-    Assertions.assertEquals(3, brokerLoad.value().size());
-    Assertions.assertEquals(3.0, brokerLoad.value().get(1));
-    Assertions.assertEquals(4.0, brokerLoad.value().get(2));
-    Assertions.assertEquals(5.0, brokerLoad.value().get(3));
-    Assertions.assertEquals(0.2041241452319315, clusterLoad.value());
-  }
-
-  @Test
-  void testMoveCost() {
-    var costFunction = new ReplicaLeaderCost();
-    var before =
-        List.of(
-            Replica.builder()
-                .topic("topic1")
-                .partition(0)
-                .nodeInfo(NodeInfo.of(0, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(true)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build(),
-            Replica.builder()
-                .topic("topic1")
-                .partition(0)
-                .nodeInfo(NodeInfo.of(1, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(false)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build(),
-            Replica.builder()
-                .topic("topic1")
-                .partition(1)
-                .nodeInfo(NodeInfo.of(0, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(true)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build(),
-            Replica.builder()
-                .topic("topic1")
-                .partition(1)
-                .nodeInfo(NodeInfo.of(1, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(false)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build());
-    var after =
-        List.of(
-            Replica.builder()
-                .topic("topic1")
-                .partition(0)
-                .nodeInfo(NodeInfo.of(2, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(true)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build(),
-            Replica.builder()
-                .topic("topic1")
-                .partition(0)
-                .nodeInfo(NodeInfo.of(1, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(false)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build(),
-            Replica.builder()
-                .topic("topic1")
-                .partition(1)
-                .nodeInfo(NodeInfo.of(0, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(true)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build(),
-            Replica.builder()
-                .topic("topic1")
-                .partition(1)
-                .nodeInfo(NodeInfo.of(2, "broker0", 1111))
-                .lag(-1)
-                .size(-1)
-                .isLeader(false)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("")
-                .build());
-    var beforeClusterInfo = ClusterInfoTest.of(before);
-    var afterClusterInfo = ClusterInfoTest.of(after);
-    var moveCost = costFunction.moveCost(beforeClusterInfo, afterClusterInfo, ClusterBean.EMPTY);
-    Assertions.assertEquals(3, moveCost.changedReplicaLeaderCount().size());
-    Assertions.assertTrue(moveCost.changedReplicaLeaderCount().containsKey(0));
-    Assertions.assertTrue(moveCost.changedReplicaLeaderCount().containsKey(1));
-    Assertions.assertTrue(moveCost.changedReplicaLeaderCount().containsKey(2));
-    Assertions.assertEquals(-1, moveCost.changedReplicaLeaderCount().get(0));
-    Assertions.assertEquals(0, moveCost.changedReplicaLeaderCount().get(1));
-    Assertions.assertEquals(1, moveCost.changedReplicaLeaderCount().get(2));
-  }
-
-  private ServerMetrics.ReplicaManager.Gauge mockResult(String name, int count) {
-    var result = Mockito.mock(ServerMetrics.ReplicaManager.Gauge.class);
-    var bean = Mockito.mock(BeanObject.class);
-    Mockito.when(result.beanObject()).thenReturn(bean);
-    Mockito.when(bean.properties()).thenReturn(Map.of("name", name, "type", "ReplicaManager"));
-    Mockito.when(result.value()).thenReturn(count);
-    return result;
   }
 }

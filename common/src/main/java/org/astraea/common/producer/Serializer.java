@@ -20,16 +20,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.List;
 import org.apache.kafka.common.header.Headers;
-import org.apache.kafka.common.serialization.ByteArraySerializer;
-import org.apache.kafka.common.serialization.DoubleSerializer;
-import org.apache.kafka.common.serialization.FloatSerializer;
-import org.apache.kafka.common.serialization.IntegerSerializer;
-import org.apache.kafka.common.serialization.LongSerializer;
-import org.apache.kafka.common.serialization.StringSerializer;
+import org.astraea.common.ByteUtils;
 import org.astraea.common.Header;
 import org.astraea.common.Utils;
 import org.astraea.common.json.JsonConverter;
 import org.astraea.common.json.TypeRef;
+import org.astraea.common.metrics.BeanObject;
 
 @FunctionalInterface
 public interface Serializer<T> {
@@ -59,16 +55,16 @@ public interface Serializer<T> {
     };
   }
 
-  static <T> Serializer<T> of(org.apache.kafka.common.serialization.Serializer<T> serializer) {
-    return (topic, headers, data) -> serializer.serialize(topic, Header.of(headers), data);
-  }
-
-  Serializer<byte[]> BYTE_ARRAY = of(new ByteArraySerializer());
-  Serializer<String> STRING = of(new StringSerializer());
-  Serializer<Integer> INTEGER = of(new IntegerSerializer());
-  Serializer<Long> LONG = of(new LongSerializer());
-  Serializer<Float> FLOAT = of(new FloatSerializer());
-  Serializer<Double> DOUBLE = of(new DoubleSerializer());
+  Serializer<byte[]> BYTE_ARRAY = (topic, headers, data) -> data;
+  Serializer<String> STRING =
+      (topic, headers, data) -> data == null ? null : ByteUtils.toBytes(data);
+  Serializer<Integer> INTEGER =
+      (topic, headers, data) -> data == null ? null : ByteUtils.toBytes(data);
+  Serializer<Long> LONG = (topic, headers, data) -> data == null ? null : ByteUtils.toBytes(data);
+  Serializer<Float> FLOAT = (topic, headers, data) -> data == null ? null : ByteUtils.toBytes(data);
+  Serializer<Double> DOUBLE =
+      (topic, headers, data) -> data == null ? null : ByteUtils.toBytes(data);
+  Serializer<BeanObject> BEAN_OBJECT = (topic, headers, data) -> ByteUtils.toBytes(data);
 
   /**
    * create Custom JsonSerializer

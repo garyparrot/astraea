@@ -16,38 +16,43 @@
  */
 package org.astraea.common.cost;
 
-import java.util.Comparator;
+import static org.astraea.common.cost.MigrationCost.replicaLeaderToAdd;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
-import org.astraea.common.admin.ClusterBean;
+import org.astraea.common.Configuration;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.admin.NodeInfo;
-import org.astraea.common.admin.Replica;
-import org.astraea.common.metrics.HasBeanObject;
-import org.astraea.common.metrics.broker.HasGauge;
+import org.astraea.common.metrics.ClusterBean;
 import org.astraea.common.metrics.broker.ServerMetrics;
 import org.astraea.common.metrics.collector.MetricSensor;
 
 /** more replica leaders -> higher cost */
 public class ReplicaLeaderCost implements HasBrokerCost, HasClusterCost, HasMoveCost {
   private final Dispersion dispersion = Dispersion.cov();
-  public static final String COST_NAME = "leader";
+  private final Configuration config;
+  public static final String MAX_MIGRATE_LEADER_KEY = "max.migrated.leader.number";
+
+  public ReplicaLeaderCost() {
+    this.config = Configuration.of(Map.of());
+  }
+
+  public ReplicaLeaderCost(Configuration config) {
+    this.config = config;
+  }
 
   @Override
   public BrokerCost brokerCost(ClusterInfo clusterInfo, ClusterBean clusterBean) {
     var result =
-        leaderCount(clusterInfo, clusterBean).entrySet().stream()
+        leaderCount(clusterInfo).entrySet().stream()
             .collect(Collectors.toMap(Map.Entry::getKey, e -> (double) e.getValue()));
     return () -> result;
   }
 
   @Override
   public ClusterCost clusterCost(ClusterInfo clusterInfo, ClusterBean clusterBean) {
-    var brokerScore = brokerCost(clusterInfo, clusterBean).value();
+    var brokerScore = leaderCount(clusterInfo);
     var value = dispersion.calculate(brokerScore.values());
     return ClusterCost.of(
         value,
@@ -55,30 +60,6 @@ public class ReplicaLeaderCost implements HasBrokerCost, HasClusterCost, HasMove
             brokerScore.values().stream()
                 .map(Object::toString)
                 .collect(Collectors.joining(", ", "{", "}")));
-  }
-
-  private static Map<Integer, Integer> leaderCount(
-      ClusterInfo clusterInfo, ClusterBean clusterBean) {
-    if (clusterBean == ClusterBean.EMPTY) return leaderCount(clusterInfo);
-    var leaderCount = leaderCount(clusterBean);
-    // if there is no available metrics, we re-count the leaders based on cluster information
-    if (leaderCount.values().stream().mapToInt(i -> i).sum() == 0) return leaderCount(clusterInfo);
-    return leaderCount;
-  }
-
-  static Map<Integer, Integer> leaderCount(ClusterBean clusterBean) {
-    return clusterBean.all().entrySet().stream()
-        .collect(
-            Collectors.toMap(
-                Map.Entry::getKey,
-                e ->
-                    e.getValue().stream()
-                        .filter(x -> x instanceof ServerMetrics.ReplicaManager.Gauge)
-                        .map(x -> (ServerMetrics.ReplicaManager.Gauge) x)
-                        .sorted(Comparator.comparing(HasBeanObject::createdTimestamp).reversed())
-                        .limit(1)
-                        .mapToInt(HasGauge::value)
-                        .sum()));
   }
 
   static Map<Integer, Integer> leaderCount(ClusterInfo clusterInfo) {
@@ -93,41 +74,19 @@ public class ReplicaLeaderCost implements HasBrokerCost, HasClusterCost, HasMove
         (client, ignored) -> List.of(ServerMetrics.ReplicaManager.LEADER_COUNT.fetch(client)));
   }
 
+  public Configuration config() {
+    return this.config;
+  }
+
   @Override
   public MoveCost moveCost(ClusterInfo before, ClusterInfo after, ClusterBean clusterBean) {
-    return MoveCost.changedReplicaLeaderCount(
-        Stream.concat(before.nodes().stream(), after.nodes().stream())
-            .map(NodeInfo::id)
-            .distinct()
-            .parallel()
-            .collect(
-                Collectors.toUnmodifiableMap(
-                    Function.identity(),
-                    id -> {
-                      var removedLeaders =
-                          (int)
-                              before
-                                  .replicaStream(id)
-                                  .filter(Replica::isLeader)
-                                  .filter(
-                                      r ->
-                                          after
-                                              .replicaStream(r.topicPartitionReplica())
-                                              .noneMatch(Replica::isLeader))
-                                  .count();
-                      var newLeaders =
-                          (int)
-                              after
-                                  .replicaStream(id)
-                                  .filter(Replica::isLeader)
-                                  .filter(
-                                      r ->
-                                          before
-                                              .replicaStream(r.topicPartitionReplica())
-                                              .noneMatch(Replica::isLeader))
-                                  .count();
-                      return newLeaders - removedLeaders;
-                    })));
+    var replicaLeaderIn = replicaLeaderToAdd(before, after);
+    var maxMigratedLeader =
+        config.string(MAX_MIGRATE_LEADER_KEY).map(Long::parseLong).orElse(Long.MAX_VALUE);
+    var overflow =
+        maxMigratedLeader
+            < replicaLeaderIn.values().stream().map(Math::abs).mapToLong(s -> s).sum();
+    return () -> overflow;
   }
 
   @Override

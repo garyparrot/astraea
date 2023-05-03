@@ -31,28 +31,22 @@ import java.util.stream.IntStream;
 import org.astraea.common.Configuration;
 import org.astraea.common.Utils;
 import org.astraea.common.admin.Admin;
-import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.TopicPartition;
-import org.astraea.common.balancer.algorithms.AlgorithmConfig;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
 import org.astraea.common.balancer.algorithms.SingleStepBalancer;
 import org.astraea.common.balancer.executor.StraightPlanExecutor;
 import org.astraea.common.cost.ClusterCost;
-import org.astraea.common.cost.DecreasingCost;
 import org.astraea.common.cost.HasClusterCost;
-import org.astraea.common.cost.MoveCost;
-import org.astraea.common.cost.NoSufficientMetricsException;
 import org.astraea.common.cost.ReplicaLeaderCost;
 import org.astraea.common.metrics.BeanObject;
+import org.astraea.common.metrics.ClusterBean;
 import org.astraea.common.metrics.HasBeanObject;
 import org.astraea.it.Service;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
@@ -117,21 +111,21 @@ class BalancerTest {
           0, imbalanceFactor0, "This cluster is completely balanced in terms of leader count");
 
       var plan =
-          Balancer.create(
-                  theClass,
-                  AlgorithmConfig.builder()
-                      .clusterCost(new ReplicaLeaderCost())
-                      .topicFilter(topic -> topic.equals(topicName))
-                      .build())
+          Utils.construct(theClass, Configuration.EMPTY)
               .offer(
-                  admin
-                      .clusterInfo(admin.topicNames(false).toCompletableFuture().join())
-                      .toCompletableFuture()
-                      .join(),
-                  Duration.ofSeconds(10))
-              .solution()
+                  AlgorithmConfig.builder()
+                      .clusterInfo(
+                          admin
+                              .clusterInfo(admin.topicNames(false).toCompletableFuture().join())
+                              .toCompletableFuture()
+                              .join())
+                      .clusterBean(ClusterBean.EMPTY)
+                      .timeout(Duration.ofSeconds(10))
+                      .clusterCost(new ReplicaLeaderCost())
+                      .config(BalancerConfigs.BALANCER_ALLOWED_TOPICS_REGEX, "(" + topicName + ")")
+                      .build())
               .orElseThrow();
-      new StraightPlanExecutor(true)
+      new StraightPlanExecutor(Configuration.EMPTY)
           .run(admin, plan.proposal(), Duration.ofSeconds(10))
           .toCompletableFuture()
           .join();
@@ -174,15 +168,15 @@ class BalancerTest {
               .toCompletableFuture()
               .join();
       var newAllocation =
-          Balancer.create(
-                  theClass,
+          Utils.construct(theClass, Configuration.of(Map.of("iteration", "500")))
+              .offer(
                   AlgorithmConfig.builder()
-                      .topicFilter(t -> t.equals(theTopic))
+                      .clusterInfo(clusterInfo)
+                      .clusterBean(ClusterBean.EMPTY)
+                      .timeout(Duration.ofSeconds(3))
+                      .config(BalancerConfigs.BALANCER_ALLOWED_TOPICS_REGEX, "(" + theTopic + ")")
                       .clusterCost(randomScore)
-                      .config(Configuration.of(Map.of("iteration", "500")))
                       .build())
-              .offer(clusterInfo, Duration.ofSeconds(3))
-              .solution()
               .get()
               .proposal();
 
@@ -191,13 +185,12 @@ class BalancerTest {
               .clusterInfo(admin.topicNames(false).toCompletableFuture().join())
               .toCompletableFuture()
               .join();
-      var newCluster = ClusterInfo.update(currentCluster, newAllocation::replicas);
 
       Assertions.assertEquals(
           currentCluster.replicas(topic1).stream()
               .map(Replica::topicPartitionReplica)
               .collect(Collectors.toSet()),
-          newCluster.replicas(topic1).stream()
+          newAllocation.replicas(topic1).stream()
               .map(Replica::topicPartitionReplica)
               .collect(Collectors.toSet()),
           "With filter, only specific topic has been balanced");
@@ -205,7 +198,7 @@ class BalancerTest {
           currentCluster.replicas(topic2).stream()
               .map(Replica::topicPartitionReplica)
               .collect(Collectors.toSet()),
-          newCluster.replicas(topic2).stream()
+          newAllocation.replicas(topic2).stream()
               .map(Replica::topicPartitionReplica)
               .collect(Collectors.toSet()),
           "With filter, only specific topic has been balanced");
@@ -213,7 +206,7 @@ class BalancerTest {
           currentCluster.replicas(topic3).stream()
               .map(Replica::topicPartitionReplica)
               .collect(Collectors.toSet()),
-          newCluster.replicas(topic3).stream()
+          newAllocation.replicas(topic3).stream()
               .map(Replica::topicPartitionReplica)
               .collect(Collectors.toSet()),
           "With filter, only specific topic has been balanced");
@@ -236,18 +229,19 @@ class BalancerTest {
       var future =
           CompletableFuture.supplyAsync(
               () ->
-                  Balancer.create(
-                          theClass,
+                  Utils.construct(theClass, Configuration.EMPTY)
+                      .offer(
                           AlgorithmConfig.builder()
+                              .clusterInfo(
+                                  admin
+                                      .clusterInfo(
+                                          admin.topicNames(false).toCompletableFuture().join())
+                                      .toCompletableFuture()
+                                      .join())
+                              .clusterBean(ClusterBean.EMPTY)
+                              .timeout(Duration.ofSeconds(3))
                               .clusterCost((clusterInfo, bean) -> Math::random)
                               .build())
-                      .offer(
-                          admin
-                              .clusterInfo(admin.topicNames(false).toCompletableFuture().join())
-                              .toCompletableFuture()
-                              .join(),
-                          Duration.ofSeconds(3))
-                      .solution()
                       .get()
                       .proposal());
       Utils.sleep(Duration.ofMillis(1000));
@@ -291,14 +285,14 @@ class BalancerTest {
                   return () -> 0;
                 }
               };
-          Balancer.create(
-                  theClass,
+          Utils.construct(theClass, Configuration.of(Map.of("iteration", "500")))
+              .offer(
                   AlgorithmConfig.builder()
+                      .clusterInfo(ClusterInfo.empty())
+                      .clusterBean(metricSource.get())
+                      .timeout(Duration.ofSeconds(3))
                       .clusterCost(theCostFunction)
-                      .metricSource(metricSource)
-                      .config(Configuration.of(Map.of("iteration", "500")))
-                      .build())
-              .offer(ClusterInfo.empty(), Duration.ofSeconds(3));
+                      .build());
           Assertions.assertTrue(called.get(), "The cost function has been invoked");
         };
 
@@ -312,52 +306,5 @@ class BalancerTest {
     test.accept(7L);
     test.accept(8L);
     test.accept(9L);
-  }
-
-  @ParameterizedTest
-  @ValueSource(ints = {1000, 2000, 3000})
-  @Timeout(10)
-  void testRetryOffer(int sampleTimeMs) {
-    var startMs = System.currentTimeMillis();
-    var costFunction = new DecreasingCost(null);
-    var fake = FakeClusterInfo.of(3, 3, 3, 3);
-    var balancer =
-        new Balancer() {
-          @Override
-          public Plan offer(ClusterInfo currentClusterInfo, Duration timeout) {
-            if (System.currentTimeMillis() - startMs < sampleTimeMs)
-              throw new NoSufficientMetricsException(
-                  costFunction,
-                  Duration.ofMillis(sampleTimeMs - (System.currentTimeMillis() - startMs)));
-            return new Plan(() -> 0, new Solution(() -> 0, MoveCost.EMPTY, currentClusterInfo));
-          }
-        };
-
-    Assertions.assertDoesNotThrow(() -> balancer.retryOffer(fake, Duration.ofSeconds(10)));
-    var endMs = System.currentTimeMillis();
-
-    Assertions.assertTrue(
-        sampleTimeMs < (endMs - startMs) && (endMs - startMs) < sampleTimeMs + 1000,
-        "Finished on time");
-  }
-
-  @Test
-  @Timeout(1)
-  void testRetryOfferTimeout() {
-    var timeout = Duration.ofMillis(100);
-    var costFunction = new DecreasingCost(null);
-    var fake = FakeClusterInfo.of(3, 3, 3, 3);
-    var balancer =
-        new Balancer() {
-          @Override
-          public Plan offer(ClusterInfo currentClusterInfo, Duration timeout) {
-            throw new NoSufficientMetricsException(
-                costFunction, Duration.ofSeconds(999), "This will takes forever");
-          }
-        };
-
-    // start
-    Assertions.assertThrows(RuntimeException.class, () -> balancer.retryOffer(fake, timeout))
-        .printStackTrace();
   }
 }

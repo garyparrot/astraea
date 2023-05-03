@@ -28,10 +28,8 @@ repositories {
 dependencies {
     implementation libs["ftp-server"]
     implementation libs["junit"]
-    implementation libs["wix-embedded-mysql"]
-    implementation libs["mysql-connector-java"]
-    implementation libs["zookeeper"]
     implementation libs["kafka-core"]
+    implementation libs["kafka-server-common"]
     implementation libs["kafka-connect-runtime"]
     implementation libs["kafka-connect-json"]
     implementation libs["hadoop-minicluster"]
@@ -40,8 +38,8 @@ dependencies {
 }
 
 java {
-    sourceCompatibility = 11
-    targetCompatibility = 11
+    sourceCompatibility = 17
+    targetCompatibility = 17
 }
 
 ext {

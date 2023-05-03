@@ -25,7 +25,7 @@ import org.astraea.common.Utils;
 import org.astraea.common.connector.ConnectorClient;
 import org.astraea.common.connector.ConnectorConfigs;
 import org.astraea.common.consumer.Record;
-import org.astraea.common.metrics.MBeanClient;
+import org.astraea.common.metrics.JndiClient;
 import org.astraea.common.metrics.connector.ConnectorMetrics;
 import org.astraea.it.Service;
 import org.junit.jupiter.api.AfterAll;
@@ -132,7 +132,7 @@ public class PerfSinkTest {
     Utils.sleep(Duration.ofSeconds(3));
 
     var m0 =
-        ConnectorMetrics.sinkTaskInfo(MBeanClient.local()).stream()
+        ConnectorMetrics.sinkTaskInfo(JndiClient.local()).stream()
             .filter(m -> m.connectorName().equals(name))
             .collect(Collectors.toList());
     Assertions.assertNotEquals(0, m0.size());
@@ -158,7 +158,7 @@ public class PerfSinkTest {
         });
 
     var m1 =
-        ConnectorMetrics.taskError(MBeanClient.local()).stream()
+        ConnectorMetrics.taskError(JndiClient.local()).stream()
             .filter(m -> m.connectorName().equals(name))
             .collect(Collectors.toList());
     Assertions.assertNotEquals(0, m1.size());
@@ -175,7 +175,7 @@ public class PerfSinkTest {
         });
 
     var m2 =
-        ConnectorMetrics.connectorInfo(MBeanClient.local()).stream()
+        ConnectorMetrics.connectorTaskInfo(JndiClient.local()).stream()
             .filter(m -> m.connectorName().equals(name))
             .collect(Collectors.toList());
     Assertions.assertEquals(1, m2.size());
@@ -191,6 +191,35 @@ public class PerfSinkTest {
           Assertions.assertDoesNotThrow(m::offsetCommitAvgTimeMs);
           Assertions.assertDoesNotThrow(m::offsetCommitMaxTimeMs);
           Assertions.assertDoesNotThrow(m::pauseRatio);
+          Assertions.assertDoesNotThrow(m::status);
+        });
+
+    var m3 =
+        ConnectorMetrics.workerConnectorInfo(JndiClient.local()).stream()
+            .filter(m -> m.connectorName().equals(name))
+            .collect(Collectors.toList());
+    Assertions.assertEquals(1, m3.size());
+    m3.forEach(
+        m -> {
+          Assertions.assertDoesNotThrow(m::connectorDestroyedTaskCount);
+          Assertions.assertDoesNotThrow(m::connectorFailedTaskCount);
+          Assertions.assertDoesNotThrow(m::connectorPausedTaskCount);
+          Assertions.assertDoesNotThrow(m::connectorRestartingTaskCount);
+          Assertions.assertDoesNotThrow(m::connectorRunningTaskCount);
+          Assertions.assertDoesNotThrow(m::connectorTotalTaskCount);
+          Assertions.assertDoesNotThrow(m::connectorUnassignedTaskCount);
+        });
+
+    var m4 =
+        ConnectorMetrics.connectorInfo(JndiClient.local()).stream()
+            .filter(m -> m.connectorName().equals(name))
+            .collect(Collectors.toList());
+    Assertions.assertEquals(1, m4.size());
+    m4.forEach(
+        m -> {
+          Assertions.assertEquals(PerfSink.class.getName(), m.connectorClass());
+          Assertions.assertEquals("sink", m.connectorType());
+          Assertions.assertDoesNotThrow(m::connectorVersion);
           Assertions.assertDoesNotThrow(m::status);
         });
   }

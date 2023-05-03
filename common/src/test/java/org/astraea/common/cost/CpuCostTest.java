@@ -16,14 +16,13 @@
  */
 package org.astraea.common.cost;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import org.astraea.common.Utils;
-import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.metrics.collector.MetricCollector;
+import org.astraea.common.metrics.ClusterBean;
+import org.astraea.common.metrics.JndiClient;
+import org.astraea.common.metrics.MetricsTestUtils;
 import org.astraea.common.metrics.platform.OperatingSystemInfo;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -54,26 +53,20 @@ public class CpuCostTest {
 
   @Test
   void testSensor() {
-    var interval = Duration.ofMillis(300);
-    try (MetricCollector collector = MetricCollector.builder().interval(interval).build()) {
-      collector.addMetricSensor(
-          new CpuCost().metricSensor().orElseThrow(),
-          (id, err) -> Assertions.fail(err.getMessage()));
-      collector.registerLocalJmx(0);
+    var f = new CpuCost();
+    var clusterBean =
+        MetricsTestUtils.clusterBean(Map.of(0, JndiClient.local()), f.metricSensor().get());
+    Assertions.assertFalse(
+        clusterBean.brokerMetrics(0, OperatingSystemInfo.class).findAny().isEmpty());
+    Assertions.assertTrue(
+        clusterBean.brokerMetrics(0, OperatingSystemInfo.class).allMatch(Objects::nonNull));
 
-      Utils.sleep(interval);
-
-      Assertions.assertFalse(collector.metrics(OperatingSystemInfo.class).findAny().isEmpty());
-      Assertions.assertTrue(
-          collector.metrics(OperatingSystemInfo.class).allMatch(Objects::nonNull));
-
-      // Test if we can get the value between 0 ~ 1
-      Assertions.assertTrue(
-          collector
-              .metrics(OperatingSystemInfo.class)
-              .allMatch(
-                  OSInfo -> (OSInfo.systemCpuLoad() <= 1.0) && (OSInfo.systemCpuLoad() >= 0.0)));
-    }
+    // Test if we can get the value between 0 ~ 1
+    Assertions.assertTrue(
+        clusterBean
+            .brokerMetrics(0, OperatingSystemInfo.class)
+            .allMatch(
+                OSInfo -> (OSInfo.systemCpuLoad() <= 1.0) && (OSInfo.systemCpuLoad() >= 0.0)));
   }
 
   private static OperatingSystemInfo mockResult(double usage, long createdTimestamp) {

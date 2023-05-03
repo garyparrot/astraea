@@ -16,16 +16,22 @@
  */
 package org.astraea.common;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.astraea.common.cost.CostFunction;
 import org.astraea.common.cost.HasBrokerCost;
+import org.astraea.common.cost.HasMoveCost;
+import org.astraea.common.cost.RecordSizeCost;
+import org.astraea.common.cost.ReplicaLeaderCost;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -162,7 +168,8 @@ public class UtilsTest {
 
     // Cost function class can't be cast to String class
     Assertions.assertThrows(
-        RuntimeException.class, () -> Utils.construct(aClass.getName(), String.class, config));
+        IllegalArgumentException.class,
+        () -> Utils.construct(aClass.getName(), String.class, config));
   }
 
   @Test
@@ -232,7 +239,7 @@ public class UtilsTest {
                 "20",
                 "org.astraea.common.cost.BrokerOutputCost",
                 "1.25"));
-    var ans = Utils.costFunctions(config, HasBrokerCost.class);
+    var ans = Utils.costFunctions(config.raw(), HasBrokerCost.class, config);
     Assertions.assertEquals(2, ans.size());
     for (var entry : ans.entrySet()) {
       if (entry.getKey().getClass().getName().equals("org.astraea.common.cost.BrokerInputCost")) {
@@ -257,6 +264,47 @@ public class UtilsTest {
                 "org.astraea.common.cost.BrokerOutputCost",
                 "1.25"));
     Assertions.assertThrows(
-        IllegalArgumentException.class, () -> Utils.costFunctions(config2, HasBrokerCost.class));
+        IllegalArgumentException.class,
+        () -> Utils.costFunctions(config2.raw(), HasBrokerCost.class, config2));
+
+    // test moveCost
+    var cf =
+        Set.of(
+            "org.astraea.common.cost.RecordSizeCost", "org.astraea.common.cost.ReplicaLeaderCost");
+    var mConfig = Configuration.of(Map.of("maxMigratedSize", "50MB", "maxMigratedLeader", "5"));
+    var mAns = Utils.costFunctions(cf, HasMoveCost.class, mConfig);
+    Assertions.assertEquals(2, mAns.size());
+
+    // test configs
+    Assertions.assertEquals(
+        "50MB",
+        mAns.stream()
+            .filter(c -> c instanceof RecordSizeCost)
+            .map(c -> (RecordSizeCost) c)
+            .findFirst()
+            .get()
+            .config()
+            .string("maxMigratedSize")
+            .get());
+
+    Assertions.assertEquals(
+        "5",
+        mAns.stream()
+            .filter(c -> c instanceof ReplicaLeaderCost)
+            .map(c -> (ReplicaLeaderCost) c)
+            .findFirst()
+            .get()
+            .config()
+            .string("maxMigratedLeader")
+            .get());
+  }
+
+  @Test
+  void testClose() {
+    Assertions.assertDoesNotThrow(() -> Utils.close(null));
+    var count = new AtomicInteger();
+    Closeable obj = count::incrementAndGet;
+    Assertions.assertDoesNotThrow(() -> Utils.close(obj));
+    Assertions.assertEquals(1, count.get());
   }
 }

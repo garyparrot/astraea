@@ -25,13 +25,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.astraea.common.Utils;
 import org.astraea.common.admin.Admin;
-import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.balancer.Balancer;
-import org.astraea.common.cost.MoveCost;
-import org.astraea.common.cost.ReplicaLeaderCost;
 import org.astraea.common.cost.ReplicaLeaderSizeCost;
 import org.astraea.gui.Context;
 import org.astraea.gui.pane.Argument;
@@ -58,17 +55,6 @@ class BalancerNodeTest {
     Assertions.assertEquals(1, costs.size());
     Assertions.assertInstanceOf(
         ReplicaLeaderSizeCost.class, costs.entrySet().iterator().next().getKey());
-  }
-
-  @Test
-  void testMovementConstraint() {
-    Assertions.assertTrue(BalancerNode.movementConstraint(Map.of()).test(MoveCost.EMPTY));
-    Assertions.assertFalse(
-        BalancerNode.movementConstraint(Map.of(BalancerNode.MAX_MIGRATE_LEADER_NUM, "10"))
-            .test(MoveCost.changedReplicaLeaderCount(Map.of(1, 1000))));
-    Assertions.assertTrue(
-        BalancerNode.movementConstraint(Map.of(BalancerNode.MAX_MIGRATE_LEADER_NUM, "10"))
-            .test(MoveCost.changedReplicaLeaderCount(Map.of(1, 5))));
   }
 
   @Test
@@ -160,15 +146,15 @@ class BalancerNodeTest {
                 .size(leaderSize)
                 .path("/tmp/bbb")
                 .build());
-    var beforeClusterInfo = ClusterInfo.of("fake", List.of(), beforeReplicas);
+    var beforeClusterInfo = ClusterInfo.of("fake", List.of(), Map.of(), beforeReplicas);
 
     var results =
         BalancerNode.assignmentResult(
-            beforeClusterInfo,
-            new Balancer.Solution(
-                new ReplicaLeaderCost().clusterCost(beforeClusterInfo, ClusterBean.EMPTY),
-                MoveCost.EMPTY,
-                ClusterInfo.of("fake", allNodes, afterReplicas)));
+            new Balancer.Plan(
+                beforeClusterInfo,
+                () -> 1.0D,
+                ClusterInfo.of("fake", allNodes, Map.of(), afterReplicas),
+                () -> 1.0D));
     Assertions.assertEquals(results.size(), 1);
     Assertions.assertEquals(results.get(0).get("topic"), topic);
     Assertions.assertEquals(results.get(0).get("partition"), 0);

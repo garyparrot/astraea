@@ -16,86 +16,43 @@
  */
 package org.astraea.common.balancer;
 
-import java.time.Duration;
 import java.util.Optional;
+import org.astraea.common.Configuration;
 import org.astraea.common.EnumInfo;
 import org.astraea.common.Utils;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.balancer.algorithms.AlgorithmConfig;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
 import org.astraea.common.balancer.algorithms.SingleStepBalancer;
 import org.astraea.common.cost.ClusterCost;
-import org.astraea.common.cost.MoveCost;
-import org.astraea.common.cost.NoSufficientMetricsException;
 
 public interface Balancer {
 
   /**
-   * Execute {@link Balancer#offer(ClusterInfo, Duration)}. Retry the plan generation if a {@link
-   * NoSufficientMetricsException} exception occurred.
-   */
-  default Plan retryOffer(ClusterInfo currentClusterInfo, Duration timeout) {
-    final var timeoutMs = System.currentTimeMillis() + timeout.toMillis();
-    while (System.currentTimeMillis() < timeoutMs) {
-      try {
-        return offer(currentClusterInfo, Duration.ofMillis(timeoutMs - System.currentTimeMillis()));
-      } catch (NoSufficientMetricsException e) {
-        e.printStackTrace();
-        var remainTimeout = timeoutMs - System.currentTimeMillis();
-        var waitMs = e.suggestedWait().toMillis();
-        if (remainTimeout > waitMs) {
-          Utils.sleep(Duration.ofMillis(waitMs));
-        } else {
-          // This suggested wait time will definitely time out after we woke up
-          throw new RuntimeException(
-              "Execution time will exceeded, "
-                  + "remain: "
-                  + remainTimeout
-                  + "ms, suggestedWait: "
-                  + waitMs
-                  + "ms.",
-              e);
-        }
-      }
-    }
-    throw new RuntimeException("Execution time exceeded: " + timeoutMs);
-  }
-
-  /**
    * @return a rebalance plan
    */
-  Plan offer(ClusterInfo currentClusterInfo, Duration timeout);
-
-  @SuppressWarnings("unchecked")
-  static Balancer create(String classpath, AlgorithmConfig config) {
-    var theClass = Utils.packException(() -> Class.forName(classpath));
-    if (Balancer.class.isAssignableFrom(theClass)) {
-      return create(((Class<? extends Balancer>) theClass), config);
-    } else
-      throw new IllegalArgumentException("Given class is not a balancer: " + theClass.getName());
-  }
-
-  /**
-   * Initialize an instance of specific Balancer implementation
-   *
-   * @param balancerClass the class of the balancer implementation
-   * @param config the algorithm configuration for the new instance
-   * @return a {@link Balancer} instance of the given class
-   */
-  static <T extends Balancer> T create(Class<T> balancerClass, AlgorithmConfig config) {
-    try {
-      // case 0: create the class by the given configuration
-      var constructor = balancerClass.getConstructor(AlgorithmConfig.class);
-      return Utils.packException(() -> constructor.newInstance(config));
-    } catch (NoSuchMethodException e) {
-      // case 1: create the class by empty constructor
-      return Utils.packException(() -> balancerClass.getConstructor().newInstance());
-    }
-  }
+  Optional<Plan> offer(AlgorithmConfig config);
 
   class Plan {
-    final ClusterCost initialClusterCost;
-    final Solution solution;
+    private final ClusterInfo initialClusterInfo;
+    private final ClusterCost initialClusterCost;
+
+    private final ClusterInfo proposal;
+    private final ClusterCost proposalClusterCost;
+
+    public Plan(
+        ClusterInfo initialClusterInfo,
+        ClusterCost initialClusterCost,
+        ClusterInfo proposal,
+        ClusterCost proposalClusterCost) {
+      this.initialClusterInfo = initialClusterInfo;
+      this.initialClusterCost = initialClusterCost;
+      this.proposal = proposal;
+      this.proposalClusterCost = proposalClusterCost;
+    }
+
+    public ClusterInfo initialClusterInfo() {
+      return initialClusterInfo;
+    }
 
     /**
      * The {@link ClusterCost} score of the original {@link ClusterInfo} when this plan is start
@@ -105,26 +62,6 @@ public interface Balancer {
       return initialClusterCost;
     }
 
-    public Optional<Solution> solution() {
-      return Optional.ofNullable(solution);
-    }
-
-    public Plan(ClusterCost initialClusterCost) {
-      this(initialClusterCost, null);
-    }
-
-    public Plan(ClusterCost initialClusterCost, Solution solution) {
-      this.initialClusterCost = initialClusterCost;
-      this.solution = solution;
-    }
-  }
-
-  class Solution {
-
-    final ClusterInfo proposal;
-    final ClusterCost proposalClusterCost;
-    final MoveCost moveCost;
-
     public ClusterInfo proposal() {
       return proposal;
     }
@@ -132,16 +69,6 @@ public interface Balancer {
     /** The {@link ClusterCost} score of the proposed new allocation. */
     public ClusterCost proposalClusterCost() {
       return proposalClusterCost;
-    }
-
-    public MoveCost moveCost() {
-      return moveCost;
-    }
-
-    public Solution(ClusterCost proposalClusterCost, MoveCost moveCost, ClusterInfo proposal) {
-      this.proposal = proposal;
-      this.proposalClusterCost = proposalClusterCost;
-      this.moveCost = moveCost;
     }
   }
 
@@ -160,8 +87,8 @@ public interface Balancer {
       return balancerClass;
     }
 
-    public Balancer create(AlgorithmConfig config) {
-      return Balancer.create(theClass(), config);
+    public Balancer create() {
+      return Utils.construct(theClass(), Configuration.EMPTY);
     }
 
     @Override

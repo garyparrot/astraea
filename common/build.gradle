@@ -17,6 +17,7 @@
 plugins {
     id 'java'
     id 'maven-publish'
+    id "com.google.protobuf" version "0.9.2"
 }
 
 apply from: "$rootDir/gradle/dependencies.gradle"
@@ -41,11 +42,13 @@ dependencies {
     // we don't use slf4j actually, and it is used by kafka so we swallow the log.
     implementation libs["slf4j-nop"]
     implementation libs["opencsv"]
+    implementation libs["commons-math3"]
+    implementation 'com.google.protobuf:protobuf-java:3.22.2'
 }
 
 java {
-    sourceCompatibility = 11
-    targetCompatibility = 11
+    sourceCompatibility = 17
+    targetCompatibility = 17
 }
 
 ext {
@@ -53,6 +56,14 @@ ext {
 }
 
 archivesBaseName = "astraea-common"
+
+protobuf {
+    // Configure the protoc executable
+    protoc {
+        // Download from repositories
+        artifact = 'com.google.protobuf:protoc:3.22.2'
+    }
+}
 
 tasks.named('test') {
     // Use JUnit Platform for unit tests.
@@ -104,6 +115,8 @@ private String exec(String[] args) {
 
 import org.apache.tools.ant.taskdefs.condition.Os
 
+import java.nio.file.Files
+
 private String whoami() {
     try {
         if (Os.isFamily(Os.FAMILY_WINDOWS)) {
@@ -145,8 +158,8 @@ private String version() {
 
 task initializer {
     doLast {
-        def file = new File("$projectDir" + "/src/main/java/org/astraea/common/VersionUtils.java")
-        if (file.exists()) file.delete()
+        def file = java.nio.file.Path.of("$projectDir" + "/src/main/java/org/astraea/common/VersionUtils.java")
+        Files.deleteIfExists(file)
         String code = """package org.astraea.common;
 // DON'T touch this file!!! It is generated dynamically. see common/build.gradle
 public final class VersionUtils {
@@ -157,7 +170,7 @@ public final class VersionUtils {
   private VersionUtils() {}
 }
 """
-        def writer = new FileWriter(file)
+        def writer = Files.newBufferedWriter(file)
         try {
             writer.write(code.replaceAll("\n", System.lineSeparator()))
         } finally {

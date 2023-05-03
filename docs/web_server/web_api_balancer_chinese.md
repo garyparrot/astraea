@@ -12,15 +12,33 @@ POST /balancer
 
 參數
 
-| 名稱                | 說明                                                         | 預設值                                                   |
-|-------------------|------------------------------------------------------------|-------------------------------------------------------|
-| costWeights       | (必填) 指定要優化的目標以及對應權重                                        | 無                                                     |
-| topics            | (選填) 只嘗試搬移指定的 topics                                       | 無，除了內部 topics 以外的都作為候選對象                              |
-| timeout           | (選填) 指定產生時間                                                | 3s                                                    |
-| balancer          | (選填) 欲使用的負載優化計劃搜尋演算法                                       | org.astraea.common.balancer.algorithms.GreedyBalancer |
-| balancerConfig    | (選填) 搜尋演算法的實作細節參數，此為一個 JSON Object 內含一系列的 key/value String | 無                                                     |
- | maxMigratedSize   | (選填) 設定最大可搬移的log size                                      | 無 　                                                   |
- | maxMigratedLeader | (選填) 設定最大可搬移的leader 數量                                     | 無                                                     |
+| 名稱           | 說明                                                         | 預設值                                                       |
+| -------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| clusterCosts   | (必填) 指定要優化的目標以及對應權重                          | 無                                                           |
+| timeout        | (選填) 指定產生時間                                          | 3s                                                           |
+| balancer       | (選填) 欲使用的負載優化計劃搜尋演算法                        | org.astraea.common.balancer.algorithms.GreedyBalancer        |
+| balancerConfig | (選填) 搜尋演算法的實作細節參數，此為一個 JSON Object 內含一系列的 key/value String | 無                                                           |
+| moveCosts      | (必填) 指定要計算的各項搬移成本                              | "org.astraea.common.cost.ReplicaLeaderCost", "org.astraea.common.cost.RecordSizeCost", "org.astraea.common.cost.ReplicaNumberCost", "org.astraea.common.cost.ReplicaLeaderSizeCost" |
+| costConfig     | (選填) 針對各個搬移成本做限制，讓，此為一個 JSON Object 內含一系列的 key/value String | 無                                                           |
+
+官方記錄的 balancerConfig:
+
+`balancerConfig` 是 balancer 實作開放給使用者設定的內部演算法行為參數，我們有針對常用情境的 balancer config 規範出一些固定的名稱，
+參數是否支援要看 Balancer 實作本身。當指定的參數不被 balancer 實作支援時，該實作可能會丟出錯誤提示使用者。
+
+| config key                     | config value                                                                                                      |
+|--------------------------------|-------------------------------------------------------------------------------------------------------------------| 
+| balancer.allowed.topics.regex  | 一個正則表達式，表達允許進行搬移操作的 topic 名稱，當沒有指定的時候，代表沒有任何限制，所有 topic 都可以做搬移                                                    |
+| balancer.allowed.brokers.regex | 一個正則表達式，表達允許進行搬移操作的 broker 編號，當沒有指定的時候，代表沒有任何限制，所有 broker 都可以做負載更動。當有指定時，只有那些 broker 編號有匹配此正則表達式的 broker 能進行負載的更動 |
+
+costConfig: 
+
+| config key                  | config value                  |
+| --------------------------- | ----------------------------- |
+| max.migrated.size           | 設定最大可搬移的資料量        |
+| max.migrated.leader.number  | 設定最大可搬移的leader 數量   |
+| max.migrated.replica.number | 設定最大可搬移的replica 數量  |
+| max.migrated.leader.size    | 設定最大可搬移的leader 資料量 |
 
 目前支援的 Cost Function
 
@@ -42,19 +60,27 @@ cURL 範例
 ```shell
 curl -X POST http://localhost:8001/balancer \
     -H "Content-Type: application/json" \
-    -d '{ 
-      "timeout": "10s" ,
-      "balancer": "org.astraea.common.balancer.algorithms.GreedyBalancer",
-      "balancerConfig": {
-        "shuffle.tweaker.min.step": "1",
-        "shuffle.tweaker.max.step": "5"
-      },
-      "costWeights": [
-        { "cost": "org.astraea.common.cost.ReplicaLeaderSizeCost", "weight": 1 },
-        { "cost": "org.astraea.common.cost.ReplicaLeaderCost", "weight": 1 }
-      ],
-      "maxMigratedSize": "300MB",
-      "maxMigratedLeader": 3
+    -d '{
+        	"timeout": "5s",
+  			"balancer": "org.astraea.common.balancer.algorithms.GreedyBalancer",
+  			"balancerConfig": {
+  			"shuffle.tweaker.min.step": "1",
+  			"shuffle.tweaker.max.step": "10"
+  		},
+  		"clusterCosts": [
+  		{
+  			"cost": "org.astraea.common.cost.ReplicaLeaderCost",
+  			"weight": 1
+  		}
+  		],
+  		"moveCosts": [
+  			"org.astraea.common.cost.ReplicaLeaderCost",
+  			"org.astraea.common.cost.RecordSizeCost"
+  		],
+  		"costConfig": {
+  			"max.migrated.size": "500MB",
+  			"max.migrated.leader.number": 5
+  		}
     }'
 ```
 
@@ -84,14 +110,22 @@ cURL 範例
 ```shell
 curl -X PUT http://localhost:8001/balancer \
     -H "Content-Type: application/json" \
-    -d '{ "id": "46ecf6e7-aa28-4f72-b1b6-a788056c122a" }'
+    -d '{ 
+      "id": "46ecf6e7-aa28-4f72-b1b6-a788056c122a",
+      "executor": "org.astraea.common.balancer.executor.StraightPlanExecutor",
+      "executorConfig": {
+        "enableDataDirectoryMigration": false
+      }
+    }'
 ```
 
 JSON Request 格式
 
-| 名稱  | 說明                 | 預設值 |
-|-----|--------------------|-----|
-| id  | (必填) 欲執行的負載優化計劃之編號 | 無   |
+| 名稱             | 說明                                                           | 預設值                                                       |
+|----------------|--------------------------------------------------------------|-----------------------------------------------------------|
+| id             | (必填) 欲執行的負載優化計劃之編號                                           | 無                                                         |
+| executor       | (選填) 欲使用的計劃執行演算法                                             | org.astraea.common.balancer.executor.StraightPlanExecutor |
+| executorConfig | (選填) 計劃執行演算法的實作細節參數，此為一個 JSON Object 內含一系列的 key/value String | 無                                                         |
 
 JSON Response 範例
 
@@ -102,6 +136,18 @@ JSON Response 範例
 ```
 
 後續能用特定 [API](#查詢負載優化計劃的狀態) 來查詢負載優化計劃的執行進度。
+
+> ##### 進行 Data Directory 負載轉移的風險
+> Kafka 本身支援在同一個節點進行 Data Directory 之間的負載轉移，但在 Apache Kafka Version 2.2.0 
+> 到 3.5.0 之間存在一個 [Bug](https://issues.apache.org/jira/browse/KAFKA-9087)，這個 Bug 
+> 會使這類的負載轉移操作有機率卡住無法結束。 由於這個風險的存在，預設上 `StraightPlanExecutor`
+> 的實作會忽略這種同節點的負載搬移行為。這樣做雖然可以避免觸發 Bug，但由於部分計劃內容被忽略沒有套用，
+> 最後負載優化的結果可能會和預期的結果失真。這個行為可以透過設定覆蓋，使用者可以透過設定 `executorConfig` 
+> 的 `enableDataDirectoryMigration` 設定為 `true` 來啟動 Data Directory 之間的負載轉移。
+> 
+> 由於這個錯誤是有機率性的觸發，如果你賭一把進行 Data Directory 的轉移，但事後真的不幸觸發錯誤，
+> 可以參考[故障排除文件](../troubleshooting.md#Balancer-的-Data-Directory-負載轉移失敗)，
+> 那邊有觸發這個 bug 時的一些症狀和解決方案。
 
 > ##### 一個叢集同時間只能執行一個負載優化計劃
 > 嘗試對一個叢集同時套用多個負載優化計劃會導致意外的結果，因此 `PUT /balancer` 被設計為：
@@ -191,7 +237,7 @@ JSON Response 範例
 }
 ```
 
-```json
+```json5
 {
   "id": "46ecf6e7-aa28-4f72-b1b6-a788056c122a",
   "phase": "Searched",

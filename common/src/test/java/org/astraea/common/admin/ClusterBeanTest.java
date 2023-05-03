@@ -28,6 +28,7 @@ import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.astraea.common.Utils;
 import org.astraea.common.metrics.BeanObject;
+import org.astraea.common.metrics.ClusterBean;
 import org.astraea.common.metrics.HasBeanObject;
 import org.astraea.common.metrics.broker.HasGauge;
 import org.astraea.common.metrics.broker.LogMetrics;
@@ -94,12 +95,12 @@ class ClusterBeanTest {
         ClusterBean.of(
             Map.of(
                 1,
-                List.of(HasGauge.ofLong(testBeanObjectWithPartition1)),
+                List.of(HasGauge.of(testBeanObjectWithPartition1)),
                 2,
                 List.of(
-                    HasGauge.ofLong(testBeanObjectWithoutPartition),
-                    HasGauge.ofLong(testBeanObjectWithPartition2),
-                    HasGauge.ofLong(testBeanObjectWithPartition3))));
+                    HasGauge.of(testBeanObjectWithoutPartition),
+                    HasGauge.of(testBeanObjectWithPartition2),
+                    HasGauge.of(testBeanObjectWithPartition3))));
     // test all
     Assertions.assertEquals(2, clusterBean.all().size());
     Assertions.assertEquals(1, clusterBean.all().get(1).size());
@@ -340,5 +341,15 @@ class ClusterBeanTest {
         Set.of(),
         cb.brokerTopicMetrics(BrokerTopic.of(1, fakeTopics.get(0)), JvmMemory.class)
             .collect(Collectors.toSet()));
+  }
+
+  @Test
+  void testMaskedClusterBean() {
+    FakeJVMBean fakeBean = () -> new BeanObject("", Map.of(), Map.of());
+    var clusterBean = ClusterBean.of(Map.of(1, Set.of(fakeBean), 2, Set.of(fakeBean)));
+    Assertions.assertEquals(2, clusterBean.all().size());
+
+    var maskedClusterBean = ClusterBean.masked(clusterBean, node -> node != 2);
+    Assertions.assertEquals(1, maskedClusterBean.all().size());
   }
 }

@@ -17,14 +17,13 @@
 package org.astraea.common.cost;
 
 import java.lang.management.MemoryUsage;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import org.astraea.common.Utils;
-import org.astraea.common.admin.ClusterBean;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.metrics.collector.MetricCollector;
+import org.astraea.common.metrics.ClusterBean;
+import org.astraea.common.metrics.JndiClient;
+import org.astraea.common.metrics.MetricsTestUtils;
 import org.astraea.common.metrics.platform.HasJvmMemory;
 import org.astraea.common.metrics.platform.JvmMemory;
 import org.junit.jupiter.api.Assertions;
@@ -53,25 +52,16 @@ public class MemoryCostTest {
 
   @Test
   void testSensor() {
-    var interval = Duration.ofMillis(300);
-    try (MetricCollector collector = MetricCollector.builder().interval(interval).build()) {
-      collector.addMetricSensor(
-          new MemoryCost().metricSensor().orElseThrow(),
-          (id, err) -> Assertions.fail(err.getMessage()));
-      collector.registerLocalJmx(0);
+    var f = new MemoryCost();
+    var clusterBean =
+        MetricsTestUtils.clusterBean(Map.of(0, JndiClient.local()), f.metricSensor().get());
+    Assertions.assertTrue(clusterBean.brokerMetrics(0, JvmMemory.class).allMatch(Objects::nonNull));
 
-      Utils.sleep(interval);
-
-      Assertions.assertFalse(collector.metricSensors().isEmpty());
-      Assertions.assertFalse(collector.listIdentities().isEmpty());
-      Assertions.assertTrue(collector.metrics(JvmMemory.class).allMatch(Objects::nonNull));
-
-      // Test if we can get "used memory" and "max memory".
-      Assertions.assertTrue(
-          collector
-              .metrics(JvmMemory.class)
-              .allMatch(mem -> mem.heapMemoryUsage().getUsed() <= mem.heapMemoryUsage().getMax()));
-    }
+    // Test if we can get "used memory" and "max memory".
+    Assertions.assertTrue(
+        clusterBean
+            .brokerMetrics(0, JvmMemory.class)
+            .allMatch(mem -> mem.heapMemoryUsage().getUsed() <= mem.heapMemoryUsage().getMax()));
   }
 
   private static HasJvmMemory mockResult(long used, long max, long createdTimestamp) {

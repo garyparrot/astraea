@@ -17,9 +17,15 @@
 package org.astraea.common.admin;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import org.astraea.common.Utils;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 
 public class ClusterInfoTest {
@@ -48,63 +54,8 @@ public class ClusterInfoTest {
             .stream()
             .flatMap(Optional::stream)
             .collect(Collectors.toUnmodifiableList()),
+        Map.of(),
         replicas);
-  }
-
-  @Test
-  void testReplicaLeadersAndMaskedCluster() {
-    var replicas =
-        List.of(
-            Replica.builder()
-                .topic("test-1")
-                .partition(0)
-                .nodeInfo(NodeInfo.of(0, "", -1))
-                .lag(-1)
-                .size(-1)
-                .isLeader(true)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("/data-folder-01")
-                .build(),
-            Replica.builder()
-                .topic("test-1")
-                .partition(1)
-                .nodeInfo(NodeInfo.of(1, "", -1))
-                .lag(-1)
-                .size(-1)
-                .isLeader(false)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("/data-folder-02")
-                .build(),
-            Replica.builder()
-                .topic("test-1")
-                .partition(2)
-                .nodeInfo(NodeInfo.of(0, "", -1))
-                .lag(-1)
-                .size(-1)
-                .isLeader(false)
-                .isSync(true)
-                .isFuture(false)
-                .isOffline(false)
-                .isPreferredLeader(false)
-                .path("/data-folder-01")
-                .build());
-
-    var clusterInfo = ClusterInfoTest.of(replicas);
-    var maskedClusterInfoHasReplicas = ClusterInfo.masked(clusterInfo, t -> t.equals("test-1"));
-    var maskedClusterInfoNoReplicas =
-        ClusterInfo.masked(clusterInfo, t -> t.equals("No topic name the same."));
-
-    Assertions.assertNotEquals(0, maskedClusterInfoHasReplicas.nodes().size());
-    Assertions.assertNotEquals(0, maskedClusterInfoHasReplicas.replicas().size());
-    Assertions.assertEquals(0, maskedClusterInfoNoReplicas.replicas().size());
-
-    Assertions.assertNotEquals(0, clusterInfo.replicaLeaders(BrokerTopic.of(0, "test-1")).size());
   }
 
   @Test
@@ -112,5 +63,51 @@ public class ClusterInfoTest {
     var emptyCluster = ClusterInfo.empty();
     Assertions.assertEquals(0, emptyCluster.nodes().size());
     Assertions.assertEquals(0, emptyCluster.replicaStream().count());
+  }
+
+  @RepeatedTest(3)
+  void testTopics() {
+    var nodes =
+        IntStream.range(0, ThreadLocalRandom.current().nextInt(3, 9))
+            .boxed()
+            .collect(Collectors.toUnmodifiableSet());
+    var topics =
+        IntStream.range(0, ThreadLocalRandom.current().nextInt(0, 100))
+            .mapToObj(x -> Utils.randomString())
+            .collect(Collectors.toUnmodifiableSet());
+    var builder =
+        ClusterInfo.builder()
+            .addNode(nodes)
+            .addFolders(
+                nodes.stream()
+                    .collect(Collectors.toUnmodifiableMap(x -> x, x -> Set.of("/folder"))));
+    topics.forEach(
+        t ->
+            builder.addTopic(
+                t,
+                ThreadLocalRandom.current().nextInt(1, 10),
+                (short) ThreadLocalRandom.current().nextInt(1, nodes.size())));
+
+    var cluster = builder.build();
+    Assertions.assertEquals(topics, cluster.topics().keySet());
+    Assertions.assertEquals(topics, cluster.topicNames());
+  }
+
+  @Test
+  void testReturnCollectionUnmodifiable() {
+    var cluster = ClusterInfo.empty();
+    var replica =
+        Replica.builder()
+            .topic("topic")
+            .partition(0)
+            .nodeInfo(NodeInfo.of(0, "", -1))
+            .path("f")
+            .buildLeader();
+    Assertions.assertThrows(Exception.class, () -> cluster.replicas().add(replica));
+    Assertions.assertThrows(Exception.class, () -> cluster.replicas("t").add(replica));
+    Assertions.assertThrows(
+        Exception.class, () -> cluster.replicas(TopicPartition.of("t", 0)).add(replica));
+    Assertions.assertThrows(
+        Exception.class, () -> cluster.replicas(TopicPartitionReplica.of("t", 0, 10)).add(replica));
   }
 }
