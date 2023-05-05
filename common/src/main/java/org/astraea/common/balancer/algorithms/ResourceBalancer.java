@@ -59,7 +59,7 @@ public class ResourceBalancer implements Balancer {
     if (proposalCost.value() > initialCost.value() || moveCost.overflow()) return Optional.empty();
     else
       return Optional.of(
-          new Plan(initialClusterInfo, initialCost, proposalClusterInfo, proposalCost, moveCost));
+          new Plan(initialClusterInfo, initialCost, proposalClusterInfo, proposalCost));
   }
 
   static class AlgorithmContext {

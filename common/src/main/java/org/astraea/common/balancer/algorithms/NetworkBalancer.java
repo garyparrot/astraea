@@ -109,7 +109,7 @@ public class NetworkBalancer implements Balancer {
 
     System.out.println("NetworkBalancer Initial: " + sourceCost.value());
     System.out.println("NetworkBalancer Final: " + targetCost.value());
-    return Optional.of(new Plan(clusterInfo, sourceCost, targetClusterInfo, targetCost, moveCost));
+    return Optional.of(new Plan(clusterInfo, sourceCost, targetClusterInfo, targetCost));
   }
 
   private static class Bandwidth {

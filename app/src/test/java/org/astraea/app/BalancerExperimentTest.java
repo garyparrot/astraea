@@ -41,11 +41,11 @@ import org.astraea.common.balancer.Balancer;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
 import org.astraea.common.balancer.algorithms.ResourceBalancer;
 import org.astraea.common.balancer.executor.StraightPlanExecutor;
+import org.astraea.common.cost.CostFunction;
 import org.astraea.common.cost.HasClusterCost;
 import org.astraea.common.cost.NetworkEgressCost;
 import org.astraea.common.cost.NetworkIngressCost;
 import org.astraea.common.cost.NoSufficientMetricsException;
-import org.astraea.common.cost.ReplicaLeaderCost;
 import org.astraea.common.cost.ReplicaNumberCost;
 import org.astraea.common.cost.ResourceUsage;
 import org.astraea.common.metrics.ClusterBean;
@@ -225,10 +225,9 @@ public class BalancerExperimentTest {
               .sensorsSupplier(
                   () ->
                       costMap.keySet().stream()
-                          .filter(x -> x.metricSensor().isPresent())
                           .collect(
                               Collectors.toUnmodifiableMap(
-                                  x -> x.metricSensor().orElseThrow(), x -> (i0, i1) -> {})))
+                                  CostFunction::metricSensor, x -> (i0, i1) -> {})))
               .localReceiver(
                   () ->
                       admin
