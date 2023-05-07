@@ -39,6 +39,10 @@ import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.balancer.AlgorithmConfig;
 import org.astraea.common.balancer.Balancer;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
+import org.astraea.common.balancer.algorithms.GreedyResourceBalancer;
+import org.astraea.common.balancer.algorithms.GreedyResourceBalancer2;
+import org.astraea.common.balancer.algorithms.GreedyResourceBalancer3;
+import org.astraea.common.balancer.algorithms.GreedyRestartBalancer;
 import org.astraea.common.balancer.algorithms.ResourceBalancer;
 import org.astraea.common.balancer.executor.StraightPlanExecutor;
 import org.astraea.common.cost.CostFunction;
@@ -46,6 +50,7 @@ import org.astraea.common.cost.HasClusterCost;
 import org.astraea.common.cost.NetworkEgressCost;
 import org.astraea.common.cost.NetworkIngressCost;
 import org.astraea.common.cost.NoSufficientMetricsException;
+import org.astraea.common.cost.ReplicaLeaderCost;
 import org.astraea.common.cost.ReplicaNumberCost;
 import org.astraea.common.cost.ResourceUsage;
 import org.astraea.common.metrics.ClusterBean;
@@ -65,49 +70,6 @@ public class BalancerExperimentTest {
 
   public static void main(String[] args) {
     new BalancerExperimentTest().testProfiling();
-  }
-
-  @Test
-  void test() {
-    try (var stream0 = new FileInputStream(fileName0);
-        var stream1 = new FileInputStream(fileName1)) {
-      System.out.println("Serialize ClusterInfo");
-      ClusterInfo clusterInfo = ClusterInfoSerializer.deserialize(stream0);
-      System.out.println("Serialize ClusterBean");
-      ClusterBean clusterBean = ClusterBeanSerializer.deserialize(stream1);
-      var hints =
-          List.of(
-              new NetworkIngressCost(Configuration.EMPTY)
-                  .clusterResourceHint(clusterInfo, clusterBean)
-                  .get(0),
-              new NetworkEgressCost(Configuration.EMPTY)
-                  .clusterResourceHint(clusterInfo, clusterBean)
-                  .get(0));
-      var counter = new LongAdder();
-      var start = System.nanoTime();
-      while (true) {
-        var usage =
-            ResourceUsage.EMPTY.mergeUsage(
-                clusterInfo.replicas().stream()
-                    .flatMap(
-                        replica ->
-                            hints.stream()
-                                .map(hint -> hint.evaluateClusterResourceUsage(replica))));
-        if (usage.hashCode() == 0) System.out.print("");
-        // for (Replica replica : clusterInfo.replicas()) {
-        //   hints.forEach(hint -> usage.mergeUsage(hint.evaluateClusterResourceUsage(replica)));
-        // }
-        counter.increment();
-        if (ThreadLocalRandom.current().nextInt(0, 1000) == 0) {
-          System.out.println(
-              "Rate: "
-                  + (counter.sum()) / (Duration.ofNanos(System.nanoTime() - start).toSeconds())
-                  + " op/s");
-        }
-      }
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
   }
 
   @Disabled
@@ -131,7 +93,7 @@ public class BalancerExperimentTest {
               new NetworkEgressCost(Configuration.EMPTY), 3.0);
       var costFunction = HasClusterCost.of(costMap);
 
-      var balancer = new ResourceBalancer();
+      var balancer = new GreedyResourceBalancer3();
       var result =
           BalancerBenchmark.costProfiling()
               .setClusterInfo(clusterInfo)
