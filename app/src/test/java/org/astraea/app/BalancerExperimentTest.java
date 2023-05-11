@@ -91,13 +91,13 @@ public class BalancerExperimentTest {
     try (var admin = Admin.of(realCluster);
         var stream0 = new FileInputStream(fileName0);
         var stream1 = new FileInputStream(fileName1)) {
-      ClusterInfo clusterInfo =
-          admin.topicNames(false).thenCompose(admin::clusterInfo).toCompletableFuture().join();
+      // ClusterInfo clusterInfo =
+      //     admin.topicNames(false).thenCompose(admin::clusterInfo).toCompletableFuture().join();
 
-      // System.out.println("Serialize ClusterInfo");
-      // ClusterInfo clusterInfo = ClusterInfoSerializer.deserialize(stream0);
-      // System.out.println("Serialize ClusterBean");
-      // ClusterBean clusterBean = ClusterBeanSerializer.deserialize(stream1);
+      System.out.println("Serialize ClusterInfo");
+      ClusterInfo clusterInfo = ClusterInfoSerializer.deserialize(stream0);
+      System.out.println("Serialize ClusterBean");
+      ClusterBean clusterBean = ClusterBeanSerializer.deserialize(stream1);
       System.out.println("Done!");
 
       Map<HasClusterCost, Double> costMap =
@@ -109,13 +109,13 @@ public class BalancerExperimentTest {
                    Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
       var costFunction = HasClusterCost.of(costMap);
 
-      var balancer = new ResourceBalancer();
+      var balancer = new GreedyBalancer();
       var result =
           BalancerBenchmark.costProfiling()
               .setClusterInfo(clusterInfo)
-              .setClusterBean(testUseableClusterBean(costFunction, moveCost))
+              .setClusterBean(clusterBean)
               .setBalancer(balancer)
-              .setExecutionTimeout(Duration.ofSeconds(180))
+              .setExecutionTimeout(Duration.ofSeconds(90))
               .setAlgorithmConfig(
                   AlgorithmConfig.builder()
                       .clusterCost(costFunction)
