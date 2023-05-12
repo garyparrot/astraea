@@ -49,7 +49,6 @@ import org.astraea.common.balancer.algorithms.GreedyBalancer;
 import org.astraea.common.balancer.algorithms.GreedyResourceBalancer;
 import org.astraea.common.balancer.algorithms.GreedyResourceBalancer2;
 import org.astraea.common.balancer.algorithms.GreedyResourceBalancer3;
-import org.astraea.common.balancer.algorithms.GreedyRestartBalancer;
 import org.astraea.common.balancer.algorithms.ResourceBalancer;
 import org.astraea.common.balancer.executor.StraightPlanExecutor;
 import org.astraea.common.cost.CostFunction;
