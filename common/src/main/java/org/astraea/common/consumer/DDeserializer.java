@@ -191,7 +191,7 @@ public interface DDeserializer<T> {
 
         @Override
         public Config config() {
-          return Config.of(config);
+          return new Config(config);
         }
 
         @Override

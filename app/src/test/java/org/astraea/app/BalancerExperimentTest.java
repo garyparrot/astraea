@@ -45,6 +45,7 @@ import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.TopicPartition;
 import org.astraea.common.balancer.AlgorithmConfig;
 import org.astraea.common.balancer.Balancer;
+import org.astraea.common.balancer.BalancerConfigs;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
 import org.astraea.common.balancer.algorithms.GreedyResourceBalancer;
 import org.astraea.common.balancer.algorithms.GreedyResourceBalancer2;
@@ -103,9 +104,10 @@ public class BalancerExperimentTest {
           Map.of(
               new NetworkIngressCost(Configuration.EMPTY), 3.0,
               new NetworkEgressCost(Configuration.EMPTY), 3.0);
-      HasMoveCost moveCost = new ReplicaLeaderCost(
-               Configuration.of(
-                   Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
+      HasMoveCost moveCost = HasMoveCost.EMPTY;
+          // = new ReplicaLeaderCost(
+          //      Configuration.of(
+          //          Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
       var costFunction = HasClusterCost.of(costMap);
 
       var balancer = new GreedyBalancer();
@@ -119,6 +121,7 @@ public class BalancerExperimentTest {
                   AlgorithmConfig.builder()
                       .clusterCost(costFunction)
                       .moveCost(moveCost)
+                      .config(BalancerConfigs.BALANCER_BROKER_BALANCING_MODE, "0:demoted,1:demoted,2:demoted")
                       .build())
               .start()
               .toCompletableFuture()
@@ -202,7 +205,7 @@ public class BalancerExperimentTest {
                           .collect(
                               Collectors.toUnmodifiableMap(
                                   CostFunction::metricSensor, x -> (i0, i1) -> {})))
-              .localReceiver(
+              .receivers(List.of(MetricStore.Receiver.local(
                   () ->
                       admin
                           .brokers()
@@ -212,7 +215,8 @@ public class BalancerExperimentTest {
                                       .collect(
                                           Collectors.toUnmodifiableMap(
                                               NodeInfo::id,
-                                              (Broker b) -> JndiClient.of(b.host(), 16926)))))
+                                              (Broker b) -> JndiClient.of(b.host(), 16926))))
+              )))
               .build()) {
         var clusterBean = (ClusterBean) null;
         var balancer = new GreedyBalancer();
@@ -279,8 +283,7 @@ public class BalancerExperimentTest {
 
       try (var metricStore =
                MetricStore.builder()
-                   .beanExpiration(Duration.ofSeconds(180))
-                   .localReceiver(
+                   .receivers(List.of(MetricStore.Receiver.local(
                        () ->
                            admin
                                .brokers()
@@ -290,7 +293,8 @@ public class BalancerExperimentTest {
                                            .collect(
                                                Collectors.toUnmodifiableMap(
                                                    NodeInfo::id,
-                                                   (Broker b) -> JndiClient.of(b.host(), 16926)))))
+                                                   (Broker b) -> JndiClient.of(b.host(), 16926))))
+                   )))   .beanExpiration(Duration.ofSeconds(180))
                    .sensorsSupplier(() -> Map.of(sensors, (x,y) -> {}))
                    .build()) {
         var clusterBean = (ClusterBean) null;
