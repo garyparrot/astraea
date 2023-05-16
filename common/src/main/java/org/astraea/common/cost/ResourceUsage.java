@@ -20,19 +20,15 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Stream;
 
-/** A collection of resource usage. */
-public class ResourceUsage {
+/**
+ * A collection of resource usage.
+ */
+public record ResourceUsage(Map<String, Double> usage) {
 
   public static final ResourceUsage EMPTY = new ResourceUsage(Map.of());
 
-  private final Map<String, Double> usage;
-
   public ResourceUsage(Map<String, Double> usage) {
     this.usage = Map.copyOf(usage);
-  }
-
-  public Map<String, Double> usage() {
-    return usage;
   }
 
   public ResourceUsage mergeUsage(Stream<ResourceUsage> usages) {
@@ -47,10 +43,5 @@ public class ResourceUsage {
     usages.forEach(
         usage -> usage.usage().forEach((k, v) -> sum.put(k, sum.getOrDefault(k, 0.0) - v)));
     return new ResourceUsage(sum);
-  }
-
-  @Override
-  public String toString() {
-    return "ResourceUsage{" + "usage=" + usage + '}';
   }
 }

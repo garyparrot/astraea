@@ -19,6 +19,7 @@ package org.astraea.common.balancer.algorithms;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -179,8 +180,11 @@ public class ResourceBalancer implements Balancer {
       } else {
         var nextReplica = originalReplicas.get(next);
 
+        // var solutionDeduplication = new HashSet<ResourceUsage>();
+
         List<Map.Entry<ResourceUsage, Tweak>> possibleTweaks =
             tweaks(currentAllocation, nextReplica).stream()
+                // list possible tweaks
                 .map(
                     tweaks -> {
                       var usageAfterTweaked =
@@ -192,9 +196,14 @@ public class ResourceBalancer implements Balancer {
                       return Map.entry(usageAfterTweaked, tweaks);
                     })
                 .filter(e -> feasibleUsage.test(e.getKey()))
+                // Solution Deduplication
+                // .dropWhile(e -> solutionDeduplication.contains(e.getKey()))
+                // .peek(e -> solutionDeduplication.add(e.getKey()))
+                // Sort by idealness
                 .sorted(
                     Map.Entry.comparingByKey(
                         usageIdealnessDominationComparator2(currentResourceUsage, this.usageHints)))
+                // Limit the branch factor
                 .limit(trials(next))
                 .toList();
 
@@ -290,8 +299,6 @@ public class ResourceBalancer implements Balancer {
               .flatMap(
                   b ->
                       b.dataFolders().stream()
-                          // TODO: add data folder back once the framework is ready to deduplicate
-                          // the similar resource usage among tweaks
                           .limit(1)
                           .map(
                               folder ->
@@ -304,7 +311,6 @@ public class ResourceBalancer implements Balancer {
                                               .build()))))
               .toList();
 
-      // TODO: add data folder back once the framework is ready to deduplicate the similar resource
       // usage among tweaks
       return Stream.of(noMovement, leadership, interBrokerMovement)
           .flatMap(Collection::stream)

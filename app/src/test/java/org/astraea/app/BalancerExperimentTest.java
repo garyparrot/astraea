@@ -41,6 +41,7 @@ import org.astraea.common.balancer.AlgorithmConfig;
 import org.astraea.common.balancer.Balancer;
 import org.astraea.common.balancer.BalancerConfigs;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
+import org.astraea.common.balancer.algorithms.ResourceBalancer;
 import org.astraea.common.balancer.executor.StraightPlanExecutor;
 import org.astraea.common.cost.CostFunction;
 import org.astraea.common.cost.HasClusterCost;
@@ -97,7 +98,7 @@ public class BalancerExperimentTest {
       //          Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
       var costFunction = HasClusterCost.of(costMap);
 
-      var balancer = new GreedyBalancer();
+      var balancer = new ResourceBalancer();
       var result =
           BalancerBenchmark.costProfiling()
               .setClusterInfo(clusterInfo)
@@ -108,9 +109,6 @@ public class BalancerExperimentTest {
                   AlgorithmConfig.builder()
                       .clusterCost(costFunction)
                       .moveCost(moveCost)
-                      .config(
-                          BalancerConfigs.BALANCER_BROKER_BALANCING_MODE,
-                          "0:demoted,1:demoted,2:demoted")
                       .build())
               .start()
               .toCompletableFuture()
