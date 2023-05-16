@@ -257,7 +257,7 @@ public class ResourceBalancer implements Balancer {
           .toList();
     }
 
-    private Set<Tweak> tweaks(
+    private List<Tweak> tweaks(
         Map<TopicPartition, List<Replica>> currentAllocation, Replica replica) {
       // 1. no change
       var noMovement = List.of(new Tweak(List.of(), List.of()));
@@ -314,9 +314,9 @@ public class ResourceBalancer implements Balancer {
               .toList();
 
       // usage among tweaks
-      return Stream.of(noMovement, dataFolderMovement, leadership, interBrokerMovement)
+      return Stream.of(noMovement, leadership, interBrokerMovement)
           .flatMap(Collection::stream)
-          .collect(Collectors.toUnmodifiableSet());
+          .toList();
     }
 
     private Stream<ResourceUsage> evaluateReplicaUsage(Replica replica) {
