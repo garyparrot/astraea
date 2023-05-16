@@ -16,8 +16,19 @@
  */
 package org.astraea.common.balancer.algorithms;
 
-import org.apache.commons.math3.distribution.EnumeratedDistribution;
-import org.apache.commons.math3.util.Pair;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.LongAdder;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.TopicPartition;
@@ -26,22 +37,6 @@ import org.astraea.common.balancer.Balancer;
 import org.astraea.common.cost.ResourceUsage;
 import org.astraea.common.cost.ResourceUsageHint;
 import org.astraea.common.metrics.ClusterBean;
-
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.LongAdder;
-import java.util.function.Consumer;
-import java.util.function.Function;
-import java.util.function.Predicate;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
-import java.util.stream.Stream;
 
 public class GreedyResourceBalancer3 implements Balancer {
 
@@ -156,38 +151,44 @@ public class GreedyResourceBalancer3 implements Balancer {
               .collect(
                   Collectors.toUnmodifiableMap(
                       tp -> tp, tp -> (List<Replica>) new ArrayList<>(sourceCluster.replicas(tp))));
-      var currentAllocation = initialAllocation
-          .entrySet()
-          .stream()
-          .collect(Collectors.toMap(
-              Map.Entry::getKey,
-              x -> (List<Replica>) new ArrayList<>(x.getValue())));
+      var currentAllocation =
+          initialAllocation.entrySet().stream()
+              .collect(
+                  Collectors.toMap(
+                      Map.Entry::getKey, x -> (List<Replica>) new ArrayList<>(x.getValue())));
       var currentResourceUsage = clusterResourceUsage;
 
       while (System.currentTimeMillis() < deadline) {
 
         var cur = currentResourceUsage;
         var bestTweak =
-            currentAllocation.values()
-                .stream()
-                .flatMap(r -> r.stream().map(rr -> tweaks(currentAllocation, rr)).flatMap(Collection::stream)
-                    .map(tweaks -> {
-                      var usageAfterTweaked =
-                          cur
-                              .mergeUsage(
-                                  tweaks.toReplace.stream().flatMap(this::evaluateReplicaUsage))
-                              .removeUsage(
-                                  tweaks.toRemove.stream().flatMap(this::evaluateReplicaUsage));
-                      return Map.entry(usageAfterTweaked, tweaks);
-                    })
-                    .filter(e -> feasibleUsage.test(e.getKey()))
-                ).min(Map.Entry.comparingByKey(usageIdealnessDominationComparator2(currentResourceUsage, this.usageHints)));
+            currentAllocation.values().stream()
+                .flatMap(
+                    r ->
+                        r.stream()
+                            .map(rr -> tweaks(currentAllocation, rr))
+                            .flatMap(Collection::stream)
+                            .map(
+                                tweaks -> {
+                                  var usageAfterTweaked =
+                                      cur.mergeUsage(
+                                              tweaks.toReplace.stream()
+                                                  .flatMap(this::evaluateReplicaUsage))
+                                          .removeUsage(
+                                              tweaks.toRemove.stream()
+                                                  .flatMap(this::evaluateReplicaUsage));
+                                  return Map.entry(usageAfterTweaked, tweaks);
+                                })
+                            .filter(e -> feasibleUsage.test(e.getKey())))
+                .min(
+                    Map.Entry.comparingByKey(
+                        usageIdealnessDominationComparator2(
+                            currentResourceUsage, this.usageHints)));
 
-        if(bestTweak.isEmpty() || deadEndCount.sum() > 3) {
+        if (bestTweak.isEmpty() || deadEndCount.sum() > 3) {
           currentResourceUsage = clusterResourceUsage;
           currentAllocation.clear();
-          initialAllocation
-              .forEach((k, v) -> currentAllocation.put(k, new ArrayList<>(v)));
+          initialAllocation.forEach((k, v) -> currentAllocation.put(k, new ArrayList<>(v)));
           System.out.println("Resetting");
           deadEndCount.reset();
           continue;
@@ -207,7 +208,8 @@ public class GreedyResourceBalancer3 implements Balancer {
         tweaks.toReplace.forEach(
             replica -> currentAllocation.get(replica.topicPartition()).add(replica));
 
-        updateAnswer.apply(currentAllocation.values().stream().flatMap(Collection::stream).toList());
+        updateAnswer.apply(
+            currentAllocation.values().stream().flatMap(Collection::stream).toList());
       }
 
       return bestAllocation.get();

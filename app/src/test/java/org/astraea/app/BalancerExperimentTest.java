@@ -26,13 +26,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Scanner;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.atomic.LongAdder;
-import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
-import java.util.stream.Stream;
-
 import org.astraea.balancer.bench.BalancerBenchmark;
 import org.astraea.common.ByteUtils;
 import org.astraea.common.Configuration;
@@ -47,21 +41,14 @@ import org.astraea.common.balancer.AlgorithmConfig;
 import org.astraea.common.balancer.Balancer;
 import org.astraea.common.balancer.BalancerConfigs;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
-import org.astraea.common.balancer.algorithms.GreedyResourceBalancer;
-import org.astraea.common.balancer.algorithms.GreedyResourceBalancer2;
-import org.astraea.common.balancer.algorithms.GreedyResourceBalancer3;
-import org.astraea.common.balancer.algorithms.ResourceBalancer;
 import org.astraea.common.balancer.executor.StraightPlanExecutor;
 import org.astraea.common.cost.CostFunction;
 import org.astraea.common.cost.HasClusterCost;
 import org.astraea.common.cost.HasMoveCost;
-import org.astraea.common.cost.MoveCost;
 import org.astraea.common.cost.NetworkEgressCost;
 import org.astraea.common.cost.NetworkIngressCost;
 import org.astraea.common.cost.NoSufficientMetricsException;
-import org.astraea.common.cost.ReplicaLeaderCost;
 import org.astraea.common.cost.ReplicaNumberCost;
-import org.astraea.common.cost.ResourceUsage;
 import org.astraea.common.metrics.ClusterBean;
 import org.astraea.common.metrics.ClusterBeanSerializer;
 import org.astraea.common.metrics.ClusterInfoSerializer;
@@ -105,9 +92,9 @@ public class BalancerExperimentTest {
               new NetworkIngressCost(Configuration.EMPTY), 3.0,
               new NetworkEgressCost(Configuration.EMPTY), 3.0);
       HasMoveCost moveCost = HasMoveCost.EMPTY;
-          // = new ReplicaLeaderCost(
-          //      Configuration.of(
-          //          Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
+      // = new ReplicaLeaderCost(
+      //      Configuration.of(
+      //          Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
       var costFunction = HasClusterCost.of(costMap);
 
       var balancer = new GreedyBalancer();
@@ -121,7 +108,9 @@ public class BalancerExperimentTest {
                   AlgorithmConfig.builder()
                       .clusterCost(costFunction)
                       .moveCost(moveCost)
-                      .config(BalancerConfigs.BALANCER_BROKER_BALANCING_MODE, "0:demoted,1:demoted,2:demoted")
+                      .config(
+                          BalancerConfigs.BALANCER_BROKER_BALANCING_MODE,
+                          "0:demoted,1:demoted,2:demoted")
                       .build())
               .start()
               .toCompletableFuture()
@@ -205,18 +194,20 @@ public class BalancerExperimentTest {
                           .collect(
                               Collectors.toUnmodifiableMap(
                                   CostFunction::metricSensor, x -> (i0, i1) -> {})))
-              .receivers(List.of(MetricStore.Receiver.local(
-                  () ->
-                      admin
-                          .brokers()
-                          .thenApply(
-                              (brokers) ->
-                                  brokers.stream()
-                                      .collect(
-                                          Collectors.toUnmodifiableMap(
-                                              NodeInfo::id,
-                                              (Broker b) -> JndiClient.of(b.host(), 16926))))
-              )))
+              .receivers(
+                  List.of(
+                      MetricStore.Receiver.local(
+                          () ->
+                              admin
+                                  .brokers()
+                                  .thenApply(
+                                      (brokers) ->
+                                          brokers.stream()
+                                              .collect(
+                                                  Collectors.toUnmodifiableMap(
+                                                      NodeInfo::id,
+                                                      (Broker b) ->
+                                                          JndiClient.of(b.host(), 16926)))))))
               .build()) {
         var clusterBean = (ClusterBean) null;
         var balancer = new GreedyBalancer();
@@ -282,21 +273,24 @@ public class BalancerExperimentTest {
       var sensors = MetricSensor.of(List.of(costFunction.metricSensor(), moveCost.metricSensor()));
 
       try (var metricStore =
-               MetricStore.builder()
-                   .receivers(List.of(MetricStore.Receiver.local(
-                       () ->
-                           admin
-                               .brokers()
-                               .thenApply(
-                                   (brokers) ->
-                                       brokers.stream()
-                                           .collect(
-                                               Collectors.toUnmodifiableMap(
-                                                   NodeInfo::id,
-                                                   (Broker b) -> JndiClient.of(b.host(), 16926))))
-                   )))   .beanExpiration(Duration.ofSeconds(180))
-                   .sensorsSupplier(() -> Map.of(sensors, (x,y) -> {}))
-                   .build()) {
+          MetricStore.builder()
+              .receivers(
+                  List.of(
+                      MetricStore.Receiver.local(
+                          () ->
+                              admin
+                                  .brokers()
+                                  .thenApply(
+                                      (brokers) ->
+                                          brokers.stream()
+                                              .collect(
+                                                  Collectors.toUnmodifiableMap(
+                                                      NodeInfo::id,
+                                                      (Broker b) ->
+                                                          JndiClient.of(b.host(), 16926)))))))
+              .beanExpiration(Duration.ofSeconds(180))
+              .sensorsSupplier(() -> Map.of(sensors, (x, y) -> {}))
+              .build()) {
         var clusterBean = (ClusterBean) null;
         var balancer = new GreedyBalancer();
 
@@ -335,25 +329,23 @@ public class BalancerExperimentTest {
   @Disabled
   @Test
   void testSerialization() {
-    try (var service = Service.builder()
-        .numberOfBrokers(3)
-        .brokerConfigs(Map.of(BrokerConfigs.LOG_RETENTION_BYTES_CONFIG, "5566"))
-        .build()) {
+    try (var service =
+        Service.builder()
+            .numberOfBrokers(3)
+            .brokerConfigs(Map.of(BrokerConfigs.LOG_RETENTION_BYTES_CONFIG, "5566"))
+            .build()) {
       try (var admin = Admin.of(realCluster)) {
-        var clusterInfo = admin.topicNames(false)
-            .thenCompose(admin::clusterInfo)
-            .toCompletableFuture()
-            .join();
+        var clusterInfo =
+            admin.topicNames(false).thenCompose(admin::clusterInfo).toCompletableFuture().join();
 
         byte[] serialized = ByteUtils.toBytes(clusterInfo);
         ClusterInfo deserialized = ByteUtils.readClusterInfo(serialized);
 
         Assertions.assertEquals(clusterInfo.topics().keySet(), deserialized.topics().keySet());
-        for (String topic: clusterInfo.topics().keySet()) {
+        for (String topic : clusterInfo.topics().keySet()) {
           Assertions.assertEquals(
               clusterInfo.topics().get(topic).topicPartitions(),
-              deserialized.topics().get(topic).topicPartitions()
-          );
+              deserialized.topics().get(topic).topicPartitions());
           Assertions.assertEquals(
               clusterInfo.topics().get(topic).config().raw(),
               deserialized.topics().get(topic).config().raw());

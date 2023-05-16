@@ -16,22 +16,9 @@
  */
 package org.astraea.common.balancer.algorithms;
 
-import org.apache.commons.math3.distribution.EnumeratedDistribution;
-import org.apache.commons.math3.util.Pair;
-import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.admin.Replica;
-import org.astraea.common.admin.TopicPartition;
-import org.astraea.common.balancer.AlgorithmConfig;
-import org.astraea.common.balancer.Balancer;
-import org.astraea.common.cost.ResourceUsage;
-import org.astraea.common.cost.ResourceUsageHint;
-import org.astraea.common.metrics.ClusterBean;
-
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -44,6 +31,16 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import org.apache.commons.math3.distribution.EnumeratedDistribution;
+import org.apache.commons.math3.util.Pair;
+import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.admin.Replica;
+import org.astraea.common.admin.TopicPartition;
+import org.astraea.common.balancer.AlgorithmConfig;
+import org.astraea.common.balancer.Balancer;
+import org.astraea.common.cost.ResourceUsage;
+import org.astraea.common.cost.ResourceUsageHint;
+import org.astraea.common.metrics.ClusterBean;
 
 public class GreedyResourceBalancer2 implements Balancer {
 
@@ -156,30 +153,30 @@ public class GreedyResourceBalancer2 implements Balancer {
               .collect(
                   Collectors.toUnmodifiableMap(
                       tp -> tp, tp -> (List<Replica>) new ArrayList<>(sourceCluster.replicas(tp))));
-      var currentAllocation = initialAllocation
-          .entrySet()
-          .stream()
-          .collect(Collectors.toMap(
-              Map.Entry::getKey,
-              x -> (List<Replica>) new ArrayList<>(x.getValue())));
+      var currentAllocation =
+          initialAllocation.entrySet().stream()
+              .collect(
+                  Collectors.toMap(
+                      Map.Entry::getKey, x -> (List<Replica>) new ArrayList<>(x.getValue())));
       var currentResourceUsage = clusterResourceUsage;
 
       var tps = List.copyOf(currentAllocation.keySet());
-      var partitionWeight = initialAllocation.entrySet()
-          .stream()
-          .collect(Collectors.toMap(
-              Map.Entry::getKey,
-              x -> 1.0));
-      var partitionDistribution = new EnumeratedDistribution<>(partitionWeight.entrySet()
-          .stream()
-          .map(e -> Pair.create(e.getKey(), e.getValue()))
-          .toList());
+      var partitionWeight =
+          initialAllocation.entrySet().stream()
+              .collect(Collectors.toMap(Map.Entry::getKey, x -> 1.0));
+      var partitionDistribution =
+          new EnumeratedDistribution<>(
+              partitionWeight.entrySet().stream()
+                  .map(e -> Pair.create(e.getKey(), e.getValue()))
+                  .toList());
 
       while (System.currentTimeMillis() < deadline) {
         var tp = partitionDistribution.sample();
         var r = currentAllocation.get(tp);
-        var nextReplica = currentAllocation.get(tps.get(ThreadLocalRandom.current().nextInt(tps.size())))
-            .get(ThreadLocalRandom.current().nextInt(r.size()));
+        var nextReplica =
+            currentAllocation
+                .get(tps.get(ThreadLocalRandom.current().nextInt(tps.size())))
+                .get(ThreadLocalRandom.current().nextInt(r.size()));
 
         var cur = currentResourceUsage;
         var bestTweak =
@@ -187,28 +184,29 @@ public class GreedyResourceBalancer2 implements Balancer {
                 .map(
                     tweaks -> {
                       var usageAfterTweaked =
-                         cur
-                              .mergeUsage(
+                          cur.mergeUsage(
                                   tweaks.toReplace.stream().flatMap(this::evaluateReplicaUsage))
                               .removeUsage(
                                   tweaks.toRemove.stream().flatMap(this::evaluateReplicaUsage));
                       return Map.entry(usageAfterTweaked, tweaks);
                     })
                 .filter(e -> feasibleUsage.test(e.getKey()))
-                .min(Map.Entry.comparingByKey(
-                    usageIdealnessDominationComparator2(currentResourceUsage, this.usageHints)));
+                .min(
+                    Map.Entry.comparingByKey(
+                        usageIdealnessDominationComparator2(
+                            currentResourceUsage, this.usageHints)));
 
-        if(bestTweak.isEmpty()) {
+        if (bestTweak.isEmpty()) {
           // update weight
-          partitionDistribution = new EnumeratedDistribution<>(partitionWeight.entrySet()
-              .stream()
-              .map(e -> Pair.create(e.getKey(), e.getValue()))
-              .toList());
+          partitionDistribution =
+              new EnumeratedDistribution<>(
+                  partitionWeight.entrySet().stream()
+                      .map(e -> Pair.create(e.getKey(), e.getValue()))
+                      .toList());
 
           currentResourceUsage = clusterResourceUsage;
           currentAllocation.clear();
-          initialAllocation
-              .forEach((k, v) -> currentAllocation.put(k, new ArrayList<>(v)));
+          initialAllocation.forEach((k, v) -> currentAllocation.put(k, new ArrayList<>(v)));
           System.out.println("Resetting");
           continue;
         }
@@ -216,12 +214,12 @@ public class GreedyResourceBalancer2 implements Balancer {
         // update weight
         var baseUsage = currentResourceUsage;
         var newUsage = bestTweak.get().getKey();
-        this.usageHints.forEach(hint -> {
+        this.usageHints.forEach(
+            hint -> {
               var oriIdeal = hint.idealness(baseUsage);
               var newIdeal = hint.idealness(newUsage);
               partitionWeight.put(tp, partitionWeight.get(tp) + (oriIdeal - newIdeal));
             });
-
 
         currentResourceUsage = bestTweak.get().getKey();
         var tweaks = bestTweak.get().getValue();
@@ -237,7 +235,8 @@ public class GreedyResourceBalancer2 implements Balancer {
         tweaks.toReplace.forEach(
             replica -> currentAllocation.get(replica.topicPartition()).add(replica));
 
-        updateAnswer.accept(currentAllocation.values().stream().flatMap(Collection::stream).toList());
+        updateAnswer.accept(
+            currentAllocation.values().stream().flatMap(Collection::stream).toList());
       }
 
       return bestAllocation.get();

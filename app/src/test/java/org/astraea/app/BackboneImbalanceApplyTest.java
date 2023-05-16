@@ -53,7 +53,9 @@ public class BackboneImbalanceApplyTest {
               Map.ofEntries(
                   Map.entry(BackboneImbalanceScenario.CONFIG_PERF_ZIPFIAN_EXPONENT, "1.6"),
                   Map.entry(BackboneImbalanceScenario.CONFIG_PERF_KEY_TABLE_SEED, "0"),
-                  Map.entry(BackboneImbalanceScenario.CONFIG_TOPIC_CONSUMER_FANOUT_SERIES, "1,1,1,1,1,1,1,1,1,1,1,2,2,2,3,4"),
+                  Map.entry(
+                      BackboneImbalanceScenario.CONFIG_TOPIC_CONSUMER_FANOUT_SERIES,
+                      "1,1,1,1,1,1,1,1,1,1,1,2,2,2,3,4"),
                   Map.entry(
                       BackboneImbalanceScenario.CONFIG_PERF_CLIENT_COUNT,
                       Integer.toString(clients.size()))));

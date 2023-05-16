@@ -118,7 +118,8 @@ public class ReplicaLeaderCost implements HasBrokerCost, HasClusterCost, HasMove
                         .map(
                             originLeader ->
                                 target.isPreferredLeader()
-                                        && ((originLeader.nodeInfo().id() != target.nodeInfo().id()) || !originLeader.path().equals(target.path()))
+                                        && ((originLeader.nodeInfo().id() != target.nodeInfo().id())
+                                            || !originLeader.path().equals(target.path()))
                                     ? 1.0
                                     : 0.0)
                         .orElseThrow()));

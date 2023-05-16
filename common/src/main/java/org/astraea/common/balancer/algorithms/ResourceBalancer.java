@@ -86,11 +86,9 @@ public class ResourceBalancer implements Balancer {
                   config.clusterCostFunction().clusterResourceHint(sourceCluster, clusterBean),
                   config.moveCostFunction().movementResourceHint(sourceCluster, clusterBean))
               .flatMap(Collection::stream)
-              .collect(Collectors.toUnmodifiableList());
+              .toList();
 
       // replicas are ordered by their resource usage, we tweak the most heavy resource first
-      // TODO: add support for balancer.allowed.topics.regex
-      // TODO: add support for balancer.allowed.brokers.regex
       this.orderedReplicas =
           sourceCluster.topicPartitions().stream()
               .filter(tp -> BalancerUtils.eligiblePartition(sourceCluster.replicas(tp)))
@@ -102,7 +100,7 @@ public class ResourceBalancer implements Balancer {
                           ResourceUsage.EMPTY.mergeUsage(
                               usageHints.stream()
                                   .map(hint -> hint.evaluateReplicaResourceUsage(r)))))
-              .collect(Collectors.toUnmodifiableList());
+              .toList();
 
       this.feasibleUsage =
           this.usageHints.stream()
@@ -177,9 +175,7 @@ public class ResourceBalancer implements Balancer {
       if (originalReplicas.size() == next) {
         // if this is a complete answer, call update function and return
         updateAnswer.accept(
-            currentAllocation.entrySet().stream()
-                .flatMap(x -> x.getValue().stream())
-                .collect(Collectors.toUnmodifiableList()));
+            currentAllocation.entrySet().stream().flatMap(x -> x.getValue().stream()).toList());
       } else {
         var nextReplica = originalReplicas.get(next);
 
@@ -199,9 +195,8 @@ public class ResourceBalancer implements Balancer {
                 .sorted(
                     Map.Entry.comparingByKey(
                         usageIdealnessDominationComparator2(currentResourceUsage, this.usageHints)))
-                // TODO: maybe change to probability style
                 .limit(trials(next))
-                .collect(Collectors.toUnmodifiableList());
+                .toList();
 
         for (Map.Entry<ResourceUsage, Tweak> entry : possibleTweaks) {
           // the tweak we are going to use
@@ -247,7 +242,7 @@ public class ResourceBalancer implements Balancer {
                   sourceCluster.brokerFolders().get(broker.id()).stream()
                       .map(path -> Replica.builder(replica).nodeInfo(broker).path(path).build()))
           .map(newReplica -> new Tweak(List.of(), List.of(newReplica)))
-          .collect(Collectors.toUnmodifiableList());
+          .toList();
     }
 
     private List<Tweak> tweaks(
@@ -275,7 +270,7 @@ public class ResourceBalancer implements Balancer {
 
                     return new Tweak(toRemove, toReplace);
                   })
-              .collect(Collectors.toUnmodifiableList());
+              .toList();
 
       // 3. move to other data-dir at the same broker
       var dataFolderMovement =
@@ -286,7 +281,7 @@ public class ResourceBalancer implements Balancer {
                       new Tweak(
                           List.of(replica),
                           List.of(Replica.builder(replica).path(newFolder).build())))
-              .collect(Collectors.toUnmodifiableList());
+              .toList();
 
       // 4. move to other brokers/data-dirs
       var interBrokerMovement =
@@ -307,18 +302,50 @@ public class ResourceBalancer implements Balancer {
                                               .nodeInfo(b)
                                               .path(folder.path())
                                               .build()))))
-              .collect(Collectors.toUnmodifiableList());
+              .toList();
 
       // TODO: add data folder back once the framework is ready to deduplicate the similar resource
       // usage among tweaks
       return Stream.of(noMovement, leadership, interBrokerMovement)
           .flatMap(Collection::stream)
-          .collect(Collectors.toUnmodifiableList());
+          .toList();
     }
 
     private Stream<ResourceUsage> evaluateReplicaUsage(Replica replica) {
       return this.usageHints.stream().map(hint -> hint.evaluateClusterResourceUsage(replica));
     }
+
+    static Comparator<Replica> usageDominationComparator(
+        List<ResourceUsageHint> usageHints, Function<Replica, ResourceUsage> replicaResourceUsage) {
+      var cmp =
+          Comparator.<ResourceUsage>comparingDouble(
+              u -> usageHints.stream().mapToDouble(c -> c.importance(u)).average().orElseThrow());
+
+      return Comparator.comparing(replicaResourceUsage, cmp);
+    }
+
+    static Comparator<ResourceUsage> usageIdealnessDominationComparator2(
+        ResourceUsage baseUsage, List<ResourceUsageHint> usageHints) {
+      var baseIdealness = usageHints.stream().map(hint -> hint.idealness(baseUsage)).toList();
+
+      return (lhs, rhs) -> {
+        var idealnessVectorL =
+            IntStream.range(0, usageHints.size())
+                .mapToObj(index -> usageHints.get(index).idealness(lhs) - baseIdealness.get(index))
+                .toList();
+        var idealnessVectorR =
+            IntStream.range(0, usageHints.size())
+                .mapToObj(index -> usageHints.get(index).idealness(rhs) - baseIdealness.get(index))
+                .toList();
+
+        var sumL = idealnessVectorL.stream().mapToDouble(x -> x).sum();
+        var sumR = idealnessVectorR.stream().mapToDouble(x -> x).sum();
+
+        return Double.compare(sumL, sumR);
+      };
+    }
+
+    private record Tweak(List<Replica> toRemove, List<Replica> toReplace) {}
 
     // `static Comparator<Replica> usageDominationComparator(
     // `    Function<Replica, ResourceUsage> usageHints) {
@@ -348,15 +375,6 @@ public class ResourceBalancer implements Balancer {
     // `  };
     // `}
 
-    static Comparator<Replica> usageDominationComparator(
-        List<ResourceUsageHint> usageHints, Function<Replica, ResourceUsage> replicaResourceUsage) {
-      var cmp =
-          Comparator.<ResourceUsage>comparingDouble(
-              u -> usageHints.stream().mapToDouble(c -> c.importance(u)).average().orElseThrow());
-
-      return Comparator.comparing(replicaResourceUsage, cmp);
-    }
-
     // static Comparator<ResourceUsage> usageIdealnessDominationComparator(
     //     ResourceUsage base, List<ResourceUsageHint> usageHints) {
     //   var comparators =
@@ -384,39 +402,5 @@ public class ResourceBalancer implements Balancer {
     //           usageHints.stream().mapToDouble(ca ->
     // ca.idealness(usage)).average().orElseThrow());
     // }
-
-    static Comparator<ResourceUsage> usageIdealnessDominationComparator2(
-        ResourceUsage baseUsage, List<ResourceUsageHint> usageHints) {
-      var baseIdealness =
-          usageHints.stream()
-              .map(hint -> hint.idealness(baseUsage))
-              .collect(Collectors.toUnmodifiableList());
-
-      return (lhs, rhs) -> {
-        var idealnessVectorL =
-            IntStream.range(0, usageHints.size())
-                .mapToObj(index -> usageHints.get(index).idealness(lhs) - baseIdealness.get(index))
-                .collect(Collectors.toUnmodifiableList());
-        var idealnessVectorR =
-            IntStream.range(0, usageHints.size())
-                .mapToObj(index -> usageHints.get(index).idealness(rhs) - baseIdealness.get(index))
-                .collect(Collectors.toUnmodifiableList());
-
-        var sumL = idealnessVectorL.stream().mapToDouble(x -> x).sum();
-        var sumR = idealnessVectorR.stream().mapToDouble(x -> x).sum();
-
-        return Double.compare(sumL, sumR);
-      };
-    }
-  }
-
-  private static class Tweak {
-    private final List<Replica> toRemove;
-    private final List<Replica> toReplace;
-
-    private Tweak(List<Replica> toRemove, List<Replica> toReplace) {
-      this.toRemove = toRemove;
-      this.toReplace = toReplace;
-    }
   }
 }
