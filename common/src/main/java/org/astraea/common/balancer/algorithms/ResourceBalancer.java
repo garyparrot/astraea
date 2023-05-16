@@ -23,6 +23,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -180,7 +183,7 @@ public class ResourceBalancer implements Balancer {
       } else {
         var nextReplica = originalReplicas.get(next);
 
-        // var solutionDeduplication = new HashSet<ResourceUsage>();
+        var solutionDeduplication = new HashSet<ResourceUsage>();
 
         List<Map.Entry<ResourceUsage, Tweak>> possibleTweaks =
             tweaks(currentAllocation, nextReplica).stream()
@@ -197,8 +200,8 @@ public class ResourceBalancer implements Balancer {
                     })
                 .filter(e -> feasibleUsage.test(e.getKey()))
                 // Solution Deduplication
-                // .dropWhile(e -> solutionDeduplication.contains(e.getKey()))
-                // .peek(e -> solutionDeduplication.add(e.getKey()))
+                .filter(e -> !solutionDeduplication.contains(e.getKey()))
+                .peek(e -> solutionDeduplication.add(e.getKey()))
                 // Sort by idealness
                 .sorted(
                     Map.Entry.comparingByKey(
@@ -254,7 +257,7 @@ public class ResourceBalancer implements Balancer {
           .toList();
     }
 
-    private List<Tweak> tweaks(
+    private Set<Tweak> tweaks(
         Map<TopicPartition, List<Replica>> currentAllocation, Replica replica) {
       // 1. no change
       var noMovement = List.of(new Tweak(List.of(), List.of()));
@@ -299,7 +302,6 @@ public class ResourceBalancer implements Balancer {
               .flatMap(
                   b ->
                       b.dataFolders().stream()
-                          .limit(1)
                           .map(
                               folder ->
                                   new Tweak(
@@ -312,9 +314,9 @@ public class ResourceBalancer implements Balancer {
               .toList();
 
       // usage among tweaks
-      return Stream.of(noMovement, leadership, interBrokerMovement)
+      return Stream.of(noMovement, dataFolderMovement, leadership, interBrokerMovement)
           .flatMap(Collection::stream)
-          .toList();
+          .collect(Collectors.toUnmodifiableSet());
     }
 
     private Stream<ResourceUsage> evaluateReplicaUsage(Replica replica) {

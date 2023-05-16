@@ -49,6 +49,7 @@ import org.astraea.common.cost.HasMoveCost;
 import org.astraea.common.cost.NetworkEgressCost;
 import org.astraea.common.cost.NetworkIngressCost;
 import org.astraea.common.cost.NoSufficientMetricsException;
+import org.astraea.common.cost.ReplicaLeaderCost;
 import org.astraea.common.cost.ReplicaNumberCost;
 import org.astraea.common.metrics.ClusterBean;
 import org.astraea.common.metrics.ClusterBeanSerializer;
@@ -92,10 +93,10 @@ public class BalancerExperimentTest {
           Map.of(
               new NetworkIngressCost(Configuration.EMPTY), 3.0,
               new NetworkEgressCost(Configuration.EMPTY), 3.0);
-      HasMoveCost moveCost = HasMoveCost.EMPTY;
-      // = new ReplicaLeaderCost(
-      //      Configuration.of(
-      //          Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
+      HasMoveCost moveCost =
+       new ReplicaLeaderCost(
+           Configuration.of(
+               Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
       var costFunction = HasClusterCost.of(costMap);
 
       var balancer = new ResourceBalancer();
@@ -104,7 +105,7 @@ public class BalancerExperimentTest {
               .setClusterInfo(clusterInfo)
               .setClusterBean(clusterBean)
               .setBalancer(balancer)
-              .setExecutionTimeout(Duration.ofSeconds(90))
+              .setExecutionTimeout(Duration.ofSeconds(180))
               .setAlgorithmConfig(
                   AlgorithmConfig.builder()
                       .clusterCost(costFunction)
