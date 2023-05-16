@@ -23,9 +23,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -205,7 +202,7 @@ public class ResourceBalancer implements Balancer {
                 // Sort by idealness
                 .sorted(
                     Map.Entry.comparingByKey(
-                        usageIdealnessDominationComparator2(currentResourceUsage, this.usageHints)))
+                        usageIdealnessComparator(currentResourceUsage, this.usageHints)))
                 // Limit the branch factor
                 .limit(trials(next))
                 .toList();
@@ -332,25 +329,14 @@ public class ResourceBalancer implements Balancer {
       return Comparator.comparing(replicaResourceUsage, cmp);
     }
 
-    static Comparator<ResourceUsage> usageIdealnessDominationComparator2(
+    static Comparator<ResourceUsage> usageIdealnessComparator(
         ResourceUsage baseUsage, List<ResourceUsageHint> usageHints) {
       var baseIdealness = usageHints.stream().map(hint -> hint.idealness(baseUsage)).toList();
 
-      return (lhs, rhs) -> {
-        var idealnessVectorL =
-            IntStream.range(0, usageHints.size())
-                .mapToObj(index -> usageHints.get(index).idealness(lhs) - baseIdealness.get(index))
-                .toList();
-        var idealnessVectorR =
-            IntStream.range(0, usageHints.size())
-                .mapToObj(index -> usageHints.get(index).idealness(rhs) - baseIdealness.get(index))
-                .toList();
-
-        var sumL = idealnessVectorL.stream().mapToDouble(x -> x).sum();
-        var sumR = idealnessVectorR.stream().mapToDouble(x -> x).sum();
-
-        return Double.compare(sumL, sumR);
-      };
+      return Comparator.comparingDouble(usage ->
+              IntStream.range(0, usageHints.size())
+                  .mapToDouble(index -> usageHints.get(index).idealness(usage) - baseIdealness.get(index))
+                  .sum());
     }
 
     private record Tweak(List<Replica> toRemove, List<Replica> toReplace) {}
