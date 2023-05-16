@@ -314,7 +314,7 @@ public class ResourceBalancer implements Balancer {
               .toList();
 
       // usage among tweaks
-      return Stream.of(noMovement, leadership, interBrokerMovement)
+      return Stream.of(noMovement, leadership, interBrokerMovement, dataFolderMovement)
           .flatMap(Collection::stream)
           .toList();
     }
