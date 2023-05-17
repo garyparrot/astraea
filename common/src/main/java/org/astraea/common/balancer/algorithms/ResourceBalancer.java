@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -147,14 +148,12 @@ public class ResourceBalancer implements Balancer {
             }
           };
 
-      // TODO: the recursion might overflow the stack under large number of replicas. use stack
-      //  instead.
       var currentAllocation =
           sourceCluster.topicPartitions().stream()
               .collect(
                   Collectors.toUnmodifiableMap(
                       tp -> tp, tp -> (List<Replica>) new ArrayList<>(sourceCluster.replicas(tp))));
-      search(updateAnswer, 0, orderedReplicas, currentAllocation, clusterResourceUsage);
+      stackSearch(updateAnswer, orderedReplicas, currentAllocation, clusterResourceUsage);
 
       return bestAllocation.get();
     }
@@ -166,82 +165,81 @@ public class ResourceBalancer implements Balancer {
       else return 1;
     }
 
-    private void search(
+    private void stackSearch(
         Consumer<List<Replica>> updateAnswer,
-        int next,
-        List<Replica> originalReplicas,
+        List<Replica> replicas,
         Map<TopicPartition, List<Replica>> currentAllocation,
-        ResourceUsage currentResourceUsage) {
-      if (System.currentTimeMillis() > deadline) return;
-      if (originalReplicas.size() == next) {
-        // if this is a complete answer, call update function and return
-        updateAnswer.accept(
-            currentAllocation.entrySet().stream().flatMap(x -> x.getValue().stream()).toList());
-      } else {
-        var nextReplica = originalReplicas.get(next);
+        ResourceUsage initialResourceUsage) {
+      record ResourceAndTweak(ResourceUsage usage, Tweak tweak) {}
+      var SearchUtils =
+          new Object() {
+            Iterator<ResourceAndTweak> tweaks(
+                Replica replica, int branch, ResourceUsage currentUsage) {
+              var deduplication = new HashSet<ResourceUsage>();
+              return AlgorithmContext.this.tweaks(currentAllocation, replica).stream()
+                  .map(
+                      tweaks -> {
+                        var usageAfterTweaked =
+                            currentUsage
+                                .mergeUsage(
+                                    tweaks.toReplace.stream()
+                                        .flatMap(AlgorithmContext.this::evaluateReplicaUsage))
+                                .removeUsage(
+                                    tweaks.toRemove.stream()
+                                        .flatMap(AlgorithmContext.this::evaluateReplicaUsage));
+                        return new ResourceAndTweak(usageAfterTweaked, tweaks);
+                      })
+                  .filter(rat -> feasibleUsage.test(rat.usage))
+                  .filter(rat -> !deduplication.contains(rat.usage))
+                  .peek(rat -> deduplication.add(rat.usage))
+                  .sorted(
+                      Comparator.comparing(
+                          ResourceAndTweak::usage,
+                          usageIdealnessComparator(currentUsage, AlgorithmContext.this.usageHints)))
+                  .limit(branch)
+                  .iterator();
+            }
+          };
+      var permutations = new ArrayList<Iterator<ResourceAndTweak>>();
+      var usedTweaks = new ArrayList<ResourceAndTweak>();
 
-        var solutionDeduplication = new HashSet<ResourceUsage>();
+      // add first tweaks here
+      permutations.add(SearchUtils.tweaks(replicas.get(0), trials(0), initialResourceUsage));
 
-        List<Map.Entry<ResourceUsage, Tweak>> possibleTweaks =
-            tweaks(currentAllocation, nextReplica).stream()
-                // list possible tweaks
-                .map(
-                    tweaks -> {
-                      var usageAfterTweaked =
-                          currentResourceUsage
-                              .mergeUsage(
-                                  tweaks.toReplace.stream().flatMap(this::evaluateReplicaUsage))
-                              .removeUsage(
-                                  tweaks.toRemove.stream().flatMap(this::evaluateReplicaUsage));
-                      return Map.entry(usageAfterTweaked, tweaks);
-                    })
-                .filter(e -> feasibleUsage.test(e.getKey()))
-                // Solution Deduplication
-                .filter(e -> !solutionDeduplication.contains(e.getKey()))
-                .peek(e -> solutionDeduplication.add(e.getKey()))
-                // Sort by idealness
-                .sorted(
-                    Map.Entry.comparingByKey(
-                        usageIdealnessComparator(currentResourceUsage, this.usageHints)))
-                // Limit the branch factor
-                .limit(trials(next))
-                .toList();
-
-        for (Map.Entry<ResourceUsage, Tweak> entry : possibleTweaks) {
-          // the tweak we are going to use
-          var newResourceUsage = entry.getKey();
-          var tweaks = entry.getValue();
-
-          // replace the replicas
-          tweaks.toRemove.stream()
-              .filter(replica -> !currentAllocation.get(replica.topicPartition()).remove(replica))
-              .forEach(
-                  nonexistReplica -> {
-                    throw new IllegalStateException(
-                        "Attempt to remove "
-                            + nonexistReplica.topicPartitionReplica()
-                            + " but it does not exists");
-                  });
-          tweaks.toReplace.forEach(
-              replica -> currentAllocation.get(replica.topicPartition()).add(replica));
-
-          // start next search stage
-          search(updateAnswer, next + 1, originalReplicas, currentAllocation, newResourceUsage);
-
-          // undo the tweak, restore the previous state
-          tweaks.toReplace.stream()
-              .filter(replica -> !currentAllocation.get(replica.topicPartition()).remove(replica))
-              .forEach(
-                  nonexistReplica -> {
-                    throw new IllegalStateException(
-                        "Attempt to remove "
-                            + nonexistReplica.topicPartitionReplica()
-                            + " but it does not exists");
-                  });
-          tweaks.toRemove.forEach(
-              replica -> currentAllocation.get(replica.topicPartition()).add(replica));
+      Restart:
+      do {
+        // discard all empty iterators at stack head
+        while (!permutations.get(permutations.size() - 1).hasNext()) {
+          var rat = usedTweaks.remove(usedTweaks.size() - 1);
+          rat.tweak.toReplace.forEach(r -> currentAllocation.get(r.topicPartition()).remove(r));
+          rat.tweak.toRemove.forEach(r -> currentAllocation.get(r.topicPartition()).add(r));
+          permutations.remove(permutations.size() - 1);
         }
-      }
+
+        // keep applying tweak & adding iterator until the last replica
+        while (usedTweaks.size() < permutations.size()) {
+          int head = usedTweaks.size();
+          var iter = permutations.get(head);
+          if (!iter.hasNext()) continue Restart;
+          var rat = iter.next();
+          rat.tweak.toRemove.forEach(r -> currentAllocation.get(r.topicPartition()).remove(r));
+          rat.tweak.toReplace.forEach(r -> currentAllocation.get(r.topicPartition()).add(r));
+          usedTweaks.add(rat);
+
+          // push new iterators for all replicas
+          if (usedTweaks.size() == permutations.size() && permutations.size() < replicas.size())
+            permutations.add(
+                SearchUtils.tweaks(
+                    replicas.get(permutations.size()), trials(permutations.size()), rat.usage));
+        }
+
+        // in the end, we will have a complete answer, update result.
+        updateAnswer.accept(
+            currentAllocation.values().stream().flatMap(Collection::stream).toList());
+        var rat = usedTweaks.remove(usedTweaks.size() - 1);
+        rat.tweak.toReplace.forEach(r -> currentAllocation.get(r.topicPartition()).remove(r));
+        rat.tweak.toRemove.forEach(r -> currentAllocation.get(r.topicPartition()).add(r));
+      } while (!permutations.isEmpty() && System.currentTimeMillis() < deadline);
     }
 
     private List<Tweak> puts(Replica replica) {
@@ -333,9 +331,11 @@ public class ResourceBalancer implements Balancer {
         ResourceUsage baseUsage, List<ResourceUsageHint> usageHints) {
       var baseIdealness = usageHints.stream().map(hint -> hint.idealness(baseUsage)).toList();
 
-      return Comparator.comparingDouble(usage ->
+      return Comparator.comparingDouble(
+          usage ->
               IntStream.range(0, usageHints.size())
-                  .mapToDouble(index -> usageHints.get(index).idealness(usage) - baseIdealness.get(index))
+                  .mapToDouble(
+                      index -> usageHints.get(index).idealness(usage) - baseIdealness.get(index))
                   .sum());
     }
 
