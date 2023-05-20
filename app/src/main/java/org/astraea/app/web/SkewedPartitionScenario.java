@@ -63,8 +63,7 @@ public class SkewedPartitionScenario implements Scenario<SkewedPartitionScenario
                 admin.waitPartitionLeaderSynced(
                     Map.of(topicName, partitions), Duration.ofSeconds(4)))
         .thenCompose(ignored -> admin.brokers())
-        .thenApply(
-            brokers -> brokers.stream().map(NodeInfo::id).sorted().collect(Collectors.toList()))
+        .thenApply(brokers -> brokers.stream().map(NodeInfo::id).sorted().toList())
         .thenCompose(
             brokerIds -> {
               var distribution =
