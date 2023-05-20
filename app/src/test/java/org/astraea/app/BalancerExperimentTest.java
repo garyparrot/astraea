@@ -94,7 +94,7 @@ public class BalancerExperimentTest {
               new NetworkEgressCost(Configuration.EMPTY), 3.0);
       HasMoveCost moveCost =
           new ReplicaLeaderCost(
-              Configuration.of(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
+              new Configuration(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
       var costFunction = HasClusterCost.of(costMap);
 
       var balancer = new ResourceBalancer();

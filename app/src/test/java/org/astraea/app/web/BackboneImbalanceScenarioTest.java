@@ -35,7 +35,7 @@ class BackboneImbalanceScenarioTest {
             scenario
                 .apply(
                     admin,
-                    Configuration.of(
+                    new Configuration(
                         Map.ofEntries(
                             Map.entry(BackboneImbalanceScenario.CONFIG_TOPIC_COUNT, "100"))))
                 .toCompletableFuture()
@@ -51,7 +51,7 @@ class BackboneImbalanceScenarioTest {
     var scenario = new BackboneImbalanceScenario();
     var seed = ThreadLocalRandom.current().nextInt();
     var config =
-        Configuration.of(
+        new Configuration(
             Map.ofEntries(
                 Map.entry(BackboneImbalanceScenario.CONFIG_RANDOM_SEED, Integer.toString(seed)),
                 Map.entry(BackboneImbalanceScenario.CONFIG_TOPIC_COUNT, "50")));

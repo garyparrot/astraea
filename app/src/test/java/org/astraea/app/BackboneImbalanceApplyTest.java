@@ -49,7 +49,7 @@ public class BackboneImbalanceApplyTest {
     try (Admin admin = Admin.of(realCluster)) {
       var scenario = new BackboneImbalanceScenario();
       var config =
-          Configuration.of(
+          new Configuration(
               Map.ofEntries(
                   Map.entry(BackboneImbalanceScenario.CONFIG_PERF_ZIPFIAN_EXPONENT, "1.6"),
                   Map.entry(BackboneImbalanceScenario.CONFIG_PERF_KEY_TABLE_SEED, "0"),
