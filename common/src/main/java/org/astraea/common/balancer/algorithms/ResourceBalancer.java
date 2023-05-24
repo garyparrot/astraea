@@ -158,6 +158,12 @@ public class ResourceBalancer implements Balancer {
       return bestAllocation.get();
     }
 
+    // [drives trials by doing k-means]
+    // 0. Currently, user has to specify the value k.
+    // 1. Doing k-means, find the best clustering for replicas.
+    // 2. Replicas within a same cluster will split the allocation factor (default to folder count).
+    // 3. use the allocation assignment as the trials of each replica.
+
     private int trials(int level) {
       // TODO: customize this
       if (0 <= level && level < 3) return 8;
