@@ -17,7 +17,6 @@
 package org.astraea.common;
 
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -38,7 +37,7 @@ public final class MathUtils {
     return Math.sqrt(value);
   }
 
-  public static <Element> Collection<List<Element>> kMeans(
+  public static <Element> List<List<Element>> kMeans(
       int k, int repeat, List<Element> elements, Function<Element, double[]> toCoordinate) {
     record Vector(double[] values) {
       static double distance(Vector a, Vector b) {
@@ -79,6 +78,7 @@ public final class MathUtils {
                     x -> x, toCoordinate.andThen(Vector::new), (a, b) -> a));
 
     return IntStream.range(0, repeat)
+        .parallel()
         .mapToObj(
             ignore -> {
               var clusters = elements.stream().collect(Collectors.toMap(x -> x, x -> -1));
@@ -152,6 +152,7 @@ public final class MathUtils {
                             Map.Entry::getValue,
                             Collectors.mapping(Map.Entry::getKey, Collectors.toUnmodifiableList())))
                     .values())
+        .map(List::copyOf)
         .orElseThrow();
   }
 

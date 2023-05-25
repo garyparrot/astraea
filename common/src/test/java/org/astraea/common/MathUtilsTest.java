@@ -51,7 +51,7 @@ class MathUtilsTest {
             new double[] {8.0, 8.5},
             new double[] {7.5, 8.5});
 
-    var clusters = List.copyOf(MathUtils.kMeans(3, 20, input, x -> x));
+    var clusters = MathUtils.kMeans(3, 20, input, x -> x);
 
     Assertions.assertEquals(3, clusters.size());
     Assertions.assertEquals(3, clusters.get(0).size());

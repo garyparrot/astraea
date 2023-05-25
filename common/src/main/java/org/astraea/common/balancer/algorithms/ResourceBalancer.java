@@ -24,6 +24,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -31,6 +32,7 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import org.astraea.common.MathUtils;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.TopicPartition;
@@ -72,6 +74,7 @@ public class ResourceBalancer implements Balancer {
 
     private final List<ResourceUsageHint> usageHints;
     private final List<Replica> orderedReplicas;
+    private final Map<Replica, Integer> branchFactor;
     private final Predicate<ResourceUsage> feasibleUsage;
 
     private final long deadline;
@@ -90,19 +93,63 @@ public class ResourceBalancer implements Balancer {
               .flatMap(Collection::stream)
               .toList();
 
+      // resource usage of each replica
+      var replicaUsage =
+          sourceCluster.topicPartitions().stream()
+              .filter(tp -> BalancerUtils.eligiblePartition(sourceCluster.replicas(tp)))
+              .flatMap(tp -> sourceCluster.replicas(tp).stream())
+              .collect(
+                  Collectors.toUnmodifiableMap(
+                      r -> r,
+                      r ->
+                          ResourceUsage.EMPTY.mergeUsage(
+                              usageHints.stream()
+                                  .map(hint -> hint.evaluateReplicaResourceUsage(r)))));
+
       // replicas are ordered by their resource usage, we tweak the most heavy resource first
       this.orderedReplicas =
           sourceCluster.topicPartitions().stream()
               .filter(tp -> BalancerUtils.eligiblePartition(sourceCluster.replicas(tp)))
               .flatMap(tp -> sourceCluster.replicas(tp).stream())
-              .sorted(
-                  usageDominationComparator(
-                      usageHints,
-                      (r) ->
-                          ResourceUsage.EMPTY.mergeUsage(
-                              usageHints.stream()
-                                  .map(hint -> hint.evaluateReplicaResourceUsage(r)))))
+              .sorted(usageDominationComparator(usageHints, replicaUsage::get))
               .toList();
+
+      // perform clustering based on replica resource usage
+      var usageDimension =
+          replicaUsage.values().stream()
+              .map(x -> x.usage().keySet())
+              .flatMap(Collection::stream)
+              .distinct()
+              .toList();
+      var clusters = Math.min(100, sourceCluster.replicas().size());
+      var clustering =
+          MathUtils.kMeans(
+              clusters,
+              5,
+              this.orderedReplicas,
+              (r) -> {
+                var usage = replicaUsage.get(r);
+                var vector = new double[usageDimension.size()];
+                for (int i = 0; i < vector.length; i++)
+                  vector[i] = usage.usage().getOrDefault(usageDimension.get(i), 0.0);
+                return vector;
+              });
+      var clusterBranchFactor = sourceCluster.brokers().size();
+
+      this.branchFactor =
+          clustering.stream()
+              .flatMap(
+                  cluster -> {
+                    int size = cluster.size();
+                    int avgBranchFactor = Math.max(1, clusterBranchFactor / size);
+                    return cluster.stream().map(r -> Map.entry(r, avgBranchFactor));
+                  })
+              .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+      double reduce = this.branchFactor.values()
+          .stream()
+          .mapToDouble(x -> x)
+          .reduce(1.0, (a, b) -> a * b);
+      System.out.println("Total Branch Factor: " + reduce);
 
       this.feasibleUsage =
           this.usageHints.stream()
@@ -164,11 +211,8 @@ public class ResourceBalancer implements Balancer {
     // 2. Replicas within a same cluster will split the allocation factor (default to folder count).
     // 3. use the allocation assignment as the trials of each replica.
 
-    private int trials(int level) {
-      // TODO: customize this
-      if (0 <= level && level < 3) return 8;
-      if (level < 6) return 2;
-      else return 1;
+    private int trials(Replica replica) {
+      return branchFactor.get(replica);
     }
 
     private void stackSearch(
@@ -210,7 +254,7 @@ public class ResourceBalancer implements Balancer {
       var usedTweaks = new ArrayList<ResourceAndTweak>();
 
       // add first tweaks here
-      permutations.add(SearchUtils.tweaks(replicas.get(0), trials(0), initialResourceUsage));
+      permutations.add(SearchUtils.tweaks(replicas.get(0), trials(orderedReplicas.get(0)), initialResourceUsage));
 
       Restart:
       do {
@@ -236,7 +280,7 @@ public class ResourceBalancer implements Balancer {
           if (usedTweaks.size() == permutations.size() && permutations.size() < replicas.size())
             permutations.add(
                 SearchUtils.tweaks(
-                    replicas.get(permutations.size()), trials(permutations.size()), rat.usage));
+                    replicas.get(permutations.size()), trials(orderedReplicas.get(permutations.size())), rat.usage));
         }
 
         // in the end, we will have a complete answer, update result.
