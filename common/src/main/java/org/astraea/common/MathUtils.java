@@ -40,30 +40,43 @@ public final class MathUtils {
 
   public static <Element> Collection<List<Element>> kMeans(
       int k, int repeat, List<Element> elements, Function<Element, double[]> toCoordinate) {
-    // record Vector(double[] values) {
-    //   void add(Vector that) {
-    //     for(int i = 0;i < that.values.length; i++)
-    //       this.values[i] += that.values[i];
-    //   }
-    //   void clear() {
-    //     Arrays.fill(values, 0);
-    //   }
-    //   @Override
-    //   public boolean equals(Object o) {
-    //     if (this == o) return true;
-    //     if (o == null || getClass() != o.getClass()) return false;
-    //     Vector vector = (Vector) o;
-    //     return Arrays.equals(values, vector.values);
-    //   }
-    //   @Override
-    //   public int hashCode() {
-    //     return Arrays.hashCode(values);
-    //   }
-    // }
-    record KMeanRun<Element>(double[][] center, Map<Element, Integer> cluster) {}
+    record Vector(double[] values) {
+      static double distance(Vector a, Vector b) {
+        return MathUtils.distance(a.values, b.values);
+      }
+
+      void add(Vector that) {
+        for (int i = 0; i < that.values.length; i++) this.values[i] += that.values[i];
+      }
+
+      void divide(double value) {
+        for (int i = 0; i < this.values.length; i++) this.values[i] /= value;
+      }
+
+      void clear() {
+        Arrays.fill(values, 0);
+      }
+
+      @Override
+      public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Vector vector = (Vector) o;
+        return Arrays.equals(values, vector.values);
+      }
+
+      @Override
+      public int hashCode() {
+        return Arrays.hashCode(values);
+      }
+    }
+    record KMeanRun<Element>(Vector[] center, Map<Element, Integer> cluster) {}
 
     var coordinates =
-        elements.stream().collect(Collectors.toUnmodifiableMap(x -> x, toCoordinate, (a, b) -> a));
+        elements.stream()
+            .collect(
+                Collectors.toUnmodifiableMap(
+                    x -> x, toCoordinate.andThen(Vector::new), (a, b) -> a));
 
     return IntStream.range(0, repeat)
         .mapToObj(
@@ -72,11 +85,10 @@ public final class MathUtils {
               var centers =
                   Utils.shuffledPermutation(elements).stream()
                       .map(toCoordinate)
-                      .map(x -> Arrays.stream(x).boxed().toList())
-                      .distinct()
+                      .map(array -> Arrays.copyOf(array, array.length))
+                      .map(Vector::new)
                       .limit(k)
-                      .map(x -> x.stream().mapToDouble(v -> v).toArray())
-                      .toArray(double[][]::new);
+                      .toArray(Vector[]::new);
 
               if (centers.length < k)
                 throw new IllegalArgumentException(
@@ -89,15 +101,14 @@ public final class MathUtils {
 
                 // re-clustering
                 for (var element : clusters.keySet()) {
-                  double closestDistance = distance(coordinates.get(element), centers[0]);
-                  int closestCluster = 0;
-
-                  for (int i = 1; i < k; i++) {
-                    if (closestDistance > distance(coordinates.get(element), centers[i])) {
-                      closestDistance = distance(coordinates.get(element), centers[i]);
-                      closestCluster = i;
-                    }
-                  }
+                  var vec = coordinates.get(element);
+                  int closestCluster =
+                      IntStream.range(0, k)
+                          .boxed()
+                          .min(
+                              Comparator.comparingDouble(
+                                  index -> Vector.distance(vec, centers[index])))
+                          .orElseThrow();
 
                   if (closestCluster != clusters.get(element)) {
                     swaps++;
@@ -107,20 +118,18 @@ public final class MathUtils {
 
                 // update coordination
                 int[] count = new int[k];
-                for (int i = 0; i < k; i++) Arrays.fill(centers[i], 0.0);
+                for (int i = 0; i < k; i++) centers[i].clear();
                 clusters.forEach(
                     (element, clusterId) -> {
-                      var loc = coordinates.get(element);
-                      for (int i = 0; i < centers[clusterId].length; i++)
-                        centers[clusterId][i] += loc[i];
+                      centers[clusterId].add(coordinates.get(element));
                       count[clusterId]++;
                     });
-                for (int i = 0; i < k; i++)
-                  for (int j = 0; j < centers[i].length; j++) centers[i][j] /= count[i];
+                for (int i = 0; i < k; i++) centers[i].divide(count[i]);
               } while (swaps > 0);
 
               return new KMeanRun<>(centers, clusters);
             })
+        // select the one with minimum total variance
         .min(
             Comparator.comparingDouble(
                 kMeanRun ->
@@ -130,10 +139,11 @@ public final class MathUtils {
                               var clusterId = e.getValue();
                               var p0 = coordinates.get(e.getKey());
                               var p1 = kMeanRun.center()[clusterId];
-                              var dis = distance(p0, p1);
+                              var dis = Vector.distance(p0, p1);
                               return dis * dis;
                             })
                         .sum()))
+        // wrap result into return format
         .map(
             kMeanRun ->
                 kMeanRun.cluster.entrySet().stream()
