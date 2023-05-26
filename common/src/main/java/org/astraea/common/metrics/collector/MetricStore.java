@@ -232,6 +232,7 @@ public interface MetricStore extends AutoCloseable {
                     .map(r -> r.receive(Duration.ofSeconds(3)))
                     .forEach(
                         allBeans -> {
+                          System.out.println("Receiver receive %d beans".formatted(allBeans.values().stream().mapToInt(x -> x.size()).sum()));
                           identities.addAll(allBeans.keySet());
                           lastSensors = sensorsSupplier.get();
                           allBeans.forEach(
@@ -241,10 +242,12 @@ public interface MetricStore extends AutoCloseable {
                                 lastSensors.forEach(
                                     (sensor, errorHandler) -> {
                                       try {
+                                        Collection<? extends HasBeanObject> fetch = sensor.fetch(client, clusterBean);
+                                        System.out.println("Add all " + fetch.size());
                                         beans
                                             .computeIfAbsent(
                                                 id, ignored -> new ConcurrentLinkedQueue<>())
-                                            .addAll(sensor.fetch(client, clusterBean));
+                                            .addAll(fetch);
                                       } catch (Exception e) {
                                         errorHandler.accept(id, e);
                                       }
@@ -309,6 +312,7 @@ public interface MetricStore extends AutoCloseable {
     }
 
     private void updateClusterBean() {
+      System.out.println("Update Cluster Bean");
       lastClusterBean =
           ClusterBean.of(
               beans.entrySet().stream()
