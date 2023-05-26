@@ -25,8 +25,8 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.astraea.common.admin.Broker;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.metrics.ClusterBean;
 import org.astraea.common.metrics.HasBeanObject;
@@ -74,8 +74,8 @@ public class ClusterInfoSensor implements MetricSensor {
     var nodes =
         clusterBean.brokerIds().stream()
             .filter(id -> id != -1)
-            .map(id -> NodeInfo.of(id, "", -1))
-            .collect(Collectors.toUnmodifiableMap(NodeInfo::id, x -> x));
+            .map(id -> Broker.of(id, "", -1))
+            .collect(Collectors.toUnmodifiableMap(Broker::id, x -> x));
     long l = System.nanoTime();
     var replicaMap =
         clusterBean.brokerIds().stream()
@@ -125,7 +125,7 @@ public class ClusterInfoSensor implements MetricSensor {
                                         Replica.builder()
                                             .topic(tp.topic())
                                             .partition(tp.partition())
-                                            .nodeInfo(nodes.get(broker))
+                                            .broker(nodes.get(broker))
                                             .path("")
                                             .size(size.value());
                                     var isLeader = m.value() != 0;

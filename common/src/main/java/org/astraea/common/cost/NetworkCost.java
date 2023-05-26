@@ -28,9 +28,9 @@ import java.util.stream.Stream;
 import org.astraea.common.Configuration;
 import org.astraea.common.DataRate;
 import org.astraea.common.EnumInfo;
+import org.astraea.common.admin.Broker;
 import org.astraea.common.admin.BrokerTopic;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.TopicPartition;
 import org.astraea.common.admin.TopicPartitionReplica;
@@ -115,7 +115,7 @@ public abstract class NetworkCost implements HasClusterCost {
         clusterInfo.brokers().stream()
             .collect(
                 Collectors.toMap(
-                    NodeInfo::id,
+                    Broker::id,
                     broker ->
                         clusterInfo
                             .replicaStream(broker.id())
@@ -129,7 +129,7 @@ public abstract class NetworkCost implements HasClusterCost {
         clusterInfo.brokers().stream()
             .collect(
                 Collectors.toMap(
-                    NodeInfo::id,
+                    Broker::id,
                     broker ->
                         clusterInfo
                             .replicaStream(broker.id())
@@ -155,7 +155,7 @@ public abstract class NetworkCost implements HasClusterCost {
                                 })
                             .sum()));
     // add the brokers having no replicas into map
-    clusterInfo.nodes().stream()
+    clusterInfo.brokers().stream()
         .filter(node -> !brokerIngressRate.containsKey(node.id()))
         .forEach(
             node -> {
@@ -227,7 +227,7 @@ public abstract class NetworkCost implements HasClusterCost {
         .replicaStream()
         .filter(Replica::isOnline)
         .filter(Replica::isLeader)
-        .map(r -> Map.entry(BrokerTopic.of(r.nodeInfo().id(), r.topic()), r))
+        .map(r -> Map.entry(BrokerTopic.of(r.broker().id(), r.topic()), r))
         .collect(
             Collectors.groupingBy(
                 Map.Entry::getKey,
