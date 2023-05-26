@@ -28,7 +28,7 @@ TODO: 描述我的測試情境
                                                                         ┌──────────────────┐
                                [10 Gbits Switch]                        │                  │
    ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┬──┴──┬─────┐         │
-   B1    B2    B3    B4    B5    B6    Ctl   P1    C1    PC2   PC3   PC4   PC5   Prom   Balancer
+   B1    B2    B3    B4    B5    B6    Ctl   P1    C1    PC2   PC3   PC4   PC5   PC6    Balancer
 ```
 
 每個機器負責執行的軟體：
@@ -39,14 +39,14 @@ TODO: 描述我的測試情境
 * B4: Kafka Broker, Node Exporter
 * B5: Kafka Broker, Node Exporter
 * B6: Kafka Broker, Node Exporter
-* Ctl: Kafka KRaft Controller
+* Ctl: Kafka KRaft Controller, Prometheus, Node Exporter
 * P1: Performance Tool(Producer, Skew Data Source), Node Exporter
 * C1: Performance Tool(Consumer, Skew Data Source), Node Exporter
 * PC2: Performance Tool(Producer & Consumer), Node Exporter
 * PC3: Performance Tool(Producer & Consumer), Node Exporter
 * PC4: Performance Tool(Producer & Consumer), Node Exporter
 * PC5: Performance Tool(Producer & Consumer), Node Exporter
-* Prom: Prometheus
+* PC6: Performance Tool(Producer & Consumer), Node Exporter
 * Balancer: 執行 Astraea Balancer 的機器
 
 下表為 B1, B2, B3, B4, B5, B6 的硬體規格：
@@ -71,7 +71,7 @@ TODO: 描述我的測試情境
 | 電源供應器 | Antec NE550G(550W) 金牌/半模/全日系/LLC+DC-DC                |
 | 網卡    | XG-C100C [10Gigabit埠] RJ45單埠高速網路卡/PCIe介面              |
 
-下表為 P1, C1, PC2, PC3, PC4, PC5, Prom 的硬體規格：
+下表為 P1, C1, PC2, PC3, PC4, PC5, PC6 的硬體規格：
 
 | 硬體項目  | 型號                                                |
 |-------|---------------------------------------------------|

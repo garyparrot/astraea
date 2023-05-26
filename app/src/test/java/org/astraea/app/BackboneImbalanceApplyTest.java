@@ -38,10 +38,11 @@ public class BackboneImbalanceApplyTest {
       List.of(
           "192.168.103.184",
           "192.168.103.142",
-          "192.168.103.183",
           "192.168.103.143",
           "192.168.103.144",
-          "192.168.103.145");
+          "192.168.103.145",
+          "192.168.103.146",
+          "192.168.103.147");
 
   @Test
   @Disabled
@@ -53,9 +54,9 @@ public class BackboneImbalanceApplyTest {
               Map.ofEntries(
                   Map.entry(BackboneImbalanceScenario.CONFIG_PERF_ZIPFIAN_EXPONENT, "1.6"),
                   Map.entry(BackboneImbalanceScenario.CONFIG_PERF_KEY_TABLE_SEED, "0"),
-                  Map.entry(
-                      BackboneImbalanceScenario.CONFIG_TOPIC_CONSUMER_FANOUT_SERIES,
-                      "1,1,1,1,1,1,1,1,1,1,1,2,2,2,3,4"),
+                  // Map.entry(
+                  //     BackboneImbalanceScenario.CONFIG_TOPIC_CONSUMER_FANOUT_SERIES,
+                  //     "1,1,1,1,1,1,1,1,1,1,1,2,2,2,3,4"),
                   Map.entry(
                       BackboneImbalanceScenario.CONFIG_PERF_CLIENT_COUNT,
                       Integer.toString(clients.size()))));

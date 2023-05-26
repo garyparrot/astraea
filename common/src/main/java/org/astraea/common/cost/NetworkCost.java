@@ -345,7 +345,7 @@ public abstract class NetworkCost implements HasClusterCost {
       public ResourceUsage evaluateClusterResourceUsage(Replica target) {
         return new ResourceUsage(
             Map.of(
-                "NetworkIngress_Broker_" + target.nodeInfo().id(),
+                "NetworkIngress_Broker_" + target.broker().id(),
                 (double) ingress(cachedCalculation, target.topicPartition())));
       }
 
@@ -403,7 +403,7 @@ public abstract class NetworkCost implements HasClusterCost {
         if (target.isLeader())
           return new ResourceUsage(
               Map.of(
-                  "NetworkEgress_Broker_" + target.nodeInfo().id(),
+                  "NetworkEgress_Broker_" + target.broker().id(),
                   (double) egress(cachedCalculation, target.topicPartition())
                       + ingress(cachedCalculation, target.topicPartition())
                           * (sourceCluster.replicas(target.topicPartition()).size() - 1)));

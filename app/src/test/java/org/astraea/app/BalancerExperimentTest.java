@@ -35,7 +35,6 @@ import org.astraea.common.admin.Admin;
 import org.astraea.common.admin.Broker;
 import org.astraea.common.admin.BrokerConfigs;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.TopicPartition;
 import org.astraea.common.balancer.AlgorithmConfig;
 import org.astraea.common.balancer.Balancer;

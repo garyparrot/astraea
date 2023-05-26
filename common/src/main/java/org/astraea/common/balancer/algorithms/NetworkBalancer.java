@@ -23,8 +23,8 @@ import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 import org.astraea.common.Configuration;
+import org.astraea.common.admin.Broker;
 import org.astraea.common.admin.ClusterInfo;
-import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.TopicPartition;
 import org.astraea.common.balancer.AlgorithmConfig;
 import org.astraea.common.balancer.Balancer;
@@ -56,7 +56,7 @@ public class NetworkBalancer implements Balancer {
 
     var brokers =
         clusterInfo.brokers().stream()
-            .collect(Collectors.toUnmodifiableMap(NodeInfo::id, broker -> new Bandwidth(0, 0)));
+            .collect(Collectors.toUnmodifiableMap(Broker::id, broker -> new Bandwidth(0, 0)));
     var builder = ClusterInfo.builder(clusterInfo);
 
     bandwidths.entrySet().stream()

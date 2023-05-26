@@ -38,7 +38,6 @@ import org.astraea.common.Header;
 import org.astraea.common.admin.Broker;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.Config;
-import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.Topic;
 import org.astraea.common.admin.TopicPartition;
@@ -92,7 +91,7 @@ public interface DDeserializer<T> {
   DDeserializer<Float> FLOAT = of(new FloatDeserializer());
   DDeserializer<Double> DOUBLE = of(new DoubleDeserializer());
   DDeserializer<BeanObject> BEAN_OBJECT = new BeanDeserializer();
-  DDeserializer<NodeInfo> NODE_INFO = new NodeInfoDeserializer();
+  DDeserializer<Broker> NODE_INFO = new NodeInfoDeserializer();
   DDeserializer<Topic> TOPIC = new TopicDeserializer();
   DDeserializer<Replica> REPLICA = new ReplicaDeserializer();
   DDeserializer<ClusterInfo> CLUSTER_INFO = new ClusterInfoDeserializer();
@@ -154,14 +153,14 @@ public interface DDeserializer<T> {
     }
   }
 
-  class NodeInfoDeserializer implements DDeserializer<NodeInfo> {
+  class NodeInfoDeserializer implements DDeserializer<Broker> {
     @Override
-    public NodeInfo deserialize(String topic, List<Header> headers, byte[] data) {
+    public Broker deserialize(String topic, List<Header> headers, byte[] data) {
       var buffer = ByteBuffer.wrap(data);
       var id = buffer.getInt();
       var host = OldByteUtils.readString(buffer, buffer.getShort());
       var port = buffer.getInt();
-      return NodeInfo.of(id, host, port);
+      return Broker.of(id, host, port);
     }
   }
 
@@ -228,7 +227,7 @@ public interface DDeserializer<T> {
       return Replica.builder()
           .topic(topicName)
           .partition(partition)
-          .nodeInfo(nodeInfo)
+          .broker(nodeInfo)
           .lag(lag)
           .size(size)
           .isLeader(isLeader)
@@ -255,70 +254,20 @@ public interface DDeserializer<T> {
                     buffer.get(nodeInfoData);
                     var node = DDeserializer.NODE_INFO.deserialize(topic, headers, nodeInfoData);
 
-                    return new Broker() {
-                      @Override
-                      public boolean isController() {
-                        return false;
-                      }
-
-                      @Override
-                      public Config config() {
-                        return null;
-                      }
-
-                      @Override
-                      public List<DataFolder> dataFolders() {
-                        return Stream.of(
+                    return new Broker(
+                        node.id(),
+                        node.host(),
+                        node.port(),
+                        node.isController(),
+                        node.config(),
+                        Stream.of(
                                 "/tmp/log-folder-0", "/tmp/log-folder-1", "/tmp/log-folder-2")
-                            .map(
-                                path ->
-                                    new DataFolder() {
-                                      @Override
-                                      public String path() {
-                                        return path;
-                                      }
-
-                                      @Override
-                                      public Map<TopicPartition, Long> partitionSizes() {
-                                        return null;
-                                      }
-
-                                      @Override
-                                      public Map<TopicPartition, Long> orphanPartitionSizes() {
-                                        return null;
-                                      }
-                                    })
-                            .collect(Collectors.toUnmodifiableList());
-                      }
-
-                      @Override
-                      public Set<TopicPartition> topicPartitions() {
-                        return null;
-                      }
-
-                      @Override
-                      public Set<TopicPartition> topicPartitionLeaders() {
-                        return null;
-                      }
-
-                      @Override
-                      public String host() {
-                        return node.host();
-                      }
-
-                      @Override
-                      public int port() {
-                        return node.port();
-                      }
-
-                      @Override
-                      public int id() {
-                        return node.id();
-                      }
-                    };
+                            .map(path -> new Broker.DataFolder(path, Map.of(), Map.of()))
+                            .toList(),
+                        node.topicPartitions(),
+                        node.topicPartitionLeaders());
                   })
-              .map(broker -> (NodeInfo) broker)
-              .collect(Collectors.toUnmodifiableList());
+              .toList();
       var topics =
           IntStream.range(0, buffer.getInt())
               .mapToObj(
