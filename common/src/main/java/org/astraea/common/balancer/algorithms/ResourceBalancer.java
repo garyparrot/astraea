@@ -170,7 +170,7 @@ public class ResourceBalancer implements Balancer {
             var newCluster =
                 ClusterInfo.of(
                     sourceCluster.clusterId(),
-                    sourceCluster.nodes(),
+                    sourceCluster.brokers(),
                     sourceCluster.topics(),
                     replicas);
             var clusterCost = config.clusterCostFunction().clusterCost(newCluster, clusterBean);
@@ -297,7 +297,7 @@ public class ResourceBalancer implements Balancer {
           .flatMap(
               broker ->
                   sourceCluster.brokerFolders().get(broker.id()).stream()
-                      .map(path -> Replica.builder(replica).nodeInfo(broker).path(path).build()))
+                      .map(path -> Replica.builder(replica).broker(broker).path(path).build()))
           .map(newReplica -> new Tweak(List.of(), List.of(newReplica)))
           .toList();
     }
@@ -331,7 +331,7 @@ public class ResourceBalancer implements Balancer {
 
       // 3. move to other data-dir at the same broker
       var dataFolderMovement =
-          this.sourceCluster.brokerFolders().get(replica.nodeInfo().id()).stream()
+          this.sourceCluster.brokerFolders().get(replica.broker().id()).stream()
               .filter(folder -> !folder.equals(replica.path()))
               .map(
                   newFolder ->
@@ -343,7 +343,7 @@ public class ResourceBalancer implements Balancer {
       // 4. move to other brokers/data-dirs
       var interBrokerMovement =
           this.sourceCluster.brokers().stream()
-              .filter(b -> b.id() != replica.nodeInfo().id())
+              .filter(b -> b.id() != replica.broker().id())
               .flatMap(
                   b ->
                       b.dataFolders().stream()
@@ -353,7 +353,7 @@ public class ResourceBalancer implements Balancer {
                                       List.of(replica),
                                       List.of(
                                           Replica.builder(replica)
-                                              .nodeInfo(b)
+                                              .broker(b)
                                               .path(folder.path())
                                               .build()))))
               .toList();

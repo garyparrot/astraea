@@ -199,7 +199,7 @@ public class BalancerExperimentTest {
                                           brokers.stream()
                                               .collect(
                                                   Collectors.toUnmodifiableMap(
-                                                      NodeInfo::id,
+                                                      Broker::id,
                                                       (Broker b) ->
                                                           JndiClient.of(b.host(), 16926)))))))
               .build()) {
@@ -279,7 +279,7 @@ public class BalancerExperimentTest {
                                           brokers.stream()
                                               .collect(
                                                   Collectors.toUnmodifiableMap(
-                                                      NodeInfo::id,
+                                                      Broker::id,
                                                       (Broker b) ->
                                                           JndiClient.of(b.host(), 16926)))))))
               .beanExpiration(Duration.ofSeconds(180))
