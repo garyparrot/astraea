@@ -77,7 +77,7 @@ public class BackboneImbalanceScenario implements Scenario<BackboneImbalanceScen
         new ParetoDistribution(rng, config.topicRateParetoScale(), config.topicRateParetoShape());
     final var backboneDataRateDistribution =
         new UniformRealDistribution(
-            rng, config.backboneDataRate() * 0.8, config.backboneDataRate() * 1.2);
+            rng, config.backboneDataRate() * 0.8, config.backboneDataRate() * 0.81);
     final var topicPartitionCountDistribution =
         new UniformIntegerDistribution(rng, config.partitionMin(), config.partitionMax());
     final var topicConsumerFanoutDistribution =
@@ -481,7 +481,7 @@ public class BackboneImbalanceScenario implements Scenario<BackboneImbalanceScen
                   Arrays.stream(seriesString.split(","))
                       .map(Integer::parseInt)
                       .collect(Collectors.toUnmodifiableList()))
-          .orElse(List.of(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 3, 5));
+          .orElse(List.of(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 3, 4));
     }
 
     double topicRateParetoScale() {
