@@ -203,6 +203,14 @@ function setLogDirs() {
   echo $logConfigs >>"$BROKER_PROPERTIES"
 }
 
+function generateMountCommand() {
+    if [[ "$CUSTOM_MOUNT" != "" ]]; then
+        echo "--mount type=bind,source=$CUSTOM_MOUNT,target=/tmp/custom.jar"
+    else
+        echo ""
+    fi
+}
+
 function generateJmxConfigMountCommand() {
     if [[ "$JMX_CONFIG_FILE" != "" ]]; then
         echo "--mount type=bind,source=$JMX_CONFIG_FILE,target=$JMX_CONFIG_FILE_IN_CONTAINER_PATH"
@@ -319,10 +327,12 @@ fi
 
 docker run -d --init \
   --name $CONTAINER_NAME \
+  -e CLASSPATH="${CUSTOM_CLASSPATH:-/tmp/custom.jar}" \
   -e KAFKA_HEAP_OPTS="$HEAP_OPTS" \
   -e KAFKA_JMX_OPTS="$JMX_OPTS" \
   -e KAFKA_OPTS="-javaagent:/opt/jmx_exporter/jmx_prometheus_javaagent-${EXPORTER_VERSION}.jar=$EXPORTER_PORT:$JMX_CONFIG_FILE_IN_CONTAINER_PATH" \
   -v $BROKER_PROPERTIES:/tmp/broker.properties:ro \
+  $(generateMountCommand) \
   $(generateJmxConfigMountCommand) \
   $(generateDataFolderMountCommand) \
   -p $BROKER_PORT:9092 \
