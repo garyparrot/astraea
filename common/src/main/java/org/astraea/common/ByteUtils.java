@@ -16,6 +16,8 @@
  */
 package org.astraea.common;
 
+import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.Timestamp;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
@@ -25,15 +27,19 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.astraea.common.admin.Broker;
 import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.Config;
-import org.astraea.common.admin.NodeInfo;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.Topic;
 import org.astraea.common.admin.TopicPartition;
 import org.astraea.common.generated.BeanObjectOuterClass;
-import org.astraea.common.generated.ClusterInfoOuterClass;
 import org.astraea.common.generated.PrimitiveOuterClass;
+import org.astraea.common.generated.admin.BrokerOuterClass;
+import org.astraea.common.generated.admin.ClusterInfoOuterClass;
+import org.astraea.common.generated.admin.ReplicaOuterClass;
+import org.astraea.common.generated.admin.TopicOuterClass;
+import org.astraea.common.generated.admin.TopicPartitionOuterClass;
 import org.astraea.common.metrics.BeanObject;
 
 public final class ByteUtils {
@@ -162,12 +168,25 @@ public final class ByteUtils {
     return new byte[] {0};
   }
 
-  /** Serialize BeanObject by protocol buffer. */
+  /** Serialize BeanObject by protocol buffer. The unsupported value will be ignored. */
   public static byte[] toBytes(BeanObject value) {
     var beanBuilder = BeanObjectOuterClass.BeanObject.newBuilder();
     beanBuilder.setDomain(value.domainName());
     beanBuilder.putAllProperties(value.properties());
-    value.attributes().forEach((key, val) -> beanBuilder.putAttributes(key, primitive(val)));
+    value
+        .attributes()
+        .forEach(
+            (key, val) -> {
+              try {
+                beanBuilder.putAttributes(key, primitive(val));
+              } catch (SerializationException ignore) {
+                // Bean attribute may contain non-primitive value. e.g. TimeUnit, Byte.
+              }
+            });
+    beanBuilder.setCreatedTimestamp(
+        Timestamp.newBuilder()
+            .setSeconds(value.createdTimestamp() / 1000)
+            .setNanos((int) (value.createdTimestamp() % 1000) * 1000000));
     return beanBuilder.build().toByteArray();
   }
 
@@ -175,53 +194,9 @@ public final class ByteUtils {
   public static byte[] toBytes(ClusterInfo value) {
     return ClusterInfoOuterClass.ClusterInfo.newBuilder()
         .setClusterId(value.clusterId())
-        .addAllNodeInfo(
-            value.nodes().stream()
-                .map(
-                    nodeInfo ->
-                        ClusterInfoOuterClass.ClusterInfo.NodeInfo.newBuilder()
-                            .setId(nodeInfo.id())
-                            .setHost(nodeInfo.host())
-                            .setPort(nodeInfo.port())
-                            .build())
-                .collect(Collectors.toList()))
-        .addAllTopic(
-            value.topics().values().stream()
-                .map(
-                    topicClass ->
-                        ClusterInfoOuterClass.ClusterInfo.Topic.newBuilder()
-                            .setName(topicClass.name())
-                            .putAllConfig(topicClass.config().raw())
-                            .setInternal(topicClass.internal())
-                            .addAllPartition(
-                                topicClass.topicPartitions().stream()
-                                    .map(TopicPartition::partition)
-                                    .collect(Collectors.toList()))
-                            .build())
-                .collect(Collectors.toList()))
-        .addAllReplica(
-            value.replicas().stream()
-                .map(
-                    replica ->
-                        ClusterInfoOuterClass.ClusterInfo.Replica.newBuilder()
-                            .setTopic(replica.topic())
-                            .setPartition(replica.partition())
-                            .setNodeInfo(
-                                ClusterInfoOuterClass.ClusterInfo.NodeInfo.newBuilder()
-                                    .setId(replica.nodeInfo().id())
-                                    .setHost(replica.nodeInfo().host())
-                                    .setPort(replica.nodeInfo().port())
-                                    .build())
-                            .setLag(replica.lag())
-                            .setSize(replica.size())
-                            .setIsLeader(replica.isLeader())
-                            .setIsSync(replica.isSync())
-                            .setIsFuture(replica.isFuture())
-                            .setIsOffline(replica.isOffline())
-                            .setIsPreferredLeader(replica.isPreferredLeader())
-                            .setPath(replica.path())
-                            .build())
-                .collect(Collectors.toList()))
+        .addAllBroker(value.brokers().stream().map(ByteUtils::toOuterClass).toList())
+        .addAllTopic(value.topics().values().stream().map(ByteUtils::toOuterClass).toList())
+        .addAllReplica(value.replicas().stream().map(ByteUtils::toOuterClass).toList())
         .build()
         .toByteArray();
   }
@@ -294,75 +269,164 @@ public final class ByteUtils {
   // ---------------------------------ProtoBuf Object------------------------------------------- //
 
   /** Deserialize to BeanObject with protocol buffer */
-  public static BeanObject readBeanObject(byte[] bytes) {
-    // Pack InvalidProtocolBufferException thrown by protoBuf
-    var outerBean = Utils.packException(() -> BeanObjectOuterClass.BeanObject.parseFrom(bytes));
-    return new BeanObject(
-        outerBean.getDomain(),
-        outerBean.getPropertiesMap(),
-        outerBean.getAttributesMap().entrySet().stream()
-            .collect(
-                Collectors.toUnmodifiableMap(
-                    Map.Entry::getKey, e -> Objects.requireNonNull(toObject(e.getValue())))));
+  public static BeanObject readBeanObject(byte[] bytes) throws SerializationException {
+    try {
+      var outerBean = BeanObjectOuterClass.BeanObject.parseFrom(bytes);
+      return new BeanObject(
+          outerBean.getDomain(),
+          outerBean.getPropertiesMap(),
+          outerBean.getAttributesMap().entrySet().stream()
+              .collect(
+                  Collectors.toUnmodifiableMap(
+                      Map.Entry::getKey, e -> Objects.requireNonNull(toObject(e.getValue())))),
+          outerBean.getCreatedTimestamp().getSeconds() * 1000
+              + outerBean.getCreatedTimestamp().getNanos() / 1000000);
+    } catch (InvalidProtocolBufferException ex) {
+      // Pack exception thrown by protoBuf to Serialization exception.
+      throw new SerializationException(ex);
+    }
   }
 
   /** Deserialize to ClusterInfo with protocol buffer */
   public static ClusterInfo readClusterInfo(byte[] bytes) {
-    var outerClusterInfo =
-        Utils.packException(() -> ClusterInfoOuterClass.ClusterInfo.parseFrom(bytes));
-    return ClusterInfo.of(
-        outerClusterInfo.getClusterId(),
-        outerClusterInfo.getNodeInfoList().stream()
-            .map(nodeInfo -> NodeInfo.of(nodeInfo.getId(), nodeInfo.getHost(), nodeInfo.getPort()))
-            .collect(Collectors.toList()),
-        outerClusterInfo.getTopicList().stream()
-            .map(
-                protoTopic ->
-                    new Topic() {
-                      @Override
-                      public String name() {
-                        return protoTopic.getName();
-                      }
+    try {
+      var outerClusterInfo = ClusterInfoOuterClass.ClusterInfo.parseFrom(bytes);
+      return ClusterInfo.of(
+          outerClusterInfo.getClusterId(),
+          outerClusterInfo.getBrokerList().stream().map(ByteUtils::toBroker).toList(),
+          outerClusterInfo.getTopicList().stream()
+              .map(ByteUtils::toTopic)
+              .collect(Collectors.toMap(Topic::name, Function.identity())),
+          outerClusterInfo.getReplicaList().stream().map(ByteUtils::toReplica).toList());
+    } catch (InvalidProtocolBufferException ex) {
+      throw new SerializationException(ex);
+    }
+  }
 
-                      @Override
-                      public Config config() {
-                        return Config.of(protoTopic.getConfigMap());
-                      }
+  // ---------------------------Serialize To ProtoBuf Outer Class------------------------------- //
 
-                      @Override
-                      public boolean internal() {
-                        return protoTopic.getInternal();
-                      }
+  private static BrokerOuterClass.Broker.DataFolder toOuterClass(Broker.DataFolder dataFolder) {
+    return BrokerOuterClass.Broker.DataFolder.newBuilder()
+        .setPath(dataFolder.path())
+        .putAllPartitionSizes(
+            dataFolder.partitionSizes().entrySet().stream()
+                .collect(Collectors.toMap(entry -> entry.getKey().toString(), Map.Entry::getValue)))
+        .putAllOrphanPartitionSizes(
+            dataFolder.orphanPartitionSizes().entrySet().stream()
+                .collect(Collectors.toMap(entry -> entry.getKey().toString(), Map.Entry::getValue)))
+        .build();
+  }
 
-                      @Override
-                      public Set<TopicPartition> topicPartitions() {
-                        return protoTopic.getPartitionList().stream()
-                            .map(tp -> TopicPartition.of(protoTopic.getName(), tp))
-                            .collect(Collectors.toSet());
-                      }
-                    })
-            .collect(Collectors.toMap(Topic::name, Function.identity())),
-        outerClusterInfo.getReplicaList().stream()
-            .map(
-                replica ->
-                    Replica.builder()
-                        .topic(replica.getTopic())
-                        .partition(replica.getPartition())
-                        .nodeInfo(
-                            NodeInfo.of(
-                                replica.getNodeInfo().getId(),
-                                replica.getNodeInfo().getHost(),
-                                replica.getNodeInfo().getPort()))
-                        .lag(replica.getLag())
-                        .size(replica.getSize())
-                        .isLeader(replica.getIsLeader())
-                        .isSync(replica.getIsSync())
-                        .isFuture(replica.getIsFuture())
-                        .isOffline(replica.getIsOffline())
-                        .isPreferredLeader(replica.getIsPreferredLeader())
-                        .path(replica.getPath())
-                        .build())
-            .collect(Collectors.toList()));
+  private static TopicPartitionOuterClass.TopicPartition toOuterClass(
+      TopicPartition topicPartition) {
+    return TopicPartitionOuterClass.TopicPartition.newBuilder()
+        .setPartition(topicPartition.partition())
+        .setTopic(topicPartition.topic())
+        .build();
+  }
+
+  private static BrokerOuterClass.Broker toOuterClass(Broker broker) {
+    return BrokerOuterClass.Broker.newBuilder()
+        .setId(broker.id())
+        .setHost(broker.host())
+        .setPort(broker.port())
+        .setIsController(broker.isController())
+        .putAllConfig(broker.config().raw())
+        .addAllDataFolder(broker.dataFolders().stream().map(ByteUtils::toOuterClass).toList())
+        .addAllTopicPartitions(
+            broker.topicPartitions().stream().map(ByteUtils::toOuterClass).toList())
+        .addAllTopicPartitionLeaders(
+            broker.topicPartitionLeaders().stream().map(ByteUtils::toOuterClass).toList())
+        .build();
+  }
+
+  private static TopicOuterClass.Topic toOuterClass(Topic topic) {
+    return TopicOuterClass.Topic.newBuilder()
+        .setName(topic.name())
+        .putAllConfig(topic.config().raw())
+        .setInternal(topic.internal())
+        .addAllPartitionIds(topic.partitionIds())
+        .build();
+  }
+
+  private static ReplicaOuterClass.Replica toOuterClass(Replica replica) {
+    return ReplicaOuterClass.Replica.newBuilder()
+        .setTopic(replica.topic())
+        .setPartition(replica.partition())
+        .setBroker(toOuterClass(replica.broker()))
+        .setLag(replica.lag())
+        .setSize(replica.size())
+        .setIsInternal(replica.isInternal())
+        .setIsLeader(replica.isLeader())
+        .setIsAdding(replica.isAdding())
+        .setIsRemoving(replica.isRemoving())
+        .setIsSync(replica.isSync())
+        .setIsFuture(replica.isFuture())
+        .setIsOffline(replica.isOffline())
+        .setIsPreferredLeader(replica.isPreferredLeader())
+        .setPath(replica.path())
+        .build();
+  }
+
+  // -------------------------Deserialize From ProtoBuf Outer Class----------------------------- //
+
+  private static Broker.DataFolder toDataFolder(BrokerOuterClass.Broker.DataFolder dataFolder) {
+    return new Broker.DataFolder(
+        dataFolder.getPath(),
+        dataFolder.getPartitionSizesMap().entrySet().stream()
+            .collect(
+                Collectors.toMap(entry -> TopicPartition.of(entry.getKey()), Map.Entry::getValue)),
+        dataFolder.getOrphanPartitionSizesMap().entrySet().stream()
+            .collect(
+                Collectors.toMap(entry -> TopicPartition.of(entry.getKey()), Map.Entry::getValue)));
+  }
+
+  private static TopicPartition toTopicPartition(
+      TopicPartitionOuterClass.TopicPartition topicPartition) {
+    return new TopicPartition(topicPartition.getTopic(), topicPartition.getPartition());
+  }
+
+  private static Broker toBroker(BrokerOuterClass.Broker broker) {
+    return new Broker(
+        broker.getId(),
+        broker.getHost(),
+        broker.getPort(),
+        broker.getIsController(),
+        new Config(broker.getConfigMap()),
+        broker.getDataFolderList().stream().map(ByteUtils::toDataFolder).toList(),
+        broker.getTopicPartitionsList().stream()
+            .map(ByteUtils::toTopicPartition)
+            .collect(Collectors.toSet()),
+        broker.getTopicPartitionLeadersList().stream()
+            .map(ByteUtils::toTopicPartition)
+            .collect(Collectors.toSet()));
+  }
+
+  private static Topic toTopic(TopicOuterClass.Topic topic) {
+    return new Topic(
+        topic.getName(),
+        new Config(topic.getConfigMap()),
+        topic.getInternal(),
+        Set.copyOf(topic.getPartitionIdsList()));
+  }
+
+  private static Replica toReplica(ReplicaOuterClass.Replica replica) {
+    return Replica.builder()
+        .topic(replica.getTopic())
+        .partition(replica.getPartition())
+        .broker(toBroker(replica.getBroker()))
+        .lag(replica.getLag())
+        .size(replica.getSize())
+        .isInternal(replica.getIsInternal())
+        .isLeader(replica.getIsLeader())
+        .isAdding(replica.getIsAdding())
+        .isRemoving(replica.getIsRemoving())
+        .isSync(replica.getIsSync())
+        .isFuture(replica.getIsFuture())
+        .isOffline(replica.getIsOffline())
+        .isPreferredLeader(replica.getIsPreferredLeader())
+        .path(replica.getPath())
+        .build();
   }
 
   // --------------------------------ProtoBuf Primitive----------------------------------------- //
@@ -371,21 +435,21 @@ public final class ByteUtils {
    * Convert java primitive type to "one of" protocol buffer primitive type. There are no "short"
    * and "char" in Protocol Buffers. Use "int" and "String" instead.
    */
-  private static PrimitiveOuterClass.Primitive primitive(Object v) {
-    if (v instanceof Integer)
-      return PrimitiveOuterClass.Primitive.newBuilder().setInt((int) v).build();
-    else if (v instanceof Long)
-      return PrimitiveOuterClass.Primitive.newBuilder().setLong((long) v).build();
-    else if (v instanceof Float)
-      return PrimitiveOuterClass.Primitive.newBuilder().setFloat((float) v).build();
-    else if (v instanceof Double)
-      return PrimitiveOuterClass.Primitive.newBuilder().setDouble((double) v).build();
-    else if (v instanceof Boolean)
-      return PrimitiveOuterClass.Primitive.newBuilder().setBoolean((boolean) v).build();
-    else if (v instanceof String)
-      return PrimitiveOuterClass.Primitive.newBuilder().setStr(v.toString()).build();
+  private static PrimitiveOuterClass.Primitive primitive(Object v) throws SerializationException {
+    if (v instanceof Integer value)
+      return PrimitiveOuterClass.Primitive.newBuilder().setInt(value).build();
+    else if (v instanceof Long value)
+      return PrimitiveOuterClass.Primitive.newBuilder().setLong(value).build();
+    else if (v instanceof Float value)
+      return PrimitiveOuterClass.Primitive.newBuilder().setFloat(value).build();
+    else if (v instanceof Double value)
+      return PrimitiveOuterClass.Primitive.newBuilder().setDouble(value).build();
+    else if (v instanceof Boolean value)
+      return PrimitiveOuterClass.Primitive.newBuilder().setBoolean(value).build();
+    else if (v instanceof String value)
+      return PrimitiveOuterClass.Primitive.newBuilder().setStr(value).build();
     else
-      throw new IllegalArgumentException(
+      throw new SerializationException(
           "Type "
               + v.getClass()
               + " is not supported. Please use Integer, Long, Float, Double, Boolean, String instead.");

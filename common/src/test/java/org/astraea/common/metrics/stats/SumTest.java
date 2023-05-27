@@ -14,27 +14,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.astraea.common.admin;
+package org.astraea.common.metrics.stats;
 
-public final class Offset {
-  private final long earliest;
-  private final long latest;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
 
-  Offset(long earliest, long latest) {
-    this.earliest = earliest;
-    this.latest = latest;
-  }
-
-  @Override
-  public String toString() {
-    return "Offset{" + "earliest=" + earliest + ", latest=" + latest + '}';
-  }
-
-  public long earliest() {
-    return earliest;
-  }
-
-  public long latest() {
-    return latest;
+public class SumTest {
+  @Test
+  void testLongOf() {
+    var stat = Sum.ofLong();
+    stat.record(1L);
+    stat.record(2L);
+    Assertions.assertEquals(3L, stat.measure());
   }
 }

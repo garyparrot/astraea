@@ -26,6 +26,7 @@ import org.astraea.common.Utils;
 import org.astraea.common.admin.Admin;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.TopicPartition;
+import org.astraea.common.cost.LogMetricsGaugeBuilder;
 import org.astraea.common.metrics.BeanObject;
 import org.astraea.common.metrics.ClusterBean;
 import org.astraea.common.metrics.HasBeanObject;
@@ -100,7 +101,7 @@ class ClusterInfoSensorTest {
                       TopicPartition.of(topic, 1),
                       TopicPartition.of(topic, 2))));
       // compare broker id
-      Assertions.assertTrue(info.replicaStream().allMatch(r -> r.nodeInfo().id() == aBroker.id()));
+      Assertions.assertTrue(info.replicaStream().allMatch(r -> r.broker().id() == aBroker.id()));
       // compare replica size
       var realCluster = admin.clusterInfo(Set.of(topic)).toCompletableFuture().join();
       Assertions.assertTrue(
@@ -132,15 +133,13 @@ class ClusterInfoSensorTest {
                     1,
                     List.of(
                         MetricFactory.ofPartitionMetric("TwoReplica", 0, 2),
-                        LogMetrics.Log.SIZE
-                            .builder()
+                        new LogMetricsGaugeBuilder(LogMetrics.Log.SIZE)
                             .topic("TwoReplica")
                             .partition(0)
                             .logSize(200)
                             .build(),
                         MetricFactory.ofPartitionMetric("OneReplica", 0, 1),
-                        LogMetrics.Log.SIZE
-                            .builder()
+                        new LogMetricsGaugeBuilder(LogMetrics.Log.SIZE)
                             .topic("OneReplica")
                             .partition(0)
                             .logSize(100)
@@ -149,8 +148,7 @@ class ClusterInfoSensorTest {
                     2,
                     List.of(
                         MetricFactory.ofPartitionMetric("TwoReplica", 0, 0),
-                        LogMetrics.Log.SIZE
-                            .builder()
+                        new LogMetricsGaugeBuilder(LogMetrics.Log.SIZE)
                             .topic("TwoReplica")
                             .partition(0)
                             .logSize(150)
@@ -177,8 +175,7 @@ class ClusterInfoSensorTest {
           Stream<HasBeanObject> partition(int partition, int replica) {
             return Stream.of(
                 MetricFactory.ofPartitionMetric("topic", partition, replica),
-                LogMetrics.Log.SIZE
-                    .builder()
+                new LogMetricsGaugeBuilder(LogMetrics.Log.SIZE)
                     .topic("topic")
                     .partition(partition)
                     .logSize(0)
@@ -244,7 +241,7 @@ class ClusterInfoSensorTest {
 
     var info = ClusterInfoSensor.metricViewCluster(cb);
 
-    Assertions.assertEquals(1, info.nodes().size());
+    Assertions.assertEquals(1, info.brokers().size());
     Assertions.assertEquals(id, info.clusterId());
   }
 
