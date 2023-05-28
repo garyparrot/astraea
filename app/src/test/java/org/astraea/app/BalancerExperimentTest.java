@@ -38,6 +38,7 @@ import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.TopicPartition;
 import org.astraea.common.balancer.AlgorithmConfig;
 import org.astraea.common.balancer.Balancer;
+import org.astraea.common.balancer.BalancerConfigs;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
 import org.astraea.common.balancer.algorithms.ResourceBalancer;
 import org.astraea.common.balancer.executor.StraightPlanExecutor;
@@ -91,12 +92,12 @@ public class BalancerExperimentTest {
           Map.of(
               new NetworkIngressCost(Configuration.EMPTY), 3.0,
               new NetworkEgressCost(Configuration.EMPTY), 3.0);
-      HasMoveCost moveCost =
-          new ReplicaLeaderCost(
-              new Configuration(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
+      HasMoveCost moveCost = HasMoveCost.EMPTY;
+          // new ReplicaLeaderCost(
+          //     new Configuration(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
       var costFunction = HasClusterCost.of(costMap);
 
-      var balancer = new ResourceBalancer();
+      var balancer = new GreedyBalancer();
       var result =
           BalancerBenchmark.costProfiling()
               .setClusterInfo(clusterInfo)
@@ -104,7 +105,11 @@ public class BalancerExperimentTest {
               .setBalancer(balancer)
               .setExecutionTimeout(Duration.ofSeconds(180))
               .setAlgorithmConfig(
-                  AlgorithmConfig.builder().clusterCost(costFunction).moveCost(moveCost).build())
+                  AlgorithmConfig.builder()
+                      .clusterCost(costFunction)
+                      .moveCost(moveCost)
+                      .config(BalancerConfigs.BALANCER_BROKER_BALANCING_MODE, "1:demoted")
+                      .build())
               .start()
               .toCompletableFuture()
               .join();

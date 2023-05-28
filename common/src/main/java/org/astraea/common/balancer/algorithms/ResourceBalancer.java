@@ -84,6 +84,7 @@ public class ResourceBalancer implements Balancer {
       this.sourceCluster = config.clusterInfo();
       this.clusterBean = config.clusterBean();
       this.deadline = deadline;
+      System.out.println("Running");
 
       // hints to estimate the resource usage of replicas
       this.usageHints =
@@ -92,6 +93,7 @@ public class ResourceBalancer implements Balancer {
                   config.moveCostFunction().movementResourceHint(sourceCluster, clusterBean))
               .flatMap(Collection::stream)
               .toList();
+      System.out.println("Running");
 
       // resource usage of each replica
       var replicaUsage =
@@ -113,6 +115,7 @@ public class ResourceBalancer implements Balancer {
               .flatMap(tp -> sourceCluster.replicas(tp).stream())
               .sorted(usageDominationComparator(usageHints, replicaUsage::get))
               .toList();
+      System.out.println("Running");
 
       // perform clustering based on replica resource usage
       var usageDimension =
@@ -156,6 +159,7 @@ public class ResourceBalancer implements Balancer {
               .map(ResourceUsageHint::usageValidityPredicate)
               .reduce(Predicate::and)
               .orElse((u) -> true);
+      System.out.println("Running");
     }
 
     ClusterInfo execute() {

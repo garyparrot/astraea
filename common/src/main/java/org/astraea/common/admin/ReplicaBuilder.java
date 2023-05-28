@@ -315,7 +315,9 @@ public class ReplicaBuilder {
       return Objects.hash(
           topic,
           partition,
-          broker,
+          broker.id(),
+          broker.port(),
+          broker.host(),
           lag,
           size,
           internal,
