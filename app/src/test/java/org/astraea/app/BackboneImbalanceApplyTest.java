@@ -42,6 +42,7 @@ public class BackboneImbalanceApplyTest {
           "192.168.103.144",
           "192.168.103.145",
           "192.168.103.146",
+          "192.168.103.183",
           "192.168.103.147");
 
   @Test
@@ -52,7 +53,7 @@ public class BackboneImbalanceApplyTest {
       var config =
           new Configuration(
               Map.ofEntries(
-                  Map.entry(BackboneImbalanceScenario.CONFIG_PERF_ZIPFIAN_EXPONENT, "1.03"),
+                  Map.entry(BackboneImbalanceScenario.CONFIG_PERF_ZIPFIAN_EXPONENT, "1.00"),
                   Map.entry(BackboneImbalanceScenario.CONFIG_PERF_KEY_TABLE_SEED, "0"),
                   // Map.entry(
                   //     BackboneImbalanceScenario.CONFIG_TOPIC_CONSUMER_FANOUT_SERIES,
