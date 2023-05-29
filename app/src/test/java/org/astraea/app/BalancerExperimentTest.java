@@ -97,7 +97,7 @@ public class BalancerExperimentTest {
           //     new Configuration(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
       var costFunction = HasClusterCost.of(costMap);
 
-      var balancer = new GreedyBalancer();
+      var balancer = new ResourceBalancer();
       var result =
           BalancerBenchmark.costProfiling()
               .setClusterInfo(clusterInfo)
@@ -108,7 +108,6 @@ public class BalancerExperimentTest {
                   AlgorithmConfig.builder()
                       .clusterCost(costFunction)
                       .moveCost(moveCost)
-                      .config(BalancerConfigs.BALANCER_BROKER_BALANCING_MODE, "1:demoted")
                       .build())
               .start()
               .toCompletableFuture()
