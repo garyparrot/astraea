@@ -91,6 +91,46 @@ public class ReplicaLeaderCost implements HasBrokerCost, HasClusterCost, HasMove
   }
 
   @Override
+  public Collection<ResourceUsageHint> clusterResourceHint(ClusterInfo sourceCluster, ClusterBean clusterBean) {
+    var leaderSum = sourceCluster.replicas()
+        .stream()
+        .filter(Replica::isLeader)
+        .count();
+    var averageLeaderPerBroker = leaderSum / sourceCluster.brokers().size();
+    return List.of(new ResourceUsageHint() {
+      @Override
+      public String description() {
+        return "Balance Leader Count";
+      }
+
+      @Override
+      public ResourceUsage evaluateReplicaResourceUsage(Replica target) {
+        return new ResourceUsage(Map.of("leader", target.isLeader() ? 1.0 : 0.0));
+      }
+
+      @Override
+      public ResourceUsage evaluateClusterResourceUsage(Replica target) {
+        return new ResourceUsage(Map.of("leader_" + target.broker().id(), target.isLeader() ? 1.0 : 0.0));
+      }
+
+      @Override
+      public double importance(ResourceUsage replicaResourceUsage) {
+        return replicaResourceUsage.usage().get("leader") > 0 ? 1 : 0;
+      }
+
+      @Override
+      public double idealness(ResourceUsage clusterResourceUsage) {
+        return sourceCluster.brokers().stream()
+            .map(b -> "leader_" + b.id())
+            .mapToDouble(name -> clusterResourceUsage.usage().getOrDefault(name, 0.0))
+            .map(leaders -> Math.abs(leaders - averageLeaderPerBroker) / leaders)
+            .average()
+            .orElseThrow();
+      }
+    });
+  }
+
+  @Override
   public Collection<ResourceUsageHint> movementResourceHint(
       ClusterInfo sourceCluster, ClusterBean clusterBean) {
     var maxMigratedLeader =

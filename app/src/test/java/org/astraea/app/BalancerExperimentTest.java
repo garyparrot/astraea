@@ -90,6 +90,7 @@ public class BalancerExperimentTest {
 
       Map<HasClusterCost, Double> costMap =
           Map.of(
+              new ReplicaLeaderCost(Configuration.EMPTY), 3.0,
               new NetworkIngressCost(Configuration.EMPTY), 3.0,
               new NetworkEgressCost(Configuration.EMPTY), 3.0);
       HasMoveCost moveCost = HasMoveCost.EMPTY;
@@ -103,7 +104,7 @@ public class BalancerExperimentTest {
               .setClusterInfo(clusterInfo)
               .setClusterBean(clusterBean)
               .setBalancer(balancer)
-              .setExecutionTimeout(Duration.ofSeconds(180))
+              .setExecutionTimeout(Duration.ofSeconds(60))
               .setAlgorithmConfig(
                   AlgorithmConfig.builder()
                       .clusterCost(costFunction)
