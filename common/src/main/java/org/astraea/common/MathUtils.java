@@ -16,6 +16,7 @@
  */
 package org.astraea.common;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -81,6 +82,7 @@ public final class MathUtils {
         .parallel()
         .mapToObj(
             ignore -> {
+              long l = System.nanoTime();
               var clusters = elements.stream().collect(Collectors.toMap(x -> x, x -> -1));
               var centers =
                   Utils.shuffledPermutation(elements).stream()
@@ -127,6 +129,8 @@ public final class MathUtils {
                 for (int i = 0; i < k; i++) centers[i].divide(count[i]);
               } while (swaps > 0);
 
+              long t = System.nanoTime();
+              System.out.println("KMeans: " + Duration.ofNanos(t - l).toMillis() + " ms");
               return new KMeanRun<>(centers, clusters);
             })
         // select the one with minimum total variance
