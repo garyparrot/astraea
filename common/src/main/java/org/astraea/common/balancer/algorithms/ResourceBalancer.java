@@ -260,16 +260,11 @@ public class ResourceBalancer implements Balancer {
       // add first tweaks here
       permutations.add(SearchUtils.tweaks(replicas.get(0), trials(orderedReplicas.get(0)), initialResourceUsage));
 
+      if(!permutations.get(0).hasNext())
+        throw new IllegalStateException("illegal start");
+
       Restart:
       do {
-        // discard all empty iterators at stack head
-        while (!permutations.get(permutations.size() - 1).hasNext()) {
-          var rat = usedTweaks.remove(usedTweaks.size() - 1);
-          rat.tweak.toReplace.forEach(r -> currentAllocation.get(r.topicPartition()).remove(r));
-          rat.tweak.toRemove.forEach(r -> currentAllocation.get(r.topicPartition()).add(r));
-          permutations.remove(permutations.size() - 1);
-        }
-
         // keep applying tweak & adding iterator until the last replica
         while (usedTweaks.size() < permutations.size()) {
           int head = usedTweaks.size();
@@ -293,6 +288,16 @@ public class ResourceBalancer implements Balancer {
         var rat = usedTweaks.remove(usedTweaks.size() - 1);
         rat.tweak.toReplace.forEach(r -> currentAllocation.get(r.topicPartition()).remove(r));
         rat.tweak.toRemove.forEach(r -> currentAllocation.get(r.topicPartition()).add(r));
+
+        // discard all empty iterators at stack head
+        while (!permutations.isEmpty() && !permutations.get(permutations.size() - 1).hasNext()) {
+          if(!usedTweaks.isEmpty()) {
+            var revert = usedTweaks.remove(usedTweaks.size() - 1);
+            revert.tweak.toReplace.forEach(r -> currentAllocation.get(r.topicPartition()).remove(r));
+            revert.tweak.toRemove.forEach(r -> currentAllocation.get(r.topicPartition()).add(r));
+          }
+          permutations.remove(permutations.size() - 1);
+        }
       } while (!permutations.isEmpty() && System.currentTimeMillis() < deadline);
     }
 
