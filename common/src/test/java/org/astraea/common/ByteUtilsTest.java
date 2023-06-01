@@ -17,6 +17,17 @@
 package org.astraea.common;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.astraea.common.admin.Admin;
+import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.metrics.BeanObject;
+import org.astraea.common.metrics.ClusterBean;
+import org.astraea.common.metrics.broker.HasGauge;
+import org.astraea.common.metrics.broker.LogMetrics;
+import org.astraea.it.Service;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -67,5 +78,77 @@ public class ByteUtilsTest {
   void testBoolean2Bytes() {
     Assertions.assertArrayEquals(new byte[] {1}, ByteUtils.toBytes(true));
     Assertions.assertArrayEquals(new byte[] {0}, ByteUtils.toBytes(false));
+  }
+
+  @Test
+  void testReadAndToBytesClusterInfo() {
+    var topic = Utils.randomString();
+    try (var service = Service.builder().numberOfBrokers(3).build()) {
+      try (var admin = Admin.of(service.bootstrapServers())) {
+        admin
+            .creator()
+            .topic(topic)
+            .numberOfPartitions(1)
+            .numberOfReplicas((short) 3)
+            .run()
+            .toCompletableFuture()
+            .join();
+        Utils.sleep(Duration.ofSeconds(1));
+        var clusterInfo = admin.clusterInfo(Set.of(topic)).toCompletableFuture().join();
+
+        Assertions.assertDoesNotThrow(() -> ByteUtils.toBytes(clusterInfo));
+        var bytes = ByteUtils.toBytes(clusterInfo);
+        Assertions.assertDoesNotThrow(() -> ByteUtils.readClusterInfo(bytes));
+        var deserializedClusterInfo = ByteUtils.readClusterInfo(bytes);
+        Assertions.assertEquals(clusterInfo.clusterId(), deserializedClusterInfo.clusterId());
+        Assertions.assertEquals(clusterInfo.brokers(), deserializedClusterInfo.brokers());
+        Assertions.assertEquals(clusterInfo.topics(), deserializedClusterInfo.topics());
+        Assertions.assertEquals(clusterInfo.replicas(), deserializedClusterInfo.replicas());
+      }
+    }
+  }
+
+  @Test
+  void testReadAndToBytesEmptyClusterInfo() {
+    var clusterInfo = ClusterInfo.empty();
+    var serializedInfo = ByteUtils.toBytes(clusterInfo);
+    var deserializedClusterInfo = ByteUtils.readClusterInfo(serializedInfo);
+
+    Assertions.assertEquals(clusterInfo.clusterId(), deserializedClusterInfo.clusterId());
+    Assertions.assertEquals(clusterInfo.brokers(), deserializedClusterInfo.brokers());
+    Assertions.assertEquals(clusterInfo.topics(), deserializedClusterInfo.topics());
+    Assertions.assertEquals(clusterInfo.replicas(), deserializedClusterInfo.replicas());
+  }
+
+  @Test
+  void testReadAndToBytesBeanObjects() {
+    BeanObject testBeanObject =
+        new BeanObject(
+            "kafka.log",
+            Map.of(
+                "name",
+                LogMetrics.Log.SIZE.metricName(),
+                "type",
+                "Log",
+                "topic",
+                "testBeans",
+                "partition",
+                "0"),
+            Map.of("Value", 100));
+    var clusterBean = ClusterBean.of(Map.of(1, List.of(HasGauge.of(testBeanObject))));
+
+    var bytes = ByteUtils.toBytes(clusterBean.all());
+    var deserializedClusterBean = ByteUtils.readBeanObjects(bytes);
+
+    Assertions.assertEquals(1, deserializedClusterBean.size());
+    Assertions.assertEquals(
+        testBeanObject.domainName(), deserializedClusterBean.get(1).get(0).domainName());
+    Assertions.assertEquals(
+        testBeanObject.createdTimestamp(),
+        deserializedClusterBean.get(1).get(0).createdTimestamp());
+    Assertions.assertEquals(
+        testBeanObject.properties(), deserializedClusterBean.get(1).get(0).properties());
+    Assertions.assertEquals(
+        testBeanObject.attributes(), deserializedClusterBean.get(1).get(0).attributes());
   }
 }

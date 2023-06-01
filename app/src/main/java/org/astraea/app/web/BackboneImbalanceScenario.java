@@ -173,12 +173,14 @@ public class BackboneImbalanceScenario implements Scenario<BackboneImbalanceScen
                   .boxed()
                   .collect(
                       Collectors.toMap(
-                          index -> clusterInfo.brokers().get(index).id(), index -> rng.nextInt(100)));
+                          index -> clusterInfo.brokers().get(index).id(),
+                          index -> rng.nextInt(100)));
           nodeWeight.put(
-              clusterInfo.brokers().get(0).id(), nodeWeight.values().stream().mapToInt(x -> x).sum());
+              clusterInfo.brokers().get(0).id(),
+              nodeWeight.values().stream().mapToInt(x -> x).sum());
 
           clusterInfo.replicas(backboneTopicName).stream()
-              .collect(Collectors.groupingBy(x -> x.broker().id()))
+              .collect(Collectors.groupingBy(x -> x.brokerId()))
               .forEach(
                   (nodeId, replicas) -> {
                     var weight = nodeWeight.get(nodeId);

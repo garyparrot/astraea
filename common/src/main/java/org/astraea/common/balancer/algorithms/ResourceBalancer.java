@@ -24,7 +24,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -63,7 +62,12 @@ public class ResourceBalancer implements Balancer {
     if (proposalCost.value() > initialCost.value() || moveCost.overflow()) return Optional.empty();
     else
       return Optional.of(
-          new Plan(initialClusterInfo, initialCost, proposalClusterInfo, proposalCost));
+          new Plan(
+              config.clusterBean(),
+              initialClusterInfo,
+              initialCost,
+              proposalClusterInfo,
+              proposalCost));
   }
 
   static class AlgorithmContext {
@@ -148,10 +152,8 @@ public class ResourceBalancer implements Balancer {
                     return cluster.stream().map(r -> Map.entry(r, avgBranchFactor));
                   })
               .collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
-      double reduce = this.branchFactor.values()
-          .stream()
-          .mapToDouble(x -> x)
-          .reduce(1.0, (a, b) -> a * b);
+      double reduce =
+          this.branchFactor.values().stream().mapToDouble(x -> x).reduce(1.0, (a, b) -> a * b);
       System.out.println("Total Branch Factor: " + reduce);
 
       this.feasibleUsage =
@@ -258,10 +260,11 @@ public class ResourceBalancer implements Balancer {
       var usedTweaks = new ArrayList<ResourceAndTweak>();
 
       // add first tweaks here
-      permutations.add(SearchUtils.tweaks(replicas.get(0), trials(orderedReplicas.get(0)), initialResourceUsage));
+      permutations.add(
+          SearchUtils.tweaks(
+              replicas.get(0), trials(orderedReplicas.get(0)), initialResourceUsage));
 
-      if(!permutations.get(0).hasNext())
-        throw new IllegalStateException("illegal start");
+      if (!permutations.get(0).hasNext()) throw new IllegalStateException("illegal start");
 
       Restart:
       do {
@@ -279,7 +282,9 @@ public class ResourceBalancer implements Balancer {
           if (usedTweaks.size() == permutations.size() && permutations.size() < replicas.size())
             permutations.add(
                 SearchUtils.tweaks(
-                    replicas.get(permutations.size()), trials(orderedReplicas.get(permutations.size())), rat.usage));
+                    replicas.get(permutations.size()),
+                    trials(orderedReplicas.get(permutations.size())),
+                    rat.usage));
         }
 
         // in the end, we will have a complete answer, update result.
@@ -291,9 +296,10 @@ public class ResourceBalancer implements Balancer {
 
         // discard all empty iterators at stack head
         while (!permutations.isEmpty() && !permutations.get(permutations.size() - 1).hasNext()) {
-          if(!usedTweaks.isEmpty()) {
+          if (!usedTweaks.isEmpty()) {
             var revert = usedTweaks.remove(usedTweaks.size() - 1);
-            revert.tweak.toReplace.forEach(r -> currentAllocation.get(r.topicPartition()).remove(r));
+            revert.tweak.toReplace.forEach(
+                r -> currentAllocation.get(r.topicPartition()).remove(r));
             revert.tweak.toRemove.forEach(r -> currentAllocation.get(r.topicPartition()).add(r));
           }
           permutations.remove(permutations.size() - 1);
@@ -306,7 +312,9 @@ public class ResourceBalancer implements Balancer {
           .flatMap(
               broker ->
                   sourceCluster.brokerFolders().get(broker.id()).stream()
-                      .map(path -> Replica.builder(replica).broker(broker).path(path).build()))
+                      .map(
+                          path ->
+                              Replica.builder(replica).brokerId(broker.id()).path(path).build()))
           .map(newReplica -> new Tweak(List.of(), List.of(newReplica)))
           .toList();
     }
@@ -340,7 +348,7 @@ public class ResourceBalancer implements Balancer {
 
       // 3. move to other data-dir at the same broker
       var dataFolderMovement =
-          this.sourceCluster.brokerFolders().get(replica.broker().id()).stream()
+          this.sourceCluster.brokerFolders().get(replica.brokerId()).stream()
               .filter(folder -> !folder.equals(replica.path()))
               .map(
                   newFolder ->
@@ -352,7 +360,7 @@ public class ResourceBalancer implements Balancer {
       // 4. move to other brokers/data-dirs
       var interBrokerMovement =
           this.sourceCluster.brokers().stream()
-              .filter(b -> b.id() != replica.broker().id())
+              .filter(b -> b.id() != replica.brokerId())
               .flatMap(
                   b ->
                       b.dataFolders().stream()
@@ -362,8 +370,8 @@ public class ResourceBalancer implements Balancer {
                                       List.of(replica),
                                       List.of(
                                           Replica.builder(replica)
-                                              .broker(b)
-                                              .path(folder.path())
+                                              .brokerId(b.id())
+                                              .path(folder)
                                               .build()))))
               .toList();
 

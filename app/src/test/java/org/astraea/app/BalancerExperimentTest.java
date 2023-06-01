@@ -38,7 +38,6 @@ import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.TopicPartition;
 import org.astraea.common.balancer.AlgorithmConfig;
 import org.astraea.common.balancer.Balancer;
-import org.astraea.common.balancer.BalancerConfigs;
 import org.astraea.common.balancer.algorithms.GreedyBalancer;
 import org.astraea.common.balancer.algorithms.ResourceBalancer;
 import org.astraea.common.balancer.executor.StraightPlanExecutor;
@@ -94,8 +93,8 @@ public class BalancerExperimentTest {
               new NetworkIngressCost(Configuration.EMPTY), 3.0,
               new NetworkEgressCost(Configuration.EMPTY), 3.0);
       HasMoveCost moveCost = HasMoveCost.EMPTY;
-          // new ReplicaLeaderCost(
-          //     new Configuration(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
+      // new ReplicaLeaderCost(
+      //     new Configuration(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
       var costFunction = HasClusterCost.of(costMap);
 
       var balancer = new ResourceBalancer();
@@ -106,10 +105,7 @@ public class BalancerExperimentTest {
               .setBalancer(balancer)
               .setExecutionTimeout(Duration.ofSeconds(60))
               .setAlgorithmConfig(
-                  AlgorithmConfig.builder()
-                      .clusterCost(costFunction)
-                      .moveCost(moveCost)
-                      .build())
+                  AlgorithmConfig.builder().clusterCost(costFunction).moveCost(moveCost).build())
               .start()
               .toCompletableFuture()
               .join();

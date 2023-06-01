@@ -129,12 +129,12 @@ class AdminImpl implements Admin {
             topics.stream()
                 .map(topic -> new ConfigResource(ConfigResource.Type.TOPIC, topic))
                 .collect(Collectors.toList())),
-        to(kafkaAdmin.describeTopics(topics).all()),
+        to(kafkaAdmin.describeTopics(topics).allTopicNames()),
         (configs, desc) ->
             configs.entrySet().stream()
                 .map(entry -> Topic.of(entry.getKey(), desc.get(entry.getKey()), entry.getValue()))
                 .sorted(Comparator.comparing(Topic::name))
-                .collect(Collectors.toUnmodifiableList()));
+                .toList());
   }
 
   @Override
@@ -225,7 +225,7 @@ class AdminImpl implements Admin {
   @Override
   public CompletionStage<Set<TopicPartition>> topicPartitions(Set<String> topics) {
     if (topics.isEmpty()) return CompletableFuture.completedFuture(Set.of());
-    return to(kafkaAdmin.describeTopics(topics).all())
+    return to(kafkaAdmin.describeTopics(topics).allTopicNames())
         .thenApply(
             r ->
                 r.entrySet().stream()
@@ -240,7 +240,7 @@ class AdminImpl implements Admin {
   public CompletionStage<Set<TopicPartitionReplica>> topicPartitionReplicas(Set<Integer> brokers) {
     if (brokers.isEmpty()) return CompletableFuture.completedFuture(Set.of());
     return topicNames(true)
-        .thenCompose(topics -> to(kafkaAdmin.describeTopics(topics).all()))
+        .thenCompose(topics -> to(kafkaAdmin.describeTopics(topics).allTopicNames()))
         .thenApply(
             r ->
                 r.entrySet().stream()
@@ -266,7 +266,7 @@ class AdminImpl implements Admin {
    */
   private CompletionStage<Set<TopicPartition>> updatableTopicPartitions(Set<String> topics) {
     if (topics.isEmpty()) return CompletableFuture.completedFuture(Set.of());
-    return to(kafkaAdmin.describeTopics(topics).all())
+    return to(kafkaAdmin.describeTopics(topics).allTopicNames())
         .thenApply(
             ts ->
                 ts.entrySet().stream()
@@ -380,7 +380,7 @@ class AdminImpl implements Admin {
   public CompletionStage<List<Partition>> partitions(Set<String> topics) {
     if (topics.isEmpty()) return CompletableFuture.completedFuture(List.of());
     var updatableTopicPartitions = updatableTopicPartitions(topics);
-    var topicDesc = to(kafkaAdmin.describeTopics(topics).all());
+    var topicDesc = to(kafkaAdmin.describeTopics(topics).allTopicNames());
     return FutureUtils.combine(
         updatableTopicPartitions.thenCompose(this::earliestOffsets),
         updatableTopicPartitions.thenCompose(this::latestOffsets),
@@ -455,13 +455,12 @@ class AdminImpl implements Admin {
     return FutureUtils.combine(
         to(cluster.clusterId()),
         to(cluster.controller()),
-        topicNames(true).thenCompose(names -> to(kafkaAdmin.describeTopics(names).all())),
         nodeFuture.thenCompose(
             nodes ->
                 to(
                     kafkaAdmin
                         .describeLogDirs(nodes.stream().map(Node::id).collect(Collectors.toList()))
-                        .all())),
+                        .allDescriptions())),
         nodeFuture.thenCompose(
             nodes ->
                 doGetConfigs(
@@ -472,7 +471,7 @@ class AdminImpl implements Admin {
                                     ConfigResource.Type.BROKER, String.valueOf(n.id())))
                         .collect(Collectors.toList()))),
         nodeFuture,
-        (id, controller, topics, logDirs, configs, nodes) ->
+        (id, controller, logDirs, configs, nodes) ->
             Map.entry(
                 id,
                 nodes.stream()
@@ -482,8 +481,7 @@ class AdminImpl implements Admin {
                                 node.id() == controller.id(),
                                 node,
                                 configs.get(String.valueOf(node.id())),
-                                logDirs.get(node.id()),
-                                topics.values()))
+                                logDirs.get(node.id())))
                     .sorted(Comparator.comparing(Broker::id))
                     .collect(Collectors.toList())));
   }
@@ -512,7 +510,7 @@ class AdminImpl implements Admin {
                                 .partitionsToOffsetAndMetadata()
                                 .thenApply(of -> Map.entry(id, of)))
                     .map(f -> to(f).toCompletableFuture())
-                    .collect(Collectors.toUnmodifiableList()))
+                    .toList())
             .thenApply(
                 s -> s.stream().collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue))),
         (consumerGroupDescriptions, consumerGroupMetadata) ->
@@ -553,7 +551,7 @@ class AdminImpl implements Admin {
     return to(kafkaAdmin
             .describeTopics(
                 partitions.stream().map(TopicPartition::topic).collect(Collectors.toSet()))
-            .all())
+            .allTopicNames())
         .thenApply(
             ts ->
                 partitions.stream()
@@ -573,9 +571,7 @@ class AdminImpl implements Admin {
             availablePartitions ->
                 to(kafkaAdmin
                         .describeProducers(
-                            availablePartitions.stream()
-                                .map(TopicPartition::to)
-                                .collect(Collectors.toUnmodifiableList()))
+                            availablePartitions.stream().map(TopicPartition::to).toList())
                         .all())
                     // supported version: 2.8.0
                     // https://issues.apache.org/jira/browse/KAFKA-12238
@@ -610,7 +606,7 @@ class AdminImpl implements Admin {
                 ts.entrySet().stream()
                     .map(e -> Transaction.of(e.getKey(), e.getValue()))
                     .sorted(Comparator.comparing(Transaction::transactionId))
-                    .collect(Collectors.toUnmodifiableList()));
+                    .toList());
   }
 
   @Override
@@ -684,12 +680,13 @@ class AdminImpl implements Admin {
                                               Replica.builder()
                                                   .topic(topicName)
                                                   .partition(partitionId)
-                                                  .internal(internal)
+                                                  .isInternal(internal)
                                                   .isAdding(isAdding)
                                                   .isRemoving(isRemoving)
-                                                  .broker(
-                                                      brokers.getOrDefault(
-                                                          node.id(), Broker.of(node)))
+                                                  .brokerId(
+                                                      brokers
+                                                          .getOrDefault(node.id(), Broker.of(node))
+                                                          .id())
                                                   .lag(pathAndReplica.getValue().offsetLag())
                                                   .size(pathAndReplica.getValue().size())
                                                   .isLeader(
@@ -718,8 +715,8 @@ class AdminImpl implements Admin {
                 .sorted(
                     Comparator.comparing(Replica::topic)
                         .thenComparing(Replica::partition)
-                        .thenComparing(r -> r.broker().id()))
-                .collect(Collectors.toUnmodifiableList()));
+                        .thenComparing(r -> r.brokerId()))
+                .toList());
   }
 
   @Override
@@ -1237,7 +1234,7 @@ class AdminImpl implements Admin {
                                                                 e.getKey().name(), Map.of())
                                                             .getOrDefault(entry.getKey(), "")
                                                             .split(","))
-                                                    .collect(Collectors.toList());
+                                                    .toList();
                                             // disable to subtract from *
                                             if (values.contains("*"))
                                               throw new IllegalArgumentException(

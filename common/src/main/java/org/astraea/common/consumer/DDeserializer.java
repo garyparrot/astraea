@@ -20,13 +20,11 @@ import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.util.stream.Stream;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.apache.kafka.common.serialization.DoubleDeserializer;
@@ -40,7 +38,6 @@ import org.astraea.common.admin.ClusterInfo;
 import org.astraea.common.admin.Config;
 import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.Topic;
-import org.astraea.common.admin.TopicPartition;
 import org.astraea.common.backup.OldByteUtils;
 import org.astraea.common.json.JsonConverter;
 import org.astraea.common.json.TypeRef;
@@ -180,29 +177,10 @@ public interface DDeserializer<T> {
       var internal = buffer.get() != 0;
       var topicPartitions =
           IntStream.range(0, buffer.getInt())
-              .mapToObj(i -> TopicPartition.of(name, buffer.getInt()))
+              .mapToObj(i -> buffer.getInt())
               .collect(Collectors.toSet());
-      return new Topic() {
-        @Override
-        public String name() {
-          return name;
-        }
 
-        @Override
-        public Config config() {
-          return new Config(config);
-        }
-
-        @Override
-        public boolean internal() {
-          return internal;
-        }
-
-        @Override
-        public Set<TopicPartition> topicPartitions() {
-          return topicPartitions;
-        }
-      };
+      return new Topic(name, new Config(config), internal, topicPartitions);
     }
   }
 
@@ -227,7 +205,7 @@ public interface DDeserializer<T> {
       return Replica.builder()
           .topic(topicName)
           .partition(partition)
-          .broker(nodeInfo)
+          .brokerId(nodeInfo.id())
           .lag(lag)
           .size(size)
           .isLeader(isLeader)
@@ -260,12 +238,8 @@ public interface DDeserializer<T> {
                         node.port(),
                         node.isController(),
                         node.config(),
-                        Stream.of(
-                                "/tmp/log-folder-0", "/tmp/log-folder-1", "/tmp/log-folder-2")
-                            .map(path -> new Broker.DataFolder(path, Map.of(), Map.of()))
-                            .toList(),
-                        node.topicPartitions(),
-                        node.topicPartitionLeaders());
+                        Set.of("/tmp/log-folder-0", "/tmp/log-folder-1", "/tmp/log-folder-2"),
+                        node.topicPartitionPaths());
                   })
               .toList();
       var topics =

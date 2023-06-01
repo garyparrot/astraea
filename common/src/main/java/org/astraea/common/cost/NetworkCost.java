@@ -227,7 +227,7 @@ public abstract class NetworkCost implements HasClusterCost {
         .replicaStream()
         .filter(Replica::isOnline)
         .filter(Replica::isLeader)
-        .map(r -> Map.entry(BrokerTopic.of(r.broker().id(), r.topic()), r))
+        .map(r -> Map.entry(BrokerTopic.of(r.brokerId(), r.topic()), r))
         .collect(
             Collectors.groupingBy(
                 Map.Entry::getKey,
@@ -252,19 +252,15 @@ public abstract class NetworkCost implements HasClusterCost {
                           .filter(bean -> bean.type().equals(metric))
                           .max(Comparator.comparingLong(HasBeanObject::createdTimestamp))
                           .map(
-                              hasRate -> {
-                                switch (estimationMethod) {
-                                  case BROKER_TOPIC_ONE_MINUTE_RATE:
-                                    return hasRate.oneMinuteRate();
-                                  case BROKER_TOPIC_FIVE_MINUTE_RATE:
-                                    return hasRate.fiveMinuteRate();
-                                  case BROKER_TOPIC_FIFTEEN_MINUTE_RATE:
-                                    return hasRate.fifteenMinuteRate();
-                                  default:
-                                    throw new IllegalStateException(
+                              hasRate ->
+                                  switch (estimationMethod) {
+                                    case BROKER_TOPIC_ONE_MINUTE_RATE -> hasRate.oneMinuteRate();
+                                    case BROKER_TOPIC_FIVE_MINUTE_RATE -> hasRate.fiveMinuteRate();
+                                    case BROKER_TOPIC_FIFTEEN_MINUTE_RATE -> hasRate
+                                        .fifteenMinuteRate();
+                                    default -> throw new IllegalStateException(
                                         "Unknown estimation method: " + estimationMethod);
-                                }
-                              })
+                                  })
                           // no load metric for this partition, treat as zero load
                           .orElse(0.0);
               if (Double.isNaN(totalShare) || totalShare < 0)
@@ -345,7 +341,7 @@ public abstract class NetworkCost implements HasClusterCost {
       public ResourceUsage evaluateClusterResourceUsage(Replica target) {
         return new ResourceUsage(
             Map.of(
-                "NetworkIngress_Broker_" + target.broker().id(),
+                "NetworkIngress_Broker_" + target.brokerId(),
                 (double) ingress(cachedCalculation, target.topicPartition())));
       }
 
@@ -403,7 +399,7 @@ public abstract class NetworkCost implements HasClusterCost {
         if (target.isLeader())
           return new ResourceUsage(
               Map.of(
-                  "NetworkEgress_Broker_" + target.broker().id(),
+                  "NetworkEgress_Broker_" + target.brokerId(),
                   (double) egress(cachedCalculation, target.topicPartition())
                       + ingress(cachedCalculation, target.topicPartition())
                           * (sourceCluster.replicas(target.topicPartition()).size() - 1)));
