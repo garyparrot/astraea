@@ -16,16 +16,20 @@
  */
 package org.astraea.app;
 
+import java.awt.image.BandCombineOp;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.time.Duration;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Scanner;
 import java.util.Set;
+import java.util.function.BiConsumer;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.astraea.balancer.bench.BalancerBenchmark;
 import org.astraea.common.ByteUtils;
@@ -49,6 +53,7 @@ import org.astraea.common.cost.NetworkIngressCost;
 import org.astraea.common.cost.NoSufficientMetricsException;
 import org.astraea.common.cost.ReplicaLeaderCost;
 import org.astraea.common.cost.ReplicaNumberCost;
+import org.astraea.common.metrics.BeanObject;
 import org.astraea.common.metrics.ClusterBean;
 import org.astraea.common.metrics.ClusterBeanSerializer;
 import org.astraea.common.metrics.ClusterInfoSerializer;
@@ -59,11 +64,12 @@ import org.astraea.it.Service;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
+import scala.concurrent.impl.FutureConvertersImpl;
 
 public class BalancerExperimentTest {
 
-  public static final String fileName0 = "/home/garyparrot/cluster-file3.bin";
-  public static final String fileName1 = "/home/garyparrot/bean-file3.bin";
+  public static final String fileName0 = "/home/garyparrot/cluster-file-new-1.bin";
+  public static final String fileName1 = "/home/garyparrot/bean-file-new-1.bin";
   public static final String realCluster =
       "192.168.103.177:25655,192.168.103.178:25655,192.168.103.179:25655,192.168.103.180:25655,192.168.103.181:25655,192.168.103.182:25655";
 
@@ -81,12 +87,6 @@ public class BalancerExperimentTest {
       // ClusterInfo clusterInfo =
       //     admin.topicNames(false).thenCompose(admin::clusterInfo).toCompletableFuture().join();
 
-      System.out.println("Serialize ClusterInfo");
-      ClusterInfo clusterInfo = ClusterInfoSerializer.deserialize(stream0);
-      System.out.println("Serialize ClusterBean");
-      ClusterBean clusterBean = ClusterBeanSerializer.deserialize(stream1);
-      System.out.println("Done!");
-
       Map<HasClusterCost, Double> costMap =
           Map.of(
               new ReplicaLeaderCost(Configuration.EMPTY), 3.0,
@@ -97,13 +97,21 @@ public class BalancerExperimentTest {
       //     new Configuration(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
       var costFunction = HasClusterCost.of(costMap);
 
-      var balancer = new ResourceBalancer();
+      System.out.println("Serialize ClusterInfo");
+      ClusterInfo clusterInfo = ByteUtils.readClusterInfo(stream0.readAllBytes());
+      System.out.println("Serialize ClusterBean");
+      ClusterBean clusterBean = asClusterBean(costMap.keySet(), ByteUtils.readBeanObjects(stream1.readAllBytes()));
+      var beans = ByteUtils.readBeanObjects(stream1.readAllBytes());
+      System.out.println("Done!");
+
+
+      var balancer = new GreedyBalancer();
       var result =
           BalancerBenchmark.costProfiling()
               .setClusterInfo(clusterInfo)
               .setClusterBean(clusterBean)
               .setBalancer(balancer)
-              .setExecutionTimeout(Duration.ofSeconds(60))
+              .setExecutionTimeout(Duration.ofSeconds(180))
               .setAlgorithmConfig(
                   AlgorithmConfig.builder().clusterCost(costFunction).moveCost(moveCost).build())
               .start()
@@ -237,9 +245,9 @@ public class BalancerExperimentTest {
         try (var stream0 = new FileOutputStream(fileName0);
             var stream1 = new FileOutputStream(fileName1)) {
           System.out.println("Serialize ClusterInfo");
-          ClusterInfoSerializer.serialize(clusterInfo, stream0);
+          stream0.write(ByteUtils.toBytes(clusterInfo));
           System.out.println("Serialize ClusterBean");
-          ClusterBeanSerializer.serialize(clusterBean, stream1);
+          stream1.write(ByteUtils.toBytes(clusterBean.all()));
         } catch (IOException e) {
           e.printStackTrace();
         }
@@ -248,9 +256,27 @@ public class BalancerExperimentTest {
         try (var stream0 = new FileInputStream(fileName0);
             var stream1 = new FileInputStream(fileName1)) {
           System.out.println("Serialize ClusterInfo");
-          ClusterInfo a = ClusterInfoSerializer.deserialize(stream0);
+          ClusterInfo a = ByteUtils.readClusterInfo(stream0.readAllBytes());
           System.out.println("Serialize ClusterBean");
-          ClusterBean b = ClusterBeanSerializer.deserialize(stream1);
+          var receiver = MetricStore.Receiver.fixed(ByteUtils.readBeanObjects(stream1.readAllBytes())
+              .entrySet()
+              .stream()
+              .collect(Collectors.toUnmodifiableMap(
+                  Map.Entry::getKey,
+                  x -> (Collection<BeanObject>) x.getValue())));
+          var store = MetricStore.builder()
+              .sensorsSupplier(() ->
+                  costMap.keySet().stream()
+                      .collect(
+                          Collectors.toUnmodifiableMap(
+                              CostFunction::metricSensor, x -> (i0, i1) -> {
+                              })))
+              .receivers(List.of(receiver))
+              .beanExpiration(Duration.ofDays(3))
+              .build();
+          store.wait(cb -> !cb.all().isEmpty(), Duration.ofSeconds(10));
+          ClusterBean clusterBean1 = store.clusterBean();
+
           System.out.println("Done!");
         } catch (IOException e) {
           e.printStackTrace();
@@ -351,6 +377,26 @@ public class BalancerExperimentTest {
               Set.copyOf(deserialized.replicas(topicPartition)));
         }
       }
+    }
+  }
+
+  ClusterBean asClusterBean(Set<? extends CostFunction> sensors, Map<Integer, List<BeanObject>> beans) {
+    var receiver = MetricStore.Receiver.fixed(beans.entrySet()
+        .stream()
+        .collect(Collectors.toUnmodifiableMap(
+            Map.Entry::getKey,
+            x -> (Collection<BeanObject>) x.getValue())));
+    try (MetricStore build = MetricStore.builder()
+        .receivers(List.of(receiver))
+        .beanExpiration(Duration.ofDays(3))
+        .sensorsSupplier(() -> sensors.stream()
+            .map(CostFunction::metricSensor)
+            .collect(Collectors.toUnmodifiableMap(
+                x -> x,
+                x -> (a, b) -> {})))
+        .build()) {
+      build.wait(Predicate.not(x -> x.all().isEmpty()), Duration.ofSeconds(3));
+      return build.clusterBean();
     }
   }
 }
