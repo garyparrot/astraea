@@ -24,6 +24,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -81,6 +82,8 @@ public class ResourceBalancer implements Balancer {
     private final Map<Replica, Integer> branchFactor;
     private final Predicate<ResourceUsage> feasibleUsage;
 
+    private final Semaphore parallelism;
+
     private final long deadline;
 
     private AlgorithmContext(AlgorithmConfig config, long deadline) {
@@ -89,6 +92,8 @@ public class ResourceBalancer implements Balancer {
       this.clusterBean = config.clusterBean();
       this.deadline = deadline;
       System.out.println("Running");
+
+      this.parallelism = new Semaphore(Runtime.getRuntime().availableProcessors());
 
       // hints to estimate the resource usage of replicas
       this.usageHints =
