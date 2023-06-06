@@ -105,7 +105,7 @@ public class BalancerExperimentTest {
       System.out.println("Done!");
 
 
-      var balancer = new GreedyBalancer();
+      var balancer = new ResourceBalancer();
       var result =
           BalancerBenchmark.costProfiling()
               .setClusterInfo(clusterInfo)

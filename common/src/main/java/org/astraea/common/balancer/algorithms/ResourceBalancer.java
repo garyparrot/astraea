@@ -24,6 +24,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -82,7 +85,7 @@ public class ResourceBalancer implements Balancer {
     private final Map<Replica, Integer> branchFactor;
     private final Predicate<ResourceUsage> feasibleUsage;
 
-    private final Semaphore parallelism;
+    private final ForkJoinPool pool;
 
     private final long deadline;
 
@@ -91,9 +94,12 @@ public class ResourceBalancer implements Balancer {
       this.sourceCluster = config.clusterInfo();
       this.clusterBean = config.clusterBean();
       this.deadline = deadline;
+
+
       System.out.println("Running");
 
-      this.parallelism = new Semaphore(Runtime.getRuntime().availableProcessors());
+      // TODO: recycle this service
+      this.pool = new ForkJoinPool();
 
       // hints to estimate the resource usage of replicas
       this.usageHints =
@@ -193,6 +199,7 @@ public class ResourceBalancer implements Balancer {
               System.out.println("Overflow Score: " + clusterCost.value());
               return;
             }
+            // TODO: Update to lock style
             // if cluster cost is better, accept answer
             if (bestAllocationScore.get() == null
                 || clusterCost.value() < bestAllocationScore.get()) {
@@ -273,6 +280,20 @@ public class ResourceBalancer implements Balancer {
 
       Restart:
       do {
+        // discard all empty iterators at stack end
+        while(!permutations.isEmpty() && !permutations.get(permutations.size() - 1).hasNext()) {
+          if (!usedTweaks.isEmpty()) {
+            var revert = usedTweaks.remove(usedTweaks.size() - 1);
+            revert.tweak.toReplace.forEach(
+                r -> currentAllocation.get(r.topicPartition()).remove(r));
+            revert.tweak.toRemove.forEach(r -> currentAllocation.get(r.topicPartition()).add(r));
+          }
+          permutations.remove(permutations.size() - 1);
+        }
+        // break this loop if no job remained.
+        if(permutations.isEmpty())
+          break;
+
         // keep applying tweak & adding iterator until the last replica
         while (usedTweaks.size() < permutations.size()) {
           int head = usedTweaks.size();
@@ -298,17 +319,6 @@ public class ResourceBalancer implements Balancer {
         var rat = usedTweaks.remove(usedTweaks.size() - 1);
         rat.tweak.toReplace.forEach(r -> currentAllocation.get(r.topicPartition()).remove(r));
         rat.tweak.toRemove.forEach(r -> currentAllocation.get(r.topicPartition()).add(r));
-
-        // discard all empty iterators at stack head
-        while (!permutations.isEmpty() && !permutations.get(permutations.size() - 1).hasNext()) {
-          if (!usedTweaks.isEmpty()) {
-            var revert = usedTweaks.remove(usedTweaks.size() - 1);
-            revert.tweak.toReplace.forEach(
-                r -> currentAllocation.get(r.topicPartition()).remove(r));
-            revert.tweak.toRemove.forEach(r -> currentAllocation.get(r.topicPartition()).add(r));
-          }
-          permutations.remove(permutations.size() - 1);
-        }
       } while (!permutations.isEmpty() && System.currentTimeMillis() < deadline);
     }
 
