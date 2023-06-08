@@ -17,6 +17,7 @@
 package org.astraea.app;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -24,8 +25,12 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.astraea.app.web.BackboneImbalanceScenario;
+import org.astraea.common.ByteUtils;
 import org.astraea.common.Configuration;
+import org.astraea.common.DataSize;
 import org.astraea.common.admin.Admin;
+import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.admin.TopicConfigs;
 import org.astraea.common.json.JsonConverter;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -105,5 +110,43 @@ public class BackboneImbalanceApplyTest {
                     }));
 
     return Map.of("backbone_imbalance_hosts", Map.of("hosts", hosts));
+  }
+
+  @Test
+  void setRetentionSize() {
+    try (Admin admin = Admin.of(realCluster)) {
+      var names = admin.topicNames(false).toCompletableFuture().join();
+      admin.setTopicConfigs(names.stream()
+          .collect(Collectors.toUnmodifiableMap(
+              name -> name,
+              name -> Map.of(TopicConfigs.RETENTION_BYTES_CONFIG,
+                  Long.toString(DataSize.GB.of(5).bytes())))))
+          .toCompletableFuture()
+          .join();
+      admin.topics(names)
+          .toCompletableFuture()
+          .join()
+          .stream()
+          .map(x -> x.config().value(TopicConfigs.RETENTION_BYTES_CONFIG))
+          .forEach(System.out::println);
+    }
+  }
+
+  @Test
+  void testSaveClusterInfo() {
+    try (Admin admin = Admin.of(realCluster)) {
+      ClusterInfo cluster = admin.topicNames(true)
+          .thenCompose(admin::clusterInfo)
+          .toCompletableFuture()
+          .join();
+      byte[] bytes = ByteUtils.toBytes(cluster);
+      Path tempFile = Files.createTempFile("cluster-info", ".bin");
+      try (OutputStream outputStream = Files.newOutputStream(tempFile)) {
+        outputStream.write(bytes);
+      }
+      System.out.println(tempFile.toString());
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
   }
 }

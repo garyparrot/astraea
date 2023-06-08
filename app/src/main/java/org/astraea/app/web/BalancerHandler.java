@@ -16,6 +16,9 @@
  */
 package org.astraea.app.web;
 
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.Comparator;
@@ -29,6 +32,8 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.function.Supplier;
+
+import org.astraea.common.ByteUtils;
 import org.astraea.common.Configuration;
 import org.astraea.common.Utils;
 import org.astraea.common.admin.Admin;
@@ -100,6 +105,28 @@ class BalancerHandler implements Handler, AutoCloseable {
             if (error != null)
               new RuntimeException("Failed to generate balance plan: " + taskId, error)
                   .printStackTrace();
+            else {
+              try {
+                Path base = Path.of("/home/garyparrot/clusters");
+                Path clusterInfoFileBefore = Files.createTempFile(base, "cluster-info-before", ".bin");
+                Path clusterInfoFileAfter = Files.createTempFile(base, "cluster-info-after", ".bin");
+                Path clusterBeanFile = Files.createTempFile("cluster-bean", ".bin");
+                try (var stream = Files.newOutputStream(clusterInfoFileBefore)) {
+                  stream.write(ByteUtils.toBytes(result.initialClusterInfo()));
+                }
+                try (var stream = Files.newOutputStream(clusterInfoFileAfter)) {
+                  stream.write(ByteUtils.toBytes(result.proposal()));
+                }
+                try (var stream = Files.newOutputStream(clusterBeanFile)) {
+                  stream.write(ByteUtils.toBytes(result.clusterBean().all()));
+                }
+                System.out.println("Cluster Before: " + clusterInfoFileBefore);
+                System.out.println("Cluster After: " + clusterInfoFileAfter);
+                System.out.println("Cluster Bean: " + clusterBeanFile);
+              } catch (Exception e) {
+                e.printStackTrace();
+              }
+            }
           });
       taskMetadata.put(taskId, request);
       planGenerations.put(taskId, task);
