@@ -17,19 +17,26 @@
 package org.astraea.app;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.astraea.app.web.BackboneImbalanceScenario;
 import org.astraea.common.ByteUtils;
 import org.astraea.common.Configuration;
+import org.astraea.common.DataRate;
 import org.astraea.common.DataSize;
+import org.astraea.common.Utils;
 import org.astraea.common.admin.Admin;
 import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.admin.Replica;
 import org.astraea.common.admin.TopicConfigs;
 import org.astraea.common.json.JsonConverter;
 import org.junit.jupiter.api.Disabled;
@@ -59,23 +66,24 @@ public class BackboneImbalanceApplyTest {
               Map.ofEntries(
                   Map.entry(BackboneImbalanceScenario.CONFIG_PERF_ZIPFIAN_EXPONENT, "1.1"),
                   Map.entry(BackboneImbalanceScenario.CONFIG_PERF_KEY_TABLE_SEED, "0"),
-                  // Map.entry(
-                  //     BackboneImbalanceScenario.CONFIG_TOPIC_CONSUMER_FANOUT_SERIES,
-                  //     "1,1,1,1,1,1,1,1,1,1,1,2,2,2,3,4"),
+                  Map.entry(BackboneImbalanceScenario.CONFIG_TOPIC_COUNT, "200"),
+                  Map.entry(BackboneImbalanceScenario.CONFIG_REPLICATION_FACTOR, "3"),
+                  // Map.entry(BackboneImbalanceScenario.CONFIG_TOPIC_DATA_RATE_PARETO_SCALE,
+                  //     Double.toString(DataRate.KB.of(1).byteRate())),
                   Map.entry(
                       BackboneImbalanceScenario.CONFIG_PERF_CLIENT_COUNT,
                       Integer.toString(clients.size()))));
       var result = scenario.apply(admin, config).toCompletableFuture().join();
 
-      admin.topicNames(false)
-          .thenCompose(names -> admin.setTopicConfigs(names.stream()
-              .collect(Collectors.toUnmodifiableMap(
-                  x -> x,
-                  x -> Map.of(
-                      TopicConfigs.RETENTION_BYTES_CONFIG,
-                      Long.toString(DataSize.GB.of(10).bytes()))))))
-          .toCompletableFuture()
-          .join();
+      // admin.topicNames(false)
+      //     .thenCompose(names -> admin.setTopicConfigs(names.stream()
+      //         .collect(Collectors.toUnmodifiableMap(
+      //             x -> x,
+      //             x -> Map.of(
+      //                 TopicConfigs.RETENTION_BYTES_CONFIG,
+      //                 Long.toString(DataSize.GB.of(10).bytes()))))))
+      //     .toCompletableFuture()
+      //     .join();
 
       // print summary
       var converter = JsonConverter.defaultConverter();
@@ -158,6 +166,63 @@ public class BackboneImbalanceApplyTest {
       System.out.println(tempFile.toString());
     } catch (IOException e) {
       throw new RuntimeException(e);
+    }
+  }
+
+  @Test
+  void restoreClusterInfo() throws IOException {
+    var file = "/home/garyparrot/clusters/preserved/001-scale-4-to-6-imbalance-cluster-before.bin";
+    try (
+        var admin = Admin.of(realCluster);
+        var stream = Files.newInputStream(Path.of(file))) {
+      var cluster = ByteUtils.readClusterInfo(stream.readAllBytes());
+
+      System.out.println("Delete Topics");
+      admin.topicNames(false)
+          .thenCompose(admin::deleteTopics)
+          .toCompletableFuture()
+          .join();
+
+      Utils.sleep(Duration.ofSeconds(15));
+
+      System.out.println("Recreate Topics");
+      cluster.replicas().stream()
+          .collect(Collectors.groupingBy(Replica::topic, Collectors.mapping(Replica::topicPartition, Collectors.counting())))
+          .entrySet()
+          .stream()
+          .map(x -> admin.creator()
+              .topic(x.getKey())
+              .numberOfPartitions(x.getValue().intValue())
+              .numberOfReplicas((short)1)
+              .run()
+              .toCompletableFuture())
+          .toList()
+          .forEach(CompletableFuture::join);
+
+      System.out.println("Relocate Replicas");
+      admin.moveToBrokers(cluster.topicPartitions()
+          .stream()
+          .collect(Collectors.toUnmodifiableMap(
+              tp -> tp,
+              tp -> cluster.replicas(tp).stream()
+                  .sorted(Comparator.comparing(x -> !x.isPreferredLeader()))
+                  .map(Replica::brokerId)
+                  .collect(Collectors.toList())
+          )))
+          .toCompletableFuture()
+          .join();
+      Utils.sleep(Duration.ofSeconds(5));
+
+      System.out.println("Relocate to Folders");
+      admin.moveToFolders(cluster.replicas()
+          .stream()
+          .collect(Collectors.toUnmodifiableMap(Replica::topicPartitionReplica, Replica::path)))
+          .toCompletableFuture()
+          .join();
+      Utils.sleep(Duration.ofSeconds(5));
+
+      System.out.println("Leader election");
+      admin.preferredLeaderElection(cluster.topicPartitions());
     }
   }
 }

@@ -81,6 +81,11 @@ public class BalancerExperimentTest {
       "/home/garyparrot/clusters/fe99-cluster-bean-15032755707454245272.bin",
       "/home/garyparrot/clusters/fe99-cluster-info-after-15377270052954832616.bin");
 
+  Benchmark imbalanceFollowers = new Benchmark(
+      "/home/garyparrot/clusters/preserved/003-imbalance-with-followers-before.bin",
+      "/home/garyparrot/clusters/preserved/003-imbalance-with-followers-bean.bin",
+      "/home/garyparrot/clusters/preserved/003-imbalance-with-followers-after.bin");
+
   String fileName0 = "";
   String fileName1 = "";
 
@@ -95,7 +100,7 @@ public class BalancerExperimentTest {
   @Test
   void testProfiling() {
     // load
-    var usedBench = funnyScale;
+    var usedBench = imbalanceFollowers;
     try (var admin = Admin.of(realCluster);
         var stream0 = new FileInputStream(usedBench.clusterInfo);
         var stream1 = new FileInputStream(usedBench.clusterBean)) {

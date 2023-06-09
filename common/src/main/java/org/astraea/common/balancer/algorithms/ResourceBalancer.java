@@ -337,6 +337,10 @@ public class ResourceBalancer implements Balancer {
 
     private List<Tweak> tweaks(
         Map<TopicPartition, List<Replica>> currentAllocation, Replica replica) {
+      // if this replica doesn't exists in the current allocation, it is possible that it has already been tweaked
+      if(!currentAllocation.get(replica.topicPartition()).contains(replica))
+        return List.of(new Tweak(List.of(), List.of()));
+
       // 1. no change
       var noMovement = List.of(new Tweak(List.of(), List.of()));
 
@@ -380,6 +384,7 @@ public class ResourceBalancer implements Balancer {
       var interBrokerMovement =
           this.sourceCluster.brokers().stream()
               .filter(b -> b.id() != replica.brokerId())
+              .filter(b -> currentAllocation.get(replica.topicPartition()).stream().noneMatch(rr -> rr.brokerId() == b.id()))
               .flatMap(
                   b ->
                       b.dataFolders().stream()

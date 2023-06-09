@@ -57,6 +57,8 @@ public class BackboneImbalanceScenario implements Scenario<BackboneImbalanceScen
 
   public static final String CONFIG_RANDOM_SEED = "seed";
   public static final String CONFIG_TOPIC_COUNT = "topicCount";
+  // WARNING: Using the replication factor flag will cause the bandwidth estimation go inaccurate
+  public static final String CONFIG_REPLICATION_FACTOR = "replicationFactor";
   public static final String CONFIG_TOPIC_DATA_RATE_PARETO_SCALE = "topicRateParetoScale";
   public static final String CONFIG_TOPIC_DATA_RATE_PARETO_SHAPE = "topicRateParetoShape";
   public static final String CONFIG_TOPIC_CONSUMER_FANOUT_SERIES = "consumerFanoutSeries";
@@ -103,7 +105,7 @@ public class BackboneImbalanceScenario implements Scenario<BackboneImbalanceScen
                               .creator()
                               .topic(name)
                               .numberOfPartitions(topicPartitionCountDistribution.sample())
-                              .numberOfReplicas((short) 1)
+                              .numberOfReplicas(config.replicationFactor())
                               .run());
           var backboneTopic =
               Stream.generate(
@@ -484,6 +486,13 @@ public class BackboneImbalanceScenario implements Scenario<BackboneImbalanceScen
                       .map(Integer::parseInt)
                       .collect(Collectors.toUnmodifiableList()))
           .orElse(List.of(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 3, 5));
+    }
+
+    short replicationFactor() {
+      return scenarioConfig
+          .string(CONFIG_REPLICATION_FACTOR)
+          .map(Short::parseShort)
+          .orElse((short) 1);
     }
 
     double topicRateParetoScale() {
