@@ -28,6 +28,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -364,6 +365,9 @@ public class ResourceBalancer implements Balancer {
       // 3. move to other data-dir at the same broker
       var dataFolderMovement =
           this.sourceCluster.brokerFolders().get(replica.brokerId()).stream()
+              .map(x -> Map.entry(ThreadLocalRandom.current().nextInt(), x))
+              .sorted(Map.Entry.comparingByKey())
+              .map(Map.Entry::getValue)
               .filter(folder -> !folder.equals(replica.path()))
               .map(
                   newFolder ->
@@ -387,7 +391,11 @@ public class ResourceBalancer implements Balancer {
                                           Replica.builder(replica)
                                               .brokerId(b.id())
                                               .path(folder)
-                                              .build()))))
+                                              .build())))
+                          .map(x -> Map.entry(ThreadLocalRandom.current().nextInt(), x))
+                          .sorted(Map.Entry.comparingByKey())
+                          .map(Map.Entry::getValue)
+              )
               .toList();
 
       // usage among tweaks

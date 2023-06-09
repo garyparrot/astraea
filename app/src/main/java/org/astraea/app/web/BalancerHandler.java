@@ -107,10 +107,11 @@ class BalancerHandler implements Handler, AutoCloseable {
                   .printStackTrace();
             else {
               try {
+                var series = Utils.randomString(4);
                 Path base = Path.of("/home/garyparrot/clusters");
-                Path clusterInfoFileBefore = Files.createTempFile(base, "cluster-info-before", ".bin");
-                Path clusterInfoFileAfter = Files.createTempFile(base, "cluster-info-after", ".bin");
-                Path clusterBeanFile = Files.createTempFile("cluster-bean", ".bin");
+                Path clusterInfoFileBefore = Files.createTempFile(base, series + "-cluster-info-before-", ".bin");
+                Path clusterInfoFileAfter = Files.createTempFile(base, series + "-cluster-info-after-", ".bin");
+                Path clusterBeanFile = Files.createTempFile(base, series + "-cluster-bean-", ".bin");
                 try (var stream = Files.newOutputStream(clusterInfoFileBefore)) {
                   stream.write(ByteUtils.toBytes(result.initialClusterInfo()));
                 }

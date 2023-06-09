@@ -66,6 +66,17 @@ public class BackboneImbalanceApplyTest {
                       BackboneImbalanceScenario.CONFIG_PERF_CLIENT_COUNT,
                       Integer.toString(clients.size()))));
       var result = scenario.apply(admin, config).toCompletableFuture().join();
+
+      admin.topicNames(false)
+          .thenCompose(names -> admin.setTopicConfigs(names.stream()
+              .collect(Collectors.toUnmodifiableMap(
+                  x -> x,
+                  x -> Map.of(
+                      TopicConfigs.RETENTION_BYTES_CONFIG,
+                      Long.toString(DataSize.GB.of(10).bytes()))))))
+          .toCompletableFuture()
+          .join();
+
       // print summary
       var converter = JsonConverter.defaultConverter();
       System.out.println(converter.toJson(result));

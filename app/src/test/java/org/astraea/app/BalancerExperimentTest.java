@@ -68,8 +68,22 @@ import scala.concurrent.impl.FutureConvertersImpl;
 
 public class BalancerExperimentTest {
 
-  public static final String fileName0 = "/home/garyparrot/cluster-file-new-1.bin";
-  public static final String fileName1 = "/home/garyparrot/bean-file-new-1.bin";
+  record Benchmark(String clusterInfo, String clusterBean, String originalAfter) {}
+
+  Benchmark bench0 = new Benchmark("/home/garyparrot/cluster-file-new-1.bin", "/home/garyparrot/bean-file-new-1.bin", "");
+  Benchmark clusterScale4to6 = new Benchmark(
+      "/home/garyparrot/clusters/cluster-info-before5711282531669254849.bin",
+      "/home/garyparrot/clusters/cluster-bean10583960853500379886.bin",
+      "/home/garyparrot/clusters/cluster-info-after13687119735971491405.bin");
+
+  Benchmark funnyScale = new Benchmark(
+      "/home/garyparrot/clusters/fe99-cluster-info-before-1829908888049525671.bin",
+      "/home/garyparrot/clusters/fe99-cluster-bean-15032755707454245272.bin",
+      "/home/garyparrot/clusters/fe99-cluster-info-after-15377270052954832616.bin");
+
+  String fileName0 = "";
+  String fileName1 = "";
+
   public static final String realCluster =
       "192.168.103.177:25655,192.168.103.178:25655,192.168.103.179:25655,192.168.103.180:25655,192.168.103.181:25655,192.168.103.182:25655";
 
@@ -81,15 +95,16 @@ public class BalancerExperimentTest {
   @Test
   void testProfiling() {
     // load
+    var usedBench = funnyScale;
     try (var admin = Admin.of(realCluster);
-        var stream0 = new FileInputStream(fileName0);
-        var stream1 = new FileInputStream(fileName1)) {
+        var stream0 = new FileInputStream(usedBench.clusterInfo);
+        var stream1 = new FileInputStream(usedBench.clusterBean)) {
       // ClusterInfo clusterInfo =
       //     admin.topicNames(false).thenCompose(admin::clusterInfo).toCompletableFuture().join();
 
       Map<HasClusterCost, Double> costMap =
           Map.of(
-              new ReplicaLeaderCost(Configuration.EMPTY), 3.0,
+              // new ReplicaLeaderCost(Configuration.EMPTY), 3.0,
               new NetworkIngressCost(Configuration.EMPTY), 3.0,
               new NetworkEgressCost(Configuration.EMPTY), 3.0);
       HasMoveCost moveCost = HasMoveCost.EMPTY;
