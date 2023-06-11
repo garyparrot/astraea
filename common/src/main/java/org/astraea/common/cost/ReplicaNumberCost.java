@@ -18,10 +18,14 @@ package org.astraea.common.cost;
 
 import static org.astraea.common.cost.MigrationCost.replicaNumChanged;
 
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import org.astraea.common.Configuration;
 import org.astraea.common.admin.Broker;
 import org.astraea.common.admin.ClusterInfo;
+import org.astraea.common.admin.Replica;
 import org.astraea.common.metrics.ClusterBean;
 
 /** more replicas migrate -> higher cost */
@@ -77,6 +81,46 @@ public class ReplicaNumberCost implements HasClusterCost, HasMoveCost {
     // such case is detected, return 0 as the optimal state of this cost function was found.
     if (max - min == 1) return ClusterCost.of(0, () -> "integer balance " + max);
     return ClusterCost.of((double) (max - min) / (totalReplicas), summary::toString);
+  }
+
+
+  @Override
+  public Collection<ResourceUsageHint> clusterResourceHint(
+      ClusterInfo sourceCluster, ClusterBean clusterBean) {
+    var replicaCount = (long) sourceCluster.replicas().size();
+    var avgReplicaPerBroker = replicaCount / sourceCluster.brokers().size();
+    return List.of(
+        new ResourceUsageHint() {
+          @Override
+          public String description() {
+            return "Balance Replica Count";
+          }
+
+          @Override
+          public ResourceUsage evaluateReplicaResourceUsage(Replica target) {
+            return new ResourceUsage(Map.of());
+          }
+
+          @Override
+          public ResourceUsage evaluateClusterResourceUsage(Replica target) {
+            return new ResourceUsage(Map.of("replica_" + target.brokerId(), 1.0));
+          }
+
+          @Override
+          public double importance(ResourceUsage replicaResourceUsage) {
+            return 1;
+          }
+
+          @Override
+          public double idealness(ResourceUsage clusterResourceUsage) {
+            return (double)((int)(sourceCluster.brokers().stream()
+                .map(b -> "replica_" + b.id())
+                .mapToDouble(name -> clusterResourceUsage.usage().getOrDefault(name, 0.0))
+                .map(replicas -> Math.abs(replicas - avgReplicaPerBroker) / replicas)
+                .average()
+                .orElseThrow() * replicaCount)) / replicaCount;
+          }
+        });
   }
 
   @Override

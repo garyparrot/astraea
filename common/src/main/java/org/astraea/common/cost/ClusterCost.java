@@ -16,6 +16,8 @@
  */
 package org.astraea.common.cost;
 
+import java.util.List;
+import java.util.Map;
 import java.util.function.Supplier;
 
 public interface ClusterCost {
@@ -43,6 +45,25 @@ public interface ClusterCost {
     };
   }
 
+  static ClusterCost of(double costValue, Map<HasClusterCost, ClusterCost> expose, Supplier<String> description) {
+    return new ClusterCost() {
+      @Override
+      public double value() {
+        return costValue;
+      }
+
+      @Override
+      public String toString() {
+        return description.get();
+      }
+
+      @Override
+      public Map<HasClusterCost, ClusterCost> expose() {
+        return expose;
+      }
+    };
+  }
+
   /**
    * The cost score of a Kafka cluster. This value represents the idealness of a Kafka cluster in
    * terms of a specific performance aspect.
@@ -57,4 +78,8 @@ public interface ClusterCost {
    *     aspect.
    */
   double value();
+
+  default Map<HasClusterCost, ClusterCost> expose() {
+    return Map.of();
+  }
 }

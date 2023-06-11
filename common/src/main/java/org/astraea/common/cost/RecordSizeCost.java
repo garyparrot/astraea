@@ -18,6 +18,9 @@ package org.astraea.common.cost;
 
 import static org.astraea.common.cost.CostUtils.changedRecordSizeOverflow;
 
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import org.astraea.common.Configuration;
 import org.astraea.common.DataSize;
@@ -60,6 +63,58 @@ public class RecordSizeCost
             .orElse(Long.MAX_VALUE);
     var overflow = changedRecordSizeOverflow(before, after, ignored -> true, maxMigratedSize);
     return () -> overflow;
+  }
+
+  @Override
+  public Collection<ResourceUsageHint> movementResourceHint(ClusterInfo sourceCluster, ClusterBean clusterBean) {
+    var brokerSize = sourceCluster.replicas().stream()
+        .collect(Collectors.groupingBy(Replica::brokerId,
+            Collectors.summingLong(Replica::size)));
+    var maxSize = sourceCluster.replicas().stream()
+        .mapToDouble(Replica::size)
+        .max().orElse(1);
+    var allSize = sourceCluster.replicas().stream()
+        .mapToDouble(Replica::size)
+        .sum();
+
+    return List.of(
+        new ResourceUsageHint(){
+          @Override
+          public String description() {
+            return "";
+          }
+
+          @Override
+          public ResourceUsage evaluateReplicaResourceUsage(Replica target) {
+            return new ResourceUsage(Map.of("size", (double) target.size()));
+          }
+
+          @Override
+          public ResourceUsage evaluateClusterResourceUsage(Replica target) {
+            var noMovement = sourceCluster.replicas(target.topicPartition()).contains(target);
+
+            if(noMovement)
+              return new ResourceUsage(Map.of("size_" + target.brokerId(), (double) target.size()));
+
+            return new ResourceUsage(Map.of("migrate_size", (double) target.size()));
+          }
+
+          @Override
+          public double importance(ResourceUsage replicaResourceUsage) {
+            return (maxSize - replicaResourceUsage.usage().get("size")) / maxSize;
+          }
+
+          @Override
+          public double idealness(ResourceUsage clusterResourceUsage) {
+            var remove = sourceCluster.brokers().stream()
+                .mapToDouble(x -> clusterResourceUsage.usage().getOrDefault("size_" + x.id(), 0.0)
+                    - brokerSize.get(x.id()))
+                .sum() / allSize;
+            var add = clusterResourceUsage.usage().getOrDefault("migrated_size", 0.0) / allSize;
+
+            return (remove + add) / 2.0;
+          }
+        });
   }
 
   @Override

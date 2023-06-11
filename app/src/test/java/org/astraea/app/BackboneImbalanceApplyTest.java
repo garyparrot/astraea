@@ -66,10 +66,10 @@ public class BackboneImbalanceApplyTest {
               Map.ofEntries(
                   Map.entry(BackboneImbalanceScenario.CONFIG_PERF_ZIPFIAN_EXPONENT, "1.1"),
                   Map.entry(BackboneImbalanceScenario.CONFIG_PERF_KEY_TABLE_SEED, "0"),
-                  Map.entry(BackboneImbalanceScenario.CONFIG_TOPIC_COUNT, "200"),
-                  Map.entry(BackboneImbalanceScenario.CONFIG_REPLICATION_FACTOR, "3"),
+                  // Map.entry(BackboneImbalanceScenario.CONFIG_TOPIC_COUNT, "1000"),
+                  // Map.entry(BackboneImbalanceScenario.CONFIG_REPLICATION_FACTOR, "1,1,1,1,1,2,2,3"),
                   // Map.entry(BackboneImbalanceScenario.CONFIG_TOPIC_DATA_RATE_PARETO_SCALE,
-                  //     Double.toString(DataRate.KB.of(1).byteRate())),
+                  //       Double.toString(DataRate.KB.of(900).byteRate())),
                   Map.entry(
                       BackboneImbalanceScenario.CONFIG_PERF_CLIENT_COUNT,
                       Integer.toString(clients.size()))));
@@ -171,7 +171,7 @@ public class BackboneImbalanceApplyTest {
 
   @Test
   void restoreClusterInfo() throws IOException {
-    var file = "/home/garyparrot/clusters/preserved/001-scale-4-to-6-imbalance-cluster-before.bin";
+    var file = "/home/garyparrot/Programming/ncku-thesis-template-latex/thesis/context/performance/experiments/exp2-cluster-info-before-greedy.bin";
     try (
         var admin = Admin.of(realCluster);
         var stream = Files.newInputStream(Path.of(file))) {
@@ -179,6 +179,13 @@ public class BackboneImbalanceApplyTest {
 
       System.out.println("Delete Topics");
       admin.topicNames(false)
+          .thenApply(x -> x.stream()
+              .filter(xx -> !xx.startsWith("__"))
+              .collect(Collectors.toSet()))
+          .thenApply(x -> {
+            System.out.println("Delete: " + x);
+            return x;
+          })
           .thenCompose(admin::deleteTopics)
           .toCompletableFuture()
           .join();
@@ -223,6 +230,16 @@ public class BackboneImbalanceApplyTest {
 
       System.out.println("Leader election");
       admin.preferredLeaderElection(cluster.topicPartitions());
+      Utils.sleep(Duration.ofSeconds(5));
+
+      admin.topicNames(true)
+          .thenCompose(admin::clusterInfo)
+          .toCompletableFuture()
+          .join()
+          .replicas()
+          .stream()
+          .filter(x -> x.isFuture() || x.isAdding() || x.isRemoving())
+          .forEach(System.out::println);
     }
   }
 }

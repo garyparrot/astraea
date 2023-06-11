@@ -50,6 +50,7 @@ public interface HasClusterCost extends CostFunction {
 
         return ClusterCost.of(
             compositeScore,
+            scores,
             () -> {
               Bi3Function<HasClusterCost, ClusterCost, Double, String> descriptiveName =
                   (function, cost, weight) ->

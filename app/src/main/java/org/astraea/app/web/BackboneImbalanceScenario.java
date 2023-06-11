@@ -88,6 +88,12 @@ public class BackboneImbalanceScenario implements Scenario<BackboneImbalanceScen
             config.consumerFanoutSeries().stream()
                 .map(x -> Pair.create(x, 1.0))
                 .collect(Collectors.toUnmodifiableList()));
+    final var topicReplicationFactorDistribution =
+        new EnumeratedDistribution<>(
+            rng,
+            config.replicationFactor().stream()
+                .map(x -> Pair.create(x, 1.0))
+                .collect(Collectors.toUnmodifiableList()));
 
     return CompletableFuture.supplyAsync(
         () -> {
@@ -105,7 +111,7 @@ public class BackboneImbalanceScenario implements Scenario<BackboneImbalanceScen
                               .creator()
                               .topic(name)
                               .numberOfPartitions(topicPartitionCountDistribution.sample())
-                              .numberOfReplicas(config.replicationFactor())
+                              .numberOfReplicas(topicReplicationFactorDistribution.sample())
                               .run());
           var backboneTopic =
               Stream.generate(
@@ -488,11 +494,13 @@ public class BackboneImbalanceScenario implements Scenario<BackboneImbalanceScen
           .orElse(List.of(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 3, 5));
     }
 
-    short replicationFactor() {
+    List<Short> replicationFactor() {
       return scenarioConfig
           .string(CONFIG_REPLICATION_FACTOR)
-          .map(Short::parseShort)
-          .orElse((short) 1);
+          .map(x -> Arrays.stream(x.split(","))
+              .map(Short::parseShort)
+              .toList())
+          .orElse(List.of((short)1));
     }
 
     double topicRateParetoScale() {

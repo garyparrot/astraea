@@ -86,6 +86,11 @@ public class BalancerExperimentTest {
       "/home/garyparrot/clusters/preserved/003-imbalance-with-followers-bean.bin",
       "/home/garyparrot/clusters/preserved/003-imbalance-with-followers-after.bin");
 
+  Benchmark thesisExp2greedy = new Benchmark(
+      "/home/garyparrot/Programming/ncku-thesis-template-latex/thesis/context/performance/experiments/exp2-cluster-info-before.bin",
+      "/home/garyparrot/Programming/ncku-thesis-template-latex/thesis/context/performance/experiments/exp2-cluster-bean.bin",
+      "/home/garyparrot/Programming/ncku-thesis-template-latex/thesis/context/performance/experiments/exp2-cluster-info-after-greedy.bin");
+
   String fileName0 = "";
   String fileName1 = "";
 
@@ -100,7 +105,7 @@ public class BalancerExperimentTest {
   @Test
   void testProfiling() {
     // load
-    var usedBench = imbalanceFollowers;
+    var usedBench = bench0;
     try (var admin = Admin.of(realCluster);
         var stream0 = new FileInputStream(usedBench.clusterInfo);
         var stream1 = new FileInputStream(usedBench.clusterBean)) {
@@ -113,15 +118,14 @@ public class BalancerExperimentTest {
               new NetworkIngressCost(Configuration.EMPTY), 3.0,
               new NetworkEgressCost(Configuration.EMPTY), 3.0);
       HasMoveCost moveCost = HasMoveCost.EMPTY;
-      // new ReplicaLeaderCost(
-      //     new Configuration(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "60")));
+         //  new ReplicaLeaderCost(
+         //   new Configuration(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "100")));
       var costFunction = HasClusterCost.of(costMap);
 
       System.out.println("Serialize ClusterInfo");
       ClusterInfo clusterInfo = ByteUtils.readClusterInfo(stream0.readAllBytes());
       System.out.println("Serialize ClusterBean");
       ClusterBean clusterBean = asClusterBean(costMap.keySet(), ByteUtils.readBeanObjects(stream1.readAllBytes()));
-      var beans = ByteUtils.readBeanObjects(stream1.readAllBytes());
       System.out.println("Done!");
 
 
@@ -131,7 +135,7 @@ public class BalancerExperimentTest {
               .setClusterInfo(clusterInfo)
               .setClusterBean(clusterBean)
               .setBalancer(balancer)
-              .setExecutionTimeout(Duration.ofSeconds(180))
+              .setExecutionTimeout(Duration.ofSeconds(120))
               .setAlgorithmConfig(
                   AlgorithmConfig.builder().clusterCost(costFunction).moveCost(moveCost).build())
               .start()
@@ -400,7 +404,7 @@ public class BalancerExperimentTest {
     }
   }
 
-  ClusterBean asClusterBean(Set<? extends CostFunction> sensors, Map<Integer, List<BeanObject>> beans) {
+  static ClusterBean asClusterBean(Set<? extends CostFunction> sensors, Map<Integer, List<BeanObject>> beans) {
     var receiver = MetricStore.Receiver.fixed(beans.entrySet()
         .stream()
         .collect(Collectors.toUnmodifiableMap(

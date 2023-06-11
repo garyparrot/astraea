@@ -120,12 +120,13 @@ public class ReplicaLeaderCost implements HasBrokerCost, HasClusterCost, HasMove
 
           @Override
           public double idealness(ResourceUsage clusterResourceUsage) {
-            return sourceCluster.brokers().stream()
+            return ((int)(sourceCluster.brokers().stream()
                 .map(b -> "leader_" + b.id())
                 .mapToDouble(name -> clusterResourceUsage.usage().getOrDefault(name, 0.0))
-                .map(leaders -> Math.abs(leaders - averageLeaderPerBroker) / leaders)
+                .map(leaders -> Math.abs(leaders - averageLeaderPerBroker))
                 .average()
-                .orElseThrow();
+                .orElseThrow()
+                * leaderSum)) / (double)leaderSum;
           }
         });
   }
