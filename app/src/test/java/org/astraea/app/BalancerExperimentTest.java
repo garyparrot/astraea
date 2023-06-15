@@ -18,6 +18,7 @@ package org.astraea.app;
 
 import java.awt.image.BandCombineOp;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -87,9 +88,19 @@ public class BalancerExperimentTest {
       "/home/garyparrot/clusters/preserved/003-imbalance-with-followers-after.bin");
 
   Benchmark thesisExp2greedy = new Benchmark(
-      "/home/garyparrot/Programming/ncku-thesis-template-latex/thesis/context/performance/experiments/exp2-cluster-info-before.bin",
-      "/home/garyparrot/Programming/ncku-thesis-template-latex/thesis/context/performance/experiments/exp2-cluster-bean.bin",
+      "/home/garyparrot/Programming/ncku-thesis-template-latex/thesis/context/performance/experiments/exp2-cluster-info-before-greedy.bin",
+      "/home/garyparrot/Programming/ncku-thesis-template-latex/thesis/context/performance/experiments/exp2-cluster-bean-greedy.bin",
       "/home/garyparrot/Programming/ncku-thesis-template-latex/thesis/context/performance/experiments/exp2-cluster-info-after-greedy.bin");
+
+  Benchmark fsack = new Benchmark(
+      "/home/garyparrot/clusters/c77b-cluster-info-before-1066848060586453064.bin",
+      "/home/garyparrot/clusters/c77b-cluster-bean-4101099915368918149.bin",
+      "");
+
+  Benchmark balance3goal= new Benchmark(
+      "/home/garyparrot/clusters/2511-cluster-info-before-407949690628557568.bin",
+      "/home/garyparrot/clusters/2511-cluster-bean-1250578612450258501.bin",
+      "/home/garyparrot/clusters/2511-cluster-info-after-18357752757810861863.bin");
 
   String fileName0 = "";
   String fileName1 = "";
@@ -101,11 +112,71 @@ public class BalancerExperimentTest {
     new BalancerExperimentTest().testProfiling();
   }
 
+  @Test
+  void aaa() {
+    // load
+    var usedBench = fsack;
+    try (var admin = Admin.of(realCluster)) {
+      System.out.println(admin.topicNames(true)
+          .thenCompose(admin::clusterInfo)
+          .toCompletableFuture()
+          .join()
+          .replicaStream()
+          .filter(x -> x.isAdding() || x.isRemoving() || x.isFuture())
+          .collect(Collectors.toList()));
+    }
+  }
+
+  @Test
+  @Disabled
+  void testJava() {
+    // load
+    var clusterInfoFile = "/home/garyparrot/clusters/2511-cluster-info-before-407949690628557568.bin";
+    var clusterBeanFile = "/home/garyparrot/clusters/2511-cluster-bean-1250578612450258501.bin";
+    try (var stream0 = new FileInputStream(clusterInfoFile);
+         var stream1 = new FileInputStream(clusterBeanFile)) {
+
+      Map<HasClusterCost, Double> costMap =
+          Map.of(
+              new ReplicaNumberCost(Configuration.EMPTY), 2.0,
+              new NetworkIngressCost(Configuration.EMPTY), 4.0,
+              new NetworkEgressCost(Configuration.EMPTY), 3.0);
+      var noMoveCost = HasMoveCost.EMPTY;
+      var hasMoveCost = new ReplicaLeaderCost(new Configuration(Map.of(ReplicaLeaderCost.MAX_MIGRATE_LEADER_KEY, "100")));
+      var costFunction = HasClusterCost.of(costMap);
+
+      System.out.println("Serialize ClusterInfo");
+      ClusterInfo clusterInfo = ByteUtils.readClusterInfo(stream0.readAllBytes());
+      System.out.println("Serialize ClusterBean");
+      ClusterBean clusterBean = asClusterBean(costMap.keySet(), ByteUtils.readBeanObjects(stream1.readAllBytes()));
+      System.out.println("Done!");
+
+      var balancer = new GreedyBalancer();
+      var plan = balancer.offer(
+              AlgorithmConfig.builder()
+                  .clusterInfo(clusterInfo)
+                  .clusterBean(clusterBean)
+                  .clusterCost(costFunction)
+                  .moveCost(noMoveCost)
+                  .timeout(Duration.ofSeconds(60))
+                  .build()).orElseThrow();
+
+      System.out.println("[Initial]");
+      System.out.println(plan.initialClusterCost());
+      System.out.println();
+      System.out.println("[Result]");
+      System.out.println(plan.proposalClusterCost());
+
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
   @Disabled
   @Test
   void testProfiling() {
     // load
-    var usedBench = bench0;
+    var usedBench = balance3goal;
     try (var admin = Admin.of(realCluster);
         var stream0 = new FileInputStream(usedBench.clusterInfo);
         var stream1 = new FileInputStream(usedBench.clusterBean)) {
@@ -114,8 +185,8 @@ public class BalancerExperimentTest {
 
       Map<HasClusterCost, Double> costMap =
           Map.of(
-              // new ReplicaLeaderCost(Configuration.EMPTY), 3.0,
-              new NetworkIngressCost(Configuration.EMPTY), 3.0,
+              new ReplicaNumberCost(Configuration.EMPTY), 2.0,
+              new NetworkIngressCost(Configuration.EMPTY), 4.0,
               new NetworkEgressCost(Configuration.EMPTY), 3.0);
       HasMoveCost moveCost = HasMoveCost.EMPTY;
          //  new ReplicaLeaderCost(
@@ -129,13 +200,14 @@ public class BalancerExperimentTest {
       System.out.println("Done!");
 
 
-      var balancer = new ResourceBalancer();
+      var balancer = new GreedyBalancer();
+      System.out.println(balancer.getClass().getName());
       var result =
           BalancerBenchmark.costProfiling()
               .setClusterInfo(clusterInfo)
               .setClusterBean(clusterBean)
               .setBalancer(balancer)
-              .setExecutionTimeout(Duration.ofSeconds(120))
+              .setExecutionTimeout(Duration.ofSeconds(180))
               .setAlgorithmConfig(
                   AlgorithmConfig.builder().clusterCost(costFunction).moveCost(moveCost).build())
               .start()
@@ -419,7 +491,7 @@ public class BalancerExperimentTest {
                 x -> x,
                 x -> (a, b) -> {})))
         .build()) {
-      build.wait(Predicate.not(x -> x.all().isEmpty()), Duration.ofSeconds(3));
+      build.wait(Predicate.not(x -> x.all().isEmpty()), Duration.ofSeconds(30));
       return build.clusterBean();
     }
   }

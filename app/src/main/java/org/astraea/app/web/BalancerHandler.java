@@ -112,6 +112,7 @@ class BalancerHandler implements Handler, AutoCloseable {
                 Path clusterInfoFileBefore = Files.createTempFile(base, series + "-cluster-info-before-", ".bin");
                 Path clusterInfoFileAfter = Files.createTempFile(base, series + "-cluster-info-after-", ".bin");
                 Path clusterBeanFile = Files.createTempFile(base, series + "-cluster-bean-", ".bin");
+                System.out.println(result.proposalClusterCost());
                 try (var stream = Files.newOutputStream(clusterInfoFileBefore)) {
                   stream.write(ByteUtils.toBytes(result.initialClusterInfo()));
                 }
