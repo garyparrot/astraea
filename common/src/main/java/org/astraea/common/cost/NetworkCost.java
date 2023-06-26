@@ -75,7 +75,7 @@ public abstract class NetworkCost implements HasClusterCost {
 
   private final EstimationMethod estimationMethod;
   private final BandwidthType bandwidthType;
-  private final Map<ClusterBean, CachedCalculation> calculationCache;
+  public final Map<ClusterBean, CachedCalculation> calculationCache;
   private final ClusterInfoSensor clusterInfoSensor = new ClusterInfoSensor();
 
   NetworkCost(Configuration config, BandwidthType bandwidthType) {
@@ -450,9 +450,18 @@ public abstract class NetworkCost implements HasClusterCost {
     }
   }
 
-  private class CachedCalculation {
+  public CachedCalculation enclosing(Map<TopicPartition, Long> in, Map<TopicPartition, Long> out) {
+    return new CachedCalculation(in, out);
+  }
+
+  public class CachedCalculation {
     private final Map<TopicPartition, Long> partitionIngressRate;
     private final Map<TopicPartition, Long> partitionEgressRate;
+
+    public CachedCalculation(Map<TopicPartition, Long> in, Map<TopicPartition, Long> out) {
+      this.partitionIngressRate = in;
+      this.partitionEgressRate = out;
+    }
 
     private CachedCalculation(ClusterBean sourceMetric) {
       ClusterInfo metricViewCluster;

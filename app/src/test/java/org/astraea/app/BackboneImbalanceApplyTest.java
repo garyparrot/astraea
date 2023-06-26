@@ -190,7 +190,7 @@ public class BackboneImbalanceApplyTest {
           .toCompletableFuture()
           .join();
 
-      Utils.sleep(Duration.ofSeconds(15));
+      Utils.sleep(Duration.ofSeconds(10));
 
       System.out.println("Recreate Topics");
       cluster.replicas().stream()

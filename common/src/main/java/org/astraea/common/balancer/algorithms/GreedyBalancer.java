@@ -215,8 +215,8 @@ public class GreedyBalancer implements Balancer {
                             newAllocation,
                             evaluateCost.apply(newAllocation)))
                 .peek(plan -> {
-                  if(ThreadLocalRandom.current().nextInt(0, 20) == 0)
-                    System.out.println(plan.proposalClusterCost().value() + " " + plan.proposalClusterCost());
+                  // if(ThreadLocalRandom.current().nextInt(0, 200) == 0)
+                  //   System.out.println(plan.proposalClusterCost().value() + " " + plan.proposalClusterCost());
                 })
                 .filter(plan -> plan.proposalClusterCost().value() < currentCost.value())
                 .findFirst();
